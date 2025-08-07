@@ -1,0 +1,17 @@
+[phases.setup]
+nixPkgs = [
+    "python39",
+    "pip",
+    "tesseract",
+    "poppler_utils",
+    "opencv4"
+]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["echo 'Build phase complete'"]
+
+[start]
+cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 300"

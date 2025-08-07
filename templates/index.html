@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Excel Converter - Bank Statements</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1><i class="fas fa-file-excel"></i> PDF to Excel Converter</h1>
+            <p class="subtitle">Convert bank statement PDFs to Excel format with transaction details</p>
+        </header>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            <i class="fas fa-{% if category == 'error' %}exclamation-triangle{% elif category == 'warning' %}exclamation-circle{% else %}check-circle{% endif %}"></i>
+                            {{ message }}
+                            <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <main class="main-content">
+            <div class="upload-section">
+                <form id="uploadForm" action="{{ url_for('convert_pdf') }}" method="POST" enctype="multipart/form-data">
+                    
+                    <!-- Bank Selection -->
+                    <div class="form-group">
+                        <label for="bank" class="form-label">
+                            <i class="fas fa-university"></i> Select Your Bank
+                        </label>
+                        <select id="bank" name="bank" class="form-select" required>
+                            <option value="">Choose your bank...</option>
+                            {% for code, info in banks.items() %}
+                                <option value="{{ code }}" data-description="{{ info.description }}">
+                                    {{ info.name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <small class="bank-description" id="bankDescription"></small>
+                    </div>
+
+                    <!-- File Upload -->
+                    <div class="form-group">
+                        <label for="pdf_file" class="form-label">
+                            <i class="fas fa-file-pdf"></i> Upload PDF Statement
+                        </label>
+                        <div class="file-upload-area" id="fileUploadArea">
+                            <input type="file" id="pdf_file" name="pdf_file" accept=".pdf" required class="file-input">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                                <p class="upload-text">
+                                    <strong>Click to upload</strong> or drag and drop your PDF file
+                                </p>
+                                <p class="upload-subtext">Maximum file size: 100MB</p>
+                            </div>
+                        </div>
+                        <div class="file-info" id="fileInfo" style="display: none;">
+                            <i class="fas fa-file-pdf"></i>
+                            <span class="file-name" id="fileName"></span>
+                            <span class="file-size" id="fileSize"></span>
+                            <button type="button" class="remove-file-btn" id="removeFile">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Convert Button -->
+                    <div class="form-group">
+                        <button type="submit" class="convert-btn" id="convertBtn" disabled>
+                            <i class="fas fa-magic"></i>
+                            <span class="btn-text">Convert to Excel</span>
+                            <div class="loading-spinner" style="display: none;">
+                                <i class="fas fa-spinner fa-spin"></i> Processing...
+                            </div>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Features Section -->
+            <div class="features-section">
+                <h2><i class="fas fa-star"></i> Features</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <i class="fas fa-university feature-icon"></i>
+                        <h3>Multi-Bank Support</h3>
+                        <p>Supports HDFC Bank (OCR for image PDFs) and ICICI Bank (text extraction) statements</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-table feature-icon"></i>
+                        <h3>Structured Data</h3>
+                        <p>Extracts dates, descriptions, amounts, and balances into organized Excel columns</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-chart-line feature-icon"></i>
+                        <h3>Financial Summary</h3>
+                        <p>Automatically calculates deposits, withdrawals, and net amounts with transaction counts</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-shield-alt feature-icon"></i>
+                        <h3>Secure Processing</h3>
+                        <p>Files are processed securely and automatically deleted after conversion</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Supported Format Info -->
+            <div class="info-section">
+                <h2><i class="fas fa-info-circle"></i> Supported Formats</h2>
+                <div class="format-info">
+                    <div class="bank-info">
+                        <h3><i class="fas fa-building"></i> HDFC Bank</h3>
+                        <ul>
+                            <li><i class="fas fa-check"></i> Image-based PDF statements</li>
+                            <li><i class="fas fa-check"></i> OCR text extraction</li>
+                            <li><i class="fas fa-check"></i> Pipe-delimited transaction format</li>
+                            <li><i class="fas fa-check"></i> Large file support (100MB+)</li>
+                        </ul>
+                    </div>
+                    <div class="bank-info">
+                        <h3><i class="fas fa-building"></i> ICICI Bank</h3>
+                        <ul>
+                            <li><i class="fas fa-check"></i> Text-based PDF statements</li>
+                            <li><i class="fas fa-check"></i> Direct text extraction</li>
+                            <li><i class="fas fa-check"></i> Tabular transaction format</li>
+                            <li><i class="fas fa-check"></i> Fast processing</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>&copy; 2025 PDF to Excel Converter. Built for secure bank statement processing.</p>
+            <p><i class="fas fa-shield-alt"></i> Your files are processed securely and not stored on our servers.</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
