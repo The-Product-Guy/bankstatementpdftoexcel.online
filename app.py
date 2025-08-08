@@ -182,7 +182,17 @@ def convert_pdf():
 @app.route('/health')
 def health_check():
     """Health check endpoint for Railway"""
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+    try:
+        return jsonify({
+            'status': 'healthy', 
+            'timestamp': datetime.now().isoformat(),
+            'service': 'pdf-excel-converter'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
 
 @app.errorhandler(413)
 def too_large(e):
@@ -191,4 +201,6 @@ def too_large(e):
 
 if __name__ == '__main__':
     # For local development
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))
+    port = int(os.environ.get('PORT', 5001))
+    print(f"Starting Flask app on port {port}")
+    app.run(debug=False, host='0.0.0.0', port=port)
