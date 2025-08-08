@@ -27,13 +27,13 @@ RUN mkdir -p uploads
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 
-# Use dynamic port from Railway
-EXPOSE 8080
-ENV PORT=8080
+# Expose a default port for local runs (Railway will inject $PORT at runtime)
+# Note: EXPOSE is not required by Railway, but helpful for local testing
+# EXPOSE 8080
 
-# Health check
+# Health check (respect platform-provided $PORT)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:$PORT/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8080}/health || exit 1'
 
-# Start application with proper error handling
-CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --worker-class sync --access-logfile - --error-logfile -"]
+# Start application with proper error handling (bind to platform $PORT)
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --timeout 120 --worker-class sync --access-logfile - --error-logfile -"]

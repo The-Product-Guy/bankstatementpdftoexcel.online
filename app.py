@@ -9,7 +9,6 @@ import uuid
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
 from werkzeug.utils import secure_filename
-import pandas as pd
 
 # Import parsers
 from parsers.hdfc_parser import HDFCParser
@@ -65,6 +64,8 @@ def index():
 def convert_pdf():
     """Handle PDF conversion"""
     try:
+        # Lazy import heavy dependencies to speed up app startup
+        import pandas as pd
         # Validate form data
         if 'bank' not in request.form or 'pdf_file' not in request.files:
             flash('Please select a bank and upload a PDF file.', 'error')
