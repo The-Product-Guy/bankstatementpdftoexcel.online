@@ -17,9 +17,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy startup script first
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Copy application code
 COPY . .
@@ -30,14 +30,13 @@ RUN mkdir -p uploads
 # Set environment variables
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
-ENV PORT=8080
 
 # Expose port
 EXPOSE 8080
 
 # Health check (simple and reliable)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f "http://localhost:$PORT/health" || exit 1
+    CMD curl -f "http://localhost:${PORT:-8080}/health" || exit 1
 
-# Use startup script
-CMD ["/app/start.sh"]
+# Use entrypoint that handles Railway PORT injection
+CMD ["/app/entrypoint.sh"]
