@@ -182,17 +182,57 @@ def convert_pdf():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint for Railway"""
+    """Health check endpoint for Railway - Simple but accurate"""
     try:
-        return jsonify({
-            'status': 'healthy', 
+        # Check if uploads directory exists
+        if not os.path.exists(UPLOAD_FOLDER):
+            return "UPLOADS_DIR_MISSING", 500
+        
+        # Test parser imports (critical for app functionality)
+        try:
+            HDFCParser()
+            ICICIParser()
+        except Exception:
+            return "PARSERS_FAILED", 500
+        
+        # If we get here, everything is working
+        return "OK", 200
+        
+    except Exception as e:
+        return f"ERROR: {str(e)}", 500
+
+@app.route('/health/detailed')
+def detailed_health():
+    """Detailed health check with more info"""
+    try:
+        # Test basic functionality
+        response_data = {
+            'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
-            'service': 'pdf-excel-converter'
-        })
+            'service': 'pdf-excel-converter',
+            'version': '1.0.0',
+            'checks': {
+                'flask': 'OK',
+                'uploads_dir': 'OK' if os.path.exists(UPLOAD_FOLDER) else 'MISSING',
+                'parsers': 'OK'
+            }
+        }
+        
+        # Test parsers import
+        try:
+            HDFCParser()
+            ICICIParser()
+            response_data['checks']['parsers'] = 'OK'
+        except Exception:
+            response_data['checks']['parsers'] = 'ERROR'
+            
+        return jsonify(response_data), 200
+        
     except Exception as e:
         return jsonify({
             'status': 'error',
-            'error': str(e)
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
         }), 500
 
 @app.errorhandler(413)
