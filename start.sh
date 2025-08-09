@@ -4,8 +4,21 @@
 echo "🚀 Starting PDF Excel Converter..."
 
 # Get the port from environment (Railway sets $PORT)
-PORT=${PORT:-8080}
-echo "📡 Using port: $PORT"
+if [ -z "$PORT" ]; then
+    export PORT=8080
+    echo "📡 No PORT env var found, defaulting to: $PORT"
+else
+    echo "📡 Using Railway PORT: $PORT"
+fi
+
+# Validate port is a number (simple numeric check)
+if echo "$PORT" | grep -E '^[0-9]+$' > /dev/null; then
+    echo "✅ PORT validation passed: $PORT"
+else
+    echo "❌ Invalid PORT value: '$PORT'"
+    export PORT=8080
+    echo "📡 Defaulting to safe PORT: $PORT"
+fi
 
 # Check if uploads directory exists
 if [ ! -d "uploads" ]; then
@@ -30,10 +43,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Print environment info for debugging
+echo "🔍 Environment debug info:"
+echo "   PORT = '$PORT'"
+echo "   PWD = '$PWD'"
+echo "   FLASK_APP = '$FLASK_APP'"
+
 # Start the application
-echo "🌐 Starting Gunicorn server..."
+echo "🌐 Starting Gunicorn server on 0.0.0.0:$PORT ..."
 exec gunicorn app:app \
-    --bind 0.0.0.0:$PORT \
+    --bind "0.0.0.0:$PORT" \
     --workers 1 \
     --timeout 120 \
     --worker-class sync \
