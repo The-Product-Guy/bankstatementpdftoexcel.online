@@ -270,6 +270,9 @@ def too_large(e):
     flash('File too large. Maximum size is 100MB.', 'error')
     return redirect(url_for('index'))
 
+# For deployment with gunicorn, we need to expose the SocketIO app
+# This allows gunicorn to use: gunicorn app:socketio
+
 if __name__ == '__main__':
     # For local development
     port = int(os.environ.get('PORT', 5001))

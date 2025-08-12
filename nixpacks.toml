@@ -5,4 +5,4 @@ nixPkgs = ["tesseract", "poppler_utils"]
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 300"
+cmd = "gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:socketio --timeout 300"
