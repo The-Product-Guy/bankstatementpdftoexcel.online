@@ -8,15 +8,20 @@ import tempfile
 import uuid
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
+from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 
 # Import parsers
 from parsers.hdfc_parser import HDFCParser
 from parsers.icici_parser import ICICIParser
+from parsers.kvb_parser import KVBParser
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+
+# Initialize SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Create uploads directory if it doesn't exist
 UPLOAD_FOLDER = 'uploads'
@@ -34,6 +39,11 @@ SUPPORTED_BANKS = {
         'name': 'ICICI Bank', 
         'parser': ICICIParser,
         'description': 'Text-based PDF statements'
+    },
+    'kvb': {
+        'name': 'Karur Vysya Bank',
+        'parser': KVBParser,
+        'description': 'Image-based PDF statements (OCR processing)'
     }
 }
 
@@ -53,6 +63,10 @@ def cleanup_old_files():
                     os.remove(filepath)
     except Exception:
         pass
+
+def progress_callback(progress_data):
+    """Callback function to emit progress updates via WebSocket"""
+    socketio.emit('progress_update', progress_data)
 
 @app.route('/')
 def index():
@@ -97,7 +111,15 @@ def convert_pdf():
         # Process the PDF
         bank_info = SUPPORTED_BANKS[bank_code]
         parser_class = bank_info['parser']
-        parser = parser_class()
+        parser = parser_class(progress_callback)
+        
+        # Emit initial progress
+        socketio.emit('progress_update', {
+            'current_page': 0,
+            'total_pages': 0,
+            'status': 'Starting processing...',
+            'percentage': 0
+        })
         
         # Parse transactions
         transactions = parser.parse(filepath, filename)
@@ -156,6 +178,14 @@ def convert_pdf():
             'date_range': date_range,
             'output_filename': output_filename
         }
+        
+        # Emit completion progress
+        socketio.emit('progress_update', {
+            'current_page': total_transactions,
+            'total_pages': total_transactions,
+            'status': 'Processing complete!',
+            'percentage': 100
+        })
         
         # Clean up input file
         os.remove(filepath)
@@ -244,4 +274,4 @@ if __name__ == '__main__':
     # For local development
     port = int(os.environ.get('PORT', 5001))
     print(f"Starting Flask app on port {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+    socketio.run(app, debug=False, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

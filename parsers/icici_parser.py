@@ -10,8 +10,8 @@ from .base_parser import BaseParser
 class ICICIParser(BaseParser):
     """Parser for ICICI Bank statements"""
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, progress_callback=None):
+        super().__init__(progress_callback)
         self.bank_name = "ICICI Bank"
     
     def parse(self, pdf_path, original_filename):
@@ -42,8 +42,11 @@ class ICICIParser(BaseParser):
             
             with pdfplumber.open(pdf_path) as pdf:
                 all_text = ""
+                total_pages = len(pdf.pages)
+                
                 for page_num, page in enumerate(pdf.pages, 1):
                     print(f"    📝 Processing page {page_num}...")
+                    self.emit_progress(page_num, total_pages, f"Extracting text from page {page_num} of {total_pages}")
                     page_text = page.extract_text()
                     if page_text:
                         all_text += page_text + "\n"
@@ -71,8 +74,11 @@ class ICICIParser(BaseParser):
             print(f"  ✅ Generated {len(images)} page images")
             
             all_text = ""
+            total_pages = len(images)
+            
             for i, image in enumerate(images, 1):
                 print(f"    📝 OCR processing page {i}...")
+                self.emit_progress(i, total_pages, f"OCR processing page {i} of {total_pages}")
                 page_text = pytesseract.image_to_string(image)
                 all_text += page_text + "\n"
             

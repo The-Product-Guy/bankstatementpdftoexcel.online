@@ -10,8 +10,8 @@ from .base_parser import BaseParser
 class HDFCParser(BaseParser):
     """Parser for HDFC Bank statements"""
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, progress_callback=None):
+        super().__init__(progress_callback)
         self.bank_name = "HDFC Bank"
     
     def parse(self, pdf_path, original_filename):
@@ -34,8 +34,11 @@ class HDFCParser(BaseParser):
             
             # Extract text using OCR
             all_text = ""
+            total_pages = len(images)
+            
             for i, image in enumerate(images, 1):
                 print(f"    📝 OCR processing page {i}...")
+                self.emit_progress(i, total_pages, f"Processing page {i} of {total_pages}")
                 page_text = pytesseract.image_to_string(image)
                 all_text += page_text + "\n"
             

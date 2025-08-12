@@ -14,6 +14,49 @@
             <p class="subtitle">Convert bank statement PDFs to Excel format with transaction details</p>
         </header>
 
+        <!-- Progress Modal -->
+        <div id="progressModal" class="progress-modal" style="display: none;">
+            <div class="progress-content">
+                <div class="progress-header">
+                    <h3><i class="fas fa-cogs"></i> Processing Your PDF</h3>
+                    <p>Please wait while we extract your transaction data...</p>
+                </div>
+                
+                <div class="progress-body">
+                    <div class="progress-step" id="step1">
+                        <i class="fas fa-file-pdf step-icon"></i>
+                        <span class="step-text">Loading PDF document...</span>
+                        <div class="step-status"><i class="fas fa-spinner fa-spin"></i></div>
+                    </div>
+                    
+                    <div class="progress-step" id="step2" style="opacity: 0.5;">
+                        <i class="fas fa-eye step-icon"></i>
+                        <span class="step-text">Processing pages with OCR...</span>
+                        <div class="step-status"><i class="fas fa-clock"></i></div>
+                    </div>
+                    
+                    <div class="progress-step" id="step3" style="opacity: 0.5;">
+                        <i class="fas fa-table step-icon"></i>
+                        <span class="step-text">Extracting transaction data...</span>
+                        <div class="step-status"><i class="fas fa-clock"></i></div>
+                    </div>
+                    
+                    <div class="progress-step" id="step4" style="opacity: 0.5;">
+                        <i class="fas fa-file-excel step-icon"></i>
+                        <span class="step-text">Generating Excel file...</span>
+                        <div class="step-status"><i class="fas fa-clock"></i></div>
+                    </div>
+                </div>
+                
+                <div class="progress-detail">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+                    </div>
+                    <p class="progress-info" id="progressInfo">Starting conversion...</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Flash Messages -->
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -94,7 +137,7 @@
                     <div class="feature-card">
                         <i class="fas fa-university feature-icon"></i>
                         <h3>Multi-Bank Support</h3>
-                        <p>Supports HDFC Bank (OCR for image PDFs) and ICICI Bank (text extraction) statements</p>
+                        <p>Supports HDFC Bank, ICICI Bank, and Karur Vysya Bank statements with automatic format detection</p>
                     </div>
                     <div class="feature-card">
                         <i class="fas fa-table feature-icon"></i>
@@ -146,6 +189,7 @@
         </footer>
     </div>
 
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

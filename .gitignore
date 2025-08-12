@@ -71,3 +71,6 @@ output/
 
 # Original input files
 input/
+
+# Test PDF files
+*.pdf

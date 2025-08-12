@@ -12,9 +12,10 @@ from abc import ABC, abstractmethod
 class BaseParser(ABC):
     """Abstract base class for bank statement parsers"""
     
-    def __init__(self):
+    def __init__(self, progress_callback=None):
         self.transactions = []
         self.bank_name = "Unknown Bank"
+        self.progress_callback = progress_callback
     
     @abstractmethod
     def parse(self, pdf_path, original_filename):
@@ -138,6 +139,16 @@ class BaseParser(ABC):
         print(f"    • Transactions found: {transactions_found:,}")
         print(f"    • Success rate: {(transactions_found/total_lines_processed*100):.2f}%" if total_lines_processed > 0 else "    • Success rate: 0%")
     
+    def emit_progress(self, current_page, total_pages, status="Processing"):
+        """Emit progress update if callback is available"""
+        if self.progress_callback:
+            self.progress_callback({
+                'current_page': current_page,
+                'total_pages': total_pages,
+                'status': status,
+                'percentage': int((current_page / total_pages) * 100) if total_pages > 0 else 0
+            })
+
     @staticmethod
     def detect_pdf_type(pdf_path):
         """Detect if PDF is text-based or image-based"""

@@ -5,7 +5,7 @@ A modern web application for converting bank statement PDFs to Excel format with
 ## ✨ Key Features
 
 - **🌐 Web-based Interface** - Beautiful, responsive UI with drag-and-drop upload
-- **🏦 Multi-Bank Support** - HDFC Bank (OCR) and ICICI Bank (text extraction)  
+- **🏦 Multi-Bank Support** - HDFC Bank, ICICI Bank, and Karur Vysya Bank (with OCR and text extraction)  
 - **🤖 Smart Processing** - Auto-detects PDF type and uses appropriate parsing method
 - **📊 Financial Analysis** - Automatic calculation of deposits, withdrawals, and balances
 - **🔒 Secure Processing** - Files automatically deleted after conversion
@@ -22,6 +22,7 @@ A modern web application for converting bank statement PDFs to Excel format with
 |------|----------|------------------|----------|
 | **HDFC Bank** | Image-based | OCR (Tesseract) | ✅ All page processing<br/>✅ Pipe-delimited format<br/>✅ Large file support (100MB+) |
 | **ICICI Bank** | Text-based | Direct extraction | ✅ Fast processing<br/>✅ Tabular format<br/>✅ High accuracy |
+| **Karur Vysya Bank** | Image-based | OCR (Tesseract) | ✅ Enhanced OCR processing<br/>✅ Handles wrapped text<br/>✅ Summary line extraction |
 
 ## 📁 Clean Project Structure
 
@@ -42,7 +43,8 @@ PDF-XLS-Converter/
 │   ├── __init__.py
 │   ├── base_parser.py        # 🔧 Common utilities
 │   ├── hdfc_parser.py        # 🏦 HDFC Bank processor
-│   └── icici_parser.py       # 🏦 ICICI Bank processor
+│   ├── icici_parser.py       # 🏦 ICICI Bank processor
+│   └── kvb_parser.py         # 🏦 Karur Vysya Bank processor
 └── uploads/                   # 📁 Temporary file storage
 ```
 
