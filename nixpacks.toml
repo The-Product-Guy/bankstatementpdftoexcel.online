@@ -1,5 +1,6 @@
 [phases.setup]
 nixPkgs = ["tesseract", "poppler_utils"]
+aptPkgs = ["libgl1-mesa-dri", "libglib2.0-0"]
 
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
