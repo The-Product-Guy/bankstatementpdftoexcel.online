@@ -6,6 +6,7 @@ Supports HDFC and ICICI Bank statements
 import os
 import tempfile
 import uuid
+import gc
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -131,6 +132,9 @@ def convert_pdf():
         
         # Parse transactions
         transactions = parser.parse(filepath, filename)
+        
+        # Force garbage collection after parsing to free memory
+        gc.collect()
         
         if not transactions:
             flash(f'No transactions found in the {bank_info["name"]} statement. Please check if the PDF format is supported.', 'warning')

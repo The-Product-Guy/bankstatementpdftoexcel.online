@@ -70,17 +70,26 @@ class ICICIParser(BaseParser):
             
             print("  🖼️  Using OCR for image-based PDF...")
             
-            images = convert_from_path(pdf_path, dpi=150)
-            print(f"  ✅ Generated {len(images)} page images")
+            # Get total page count first
+            import pdfplumber
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
             
+            print(f"  📄 Processing {total_pages} pages (memory-optimized)")
             all_text = ""
-            total_pages = len(images)
             
-            for i, image in enumerate(images, 1):
-                print(f"    📝 OCR processing page {i}...")
-                self.emit_progress(i, total_pages, f"OCR processing page {i} of {total_pages}")
-                page_text = pytesseract.image_to_string(image)
-                all_text += page_text + "\n"
+            # Process pages one by one to minimize memory usage
+            for page_num in range(total_pages):
+                print(f"    📝 OCR processing page {page_num + 1}...")
+                self.emit_progress(page_num + 1, total_pages, f"OCR processing page {page_num + 1} of {total_pages}")
+                
+                # Convert single page to image (reduced DPI for memory efficiency)
+                images = convert_from_path(pdf_path, dpi=120, first_page=page_num + 1, last_page=page_num + 1)
+                if images:
+                    page_text = pytesseract.image_to_string(images[0])
+                    all_text += page_text + "\n"
+                    # Clear image from memory immediately
+                    del images
             
             print(f"  📄 Extracted {len(all_text):,} characters of text")
             
