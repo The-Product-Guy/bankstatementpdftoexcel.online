@@ -267,22 +267,33 @@ class KVBParser(BaseParser):
     def parse(self, pdf_path: str, filename: str) -> List[Dict[str, Any]]:
         """Parse KVB PDF statement and return list of transactions."""
         try:
-            # Convert PDF to images
-            images = convert_from_path(pdf_path, dpi=300)
+            # Get total page count first for memory-efficient processing
+            import pdfplumber
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+            
             all_lines: List[str] = []
             
-            print(f"Converting {len(images)} pages to text via OCR...")
+            print(f"Processing {total_pages} pages (memory-optimized)...")
             
-            for page_num, img in enumerate(images, 1):
-                print(f"Processing page {page_num}/{len(images)} for KVB statement...")
-                self.emit_progress(page_num, len(images), f"OCR processing page {page_num} of {len(images)}")
+            # Process pages one by one to minimize memory usage
+            for page_num in range(total_pages):
+                print(f"Processing page {page_num + 1}/{total_pages} for KVB statement...")
+                self.emit_progress(page_num + 1, total_pages, f"OCR processing page {page_num + 1} of {total_pages}")
                 
-                # Convert to grayscale and enhance for better OCR
-                gray = img.convert("L")
-                enhanced = gray.point(lambda x: 0 if x < 180 else 255, '1').convert('L')
-                
-                lines = self.ocr_page(enhanced)
-                all_lines.extend(lines)
+                # Convert single page to image (reduced DPI for memory efficiency)
+                images = convert_from_path(pdf_path, dpi=120, first_page=page_num + 1, last_page=page_num + 1)
+                if images:
+                    img = images[0]
+                    
+                    # Simplified image processing to reduce memory usage
+                    gray = img.convert("L")
+                    
+                    lines = self.ocr_page(gray)
+                    all_lines.extend(lines)
+                    
+                    # Clear image from memory immediately
+                    del images, img, gray
             
             # Stitch wrapped lines into logical rows
             logical_rows = self.stitch_logical_rows(all_lines)

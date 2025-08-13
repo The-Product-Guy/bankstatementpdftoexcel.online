@@ -19,7 +19,7 @@ from parsers.kvb_parser import KVBParser
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max file size for Railway deployment
 
 # Initialize SocketIO with proper configuration for production
 socketio = SocketIO(
@@ -279,7 +279,7 @@ def detailed_health():
 
 @app.errorhandler(413)
 def too_large(e):
-    flash('File too large. Maximum size is 100MB.', 'error')
+    flash('File too large. Maximum size is 20MB.', 'error')
     return redirect(url_for('index'))
 
 # For deployment with gunicorn, we need to expose the SocketIO app
