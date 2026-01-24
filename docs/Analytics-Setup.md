@@ -7,25 +7,26 @@ The application now supports Google Analytics via gtag.js. This is the primary a
 ### Setup Instructions
 
 1. **Get Your Google Analytics Measurement ID**
-   - Your Measurement ID is: `G-0JE91PLP8C`
-   - Format: `G-XXXXXXXXXX`
+   - Go to [Google Analytics](https://analytics.google.com/)
+   - Create a property for your website
+   - Copy your Measurement ID (format: `G-XXXXXXXXXX`)
 
 2. **Set Environment Variable**
 
    **For Local Development (.env file):**
    ```env
-   GA_MEASUREMENT_ID=G-0JE91PLP8C
+   GA_MEASUREMENT_ID=G-XXXXXXXXXX
    ```
 
    **For Production (Railway/Heroku/etc.):**
    - Set the environment variable `GA_MEASUREMENT_ID` in your deployment platform
-   - Value: `G-0JE91PLP8C`
+   - Value: Your Google Analytics Measurement ID (e.g., `G-ABC123DEF4`)
 
 3. **Verify Installation**
    - Deploy your application
    - Visit your website
    - Open browser DevTools → Network tab
-   - Look for requests to `googletagmanager.com/gtag/js?id=G-0JE91PLP8C`
+   - Look for requests to `googletagmanager.com/gtag/js?id=G-XXXXXXXXXX` (with your actual ID)
    - Check Google Analytics Real-Time reports to see if visits are being tracked
 
 ## Google Tag Manager (Optional)
@@ -33,7 +34,7 @@ The application now supports Google Analytics via gtag.js. This is the primary a
 If you also want to use Google Tag Manager, you can set both:
 
 ```env
-GA_MEASUREMENT_ID=G-0JE91PLP8C
+GA_MEASUREMENT_ID=G-XXXXXXXXXX
 GTM_CONTAINER_ID=GTM-XXXXXXX
 ```
 
@@ -74,7 +75,7 @@ gtag('event', 'conversion_complete', {
 
 ## Testing
 
-1. Set `GA_MEASUREMENT_ID=G-0JE91PLP8C` in your environment
+1. Set `GA_MEASUREMENT_ID=your-measurement-id` in your environment
 2. Deploy or run locally
 3. Visit your website
 4. Check Google Analytics Real-Time reports

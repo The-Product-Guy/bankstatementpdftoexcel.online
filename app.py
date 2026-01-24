@@ -26,7 +26,7 @@ from storage_utils import get_storage_config, upload_file, generate_presigned_ur
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max file size for Railway deployment
-app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')  # Google Analytics Measurement ID (e.g., G-0JE91PLP8C)
+app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')  # Google Analytics Measurement ID (e.g., G-XXXXXXXXXX)
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')  # Google Tag Manager Container ID (optional)
 
 # Initialize SocketIO with proper configuration for production
