@@ -30,4 +30,4 @@ RUN mkdir -p uploads processed
 EXPOSE 5000
 
 # Command to run (will be overridden by Railway service config)
-CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "app:app", "--bind", "0.0.0.0:5000"]
+CMD ["sh", "-c", "gunicorn --worker-class eventlet -w 1 app:app --bind 0.0.0.0:${PORT:-5000}"]
