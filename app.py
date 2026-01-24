@@ -38,7 +38,8 @@ socketio = SocketIO(
 )
 
 # Create uploads directory if it doesn't exist
-UPLOAD_FOLDER = 'uploads'
+STORAGE_ROOT = os.environ.get('SHARED_STORAGE_PATH')
+UPLOAD_FOLDER = os.path.join(STORAGE_ROOT, 'uploads') if STORAGE_ROOT else 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
