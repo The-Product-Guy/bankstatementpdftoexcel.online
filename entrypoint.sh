@@ -10,12 +10,11 @@ if [ "${SERVICE_ROLE}" = "worker" ]; then
   exec celery -A celery_config.celery_app worker --loglevel=info
 fi
 
-# Railway injects PORT - bind on both IPv4 and IPv6 with fallback to 8080
+# Railway injects PORT - bind on IPv4 with fallback to 8080
 PORT_TO_USE=${PORT:-8080}
-echo "Binding Gunicorn on 0.0.0.0:${PORT_TO_USE} and [::]:${PORT_TO_USE}"
+echo "Binding Gunicorn on 0.0.0.0:${PORT_TO_USE}"
 exec gunicorn app:app \
   --bind 0.0.0.0:${PORT_TO_USE} \
-  --bind [::]:${PORT_TO_USE} \
   --workers 1 \
   --timeout 120 \
   --graceful-timeout 30 \
