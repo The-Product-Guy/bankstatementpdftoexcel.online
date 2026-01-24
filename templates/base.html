@@ -15,20 +15,22 @@
     {# Open Graph / Facebook #}
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">
     <meta property="og:url" content="{% block og_url %}{{ request.url }}{% endblock %}">
-    <meta property="og:title" content="{% block og_title %}{% block title %}PDF to Excel Converter - Convert Bank Statements Online{% endblock %}{% endblock %}">
-    <meta property="og:description" content="{% block og_description %}{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports HDFC, ICICI, KVB banks. Free, secure, and fast conversion tool.{% endblock %}{% endblock %}">
-    <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='og-image.jpg', _external=True) }}{% endblock %}">
+    <meta property="og:title" content="{% block og_title %}{{ self.title()|striptags }}{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}{{ self.meta_description()|striptags }}{% endblock %}">
+    <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='og-image.png', _external=True) }}{% endblock %}">
     <meta property="og:site_name" content="PDF to Excel Converter">
     
     {# Twitter #}
     <meta property="twitter:card" content="summary_large_image">
     <meta property="twitter:url" content="{% block twitter_url %}{{ request.url }}{% endblock %}">
-    <meta property="twitter:title" content="{% block twitter_title %}{% block title %}PDF to Excel Converter - Convert Bank Statements Online{% endblock %}{% endblock %}">
-    <meta property="twitter:description" content="{% block twitter_description %}{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports HDFC, ICICI, KVB banks. Free, secure, and fast conversion tool.{% endblock %}{% endblock %}">
-    <meta property="twitter:image" content="{% block twitter_image %}{{ url_for('static', filename='og-image.jpg', _external=True) }}{% endblock %}">
+    <meta property="twitter:title" content="{% block twitter_title %}{{ self.title()|striptags }}{% endblock %}">
+    <meta property="twitter:description" content="{% block twitter_description %}{{ self.meta_description()|striptags }}{% endblock %}">
+    <meta property="twitter:image" content="{% block twitter_image %}{{ url_for('static', filename='og-image.png', _external=True) }}{% endblock %}">
     
     {# Favicon #}
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
     
     {# Stylesheets #}
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
