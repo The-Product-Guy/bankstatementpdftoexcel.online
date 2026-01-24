@@ -21,6 +21,7 @@ from parsers.hdfc_parser import HDFCParser
 from parsers.icici_parser import ICICIParser
 from parsers.kvb_parser import KVBParser
 from parsers.universal_parser import UniversalBankParser, ProcessingConfig
+from storage_utils import get_storage_config, upload_file, generate_presigned_url
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -124,6 +125,18 @@ def convert():
         unique_filename = f"{job_id}_{filename}"
         filepath = os.path.join(os.path.abspath(UPLOAD_FOLDER), unique_filename)
         pdf_file.save(filepath)
+
+        storage = get_storage_config()
+        if storage:
+            object_key = f"uploads/{job_id}/{filename}"
+            upload_file(storage, filepath, object_key)
+            file_ref = {"type": "s3", "key": object_key}
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+        else:
+            file_ref = {"type": "local", "path": filepath}
         
         # Get optional API key
         api_key = request.form.get('api_key')
@@ -139,7 +152,7 @@ def convert():
         
         # Trigger Celery Task
         from worker import process_pdf_task
-        task = process_pdf_task.delay(filepath, filename, job_id, api_key)
+        task = process_pdf_task.delay(file_ref, filename, job_id, api_key)
         
         # Return JSON response for AJAX handling, or redirect for legacy
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -181,15 +194,20 @@ def job_status(job_id):
             
             # Check for completion to provide download link
             if data.get('percent') >= 100 or data.get('status') == 'Completed successfully':
-                # Find the actual Excel file in the processed directory
-                processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), 'processed'
-                )
-                processed_dir = os.path.join(processed_root, job_id)
-                if os.path.exists(processed_dir):
-                    excel_files = [f for f in os.listdir(processed_dir) if f.endswith('.xlsx')]
-                    if excel_files:
-                        data['download_url'] = url_for('download_result', job_id=job_id, filename=excel_files[0])
+                if data.get('storage') == 's3' and data.get('download_key'):
+                    storage = get_storage_config()
+                    if storage:
+                        data['download_url'] = generate_presigned_url(storage, data['download_key'])
+                else:
+                    # Find the actual Excel file in the processed directory
+                    processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), 'processed'
+                    )
+                    processed_dir = os.path.join(processed_root, job_id)
+                    if os.path.exists(processed_dir):
+                        excel_files = [f for f in os.listdir(processed_dir) if f.endswith('.xlsx')]
+                        if excel_files:
+                            data['download_url'] = url_for('download_result', job_id=job_id, filename=excel_files[0])
             
             return jsonify(data)
         except Exception as e:

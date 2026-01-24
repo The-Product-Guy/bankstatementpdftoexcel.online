@@ -38,3 +38,6 @@ redis>=5.0.0
 # Async Task Queue
 celery==5.3.6
 python-socketio>=5.7.0
+
+# Object storage
+boto3>=1.34.0

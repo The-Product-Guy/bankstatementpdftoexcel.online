@@ -4,10 +4,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-import shutil
+import tempfile
 import redis
 from celery_config import celery_app
 from parsers.universal_parser import create_universal_parser
+from storage_utils import get_storage_config, download_file, upload_file
 import logging
 import pandas as pd
 
@@ -23,7 +24,7 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.StrictRedis.from_url(redis_url)
 
-def update_progress(job_id, current, total, status_message, percent_override=None):
+def update_progress(job_id, current, total, status_message, percent_override=None, extra=None):
     """Publish progress update to Redis channel"""
     try:
         if percent_override is not None:
@@ -40,6 +41,8 @@ def update_progress(job_id, current, total, status_message, percent_override=Non
             'percent': percent,
             'status': status_message
         }
+        if extra:
+            message.update(extra)
         
         # Publish to job-specific channel
         channel = f"job_progress:{job_id}"
@@ -51,7 +54,7 @@ def update_progress(job_id, current, total, status_message, percent_override=Non
         logger.error(f"Failed to update progress: {str(e)}")
 
 @celery_app.task(bind=True, name='worker.process_pdf')
-def process_pdf_task(self, file_path, original_filename, job_id, api_key=None):
+def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
     """
     Celery task to process a PDF file.
     """
@@ -61,7 +64,29 @@ def process_pdf_task(self, file_path, original_filename, job_id, api_key=None):
     if api_key:
         os.environ['OPENAI_API_KEY'] = api_key
     
+    temp_dir = None
+    local_input_path = None
     try:
+        storage = get_storage_config()
+        if isinstance(file_ref, dict):
+            ref_type = file_ref.get("type")
+            if ref_type == "s3":
+                if not storage:
+                    raise RuntimeError("Storage is not configured for S3 input.")
+                temp_dir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
+                local_input_path = os.path.join(temp_dir, original_filename)
+                download_file(storage, file_ref.get("key"), local_input_path)
+                file_path = local_input_path
+            elif ref_type == "local":
+                file_path = file_ref.get("path")
+            else:
+                raise RuntimeError(f"Unsupported file_ref type: {ref_type}")
+        else:
+            file_path = file_ref
+
+        if not file_path or not os.path.exists(file_path):
+            raise FileNotFoundError(f"PDF file not found: {file_path}")
+
         # Define progress callback wrapper
         def progress_callback(data):
             current_page = data.get('current_page') or data.get('page_num') or data.get('current') or 0
@@ -126,11 +151,35 @@ def process_pdf_task(self, file_path, original_filename, job_id, api_key=None):
         if raw_table:
             raw_df = pd.DataFrame(raw_table["rows"], columns=raw_table["columns"])
             raw_df.to_excel(excel_path, index=False)
-            update_progress(job_id, 100, 100, "Completed successfully", percent_override=100)
+            if storage:
+                output_key = f"outputs/{job_id}/{excel_filename}"
+                upload_file(storage, excel_path, output_key)
+                update_progress(
+                    job_id,
+                    100,
+                    100,
+                    "Completed successfully",
+                    percent_override=100,
+                    extra={"storage": "s3", "download_key": output_key}
+                )
+            else:
+                update_progress(job_id, 100, 100, "Completed successfully", percent_override=100)
         else:
             # Create empty Excel if no raw table was extracted
             pd.DataFrame().to_excel(excel_path, index=False)
-            update_progress(job_id, 100, 100, "Completed - no data extracted", percent_override=100)
+            if storage:
+                output_key = f"outputs/{job_id}/{excel_filename}"
+                upload_file(storage, excel_path, output_key)
+                update_progress(
+                    job_id,
+                    100,
+                    100,
+                    "Completed - no data extracted",
+                    percent_override=100,
+                    extra={"storage": "s3", "download_key": output_key}
+                )
+            else:
+                update_progress(job_id, 100, 100, "Completed - no data extracted", percent_override=100)
         
         return {
             'status': 'success',
@@ -149,6 +198,13 @@ def process_pdf_task(self, file_path, original_filename, job_id, api_key=None):
             'error': str(e)
         }
     finally:
-        # Cleanup uploaded file if configured to do so
-        # os.remove(file_path) # Uncomment in production
-        pass
+        if local_input_path and os.path.exists(local_input_path):
+            try:
+                os.remove(local_input_path)
+            except Exception:
+                pass
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
