@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Bank Statement Conversion Guides & Tips | Blog - PDF to Excel Converter{% endblock %}
+
+{% block meta_description %}Learn how to convert bank statements, manage financial data, and optimize your Excel workflows. Expert guides and tutorials on PDF to Excel conversion.{% endblock %}
+
+{% block meta_keywords %}bank statement guide, pdf to excel tutorial, financial data management, excel tips, bank statement conversion guide{% endblock %}
+
+{% block canonical_url %}{{ url_for('blogs', _external=True) }}{% endblock %}
+
+{% block og_type %}website{% endblock %}
+
+{% block structured_data %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  "name": "PDF to Excel Converter Blog",
+  "description": "Guides and tips for converting bank statements to Excel format",
+  "url": "{{ url_for('blogs', _external=True) }}",
+  "publisher": {
+    "@type": "Organization",
+    "name": "PDF to Excel Converter",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "{{ url_for('static', filename='logo.png', _external=True) }}"
+    }
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "{{ url_for('home', _external=True) }}"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Blogs",
+      "item": "{{ url_for('blogs', _external=True) }}"
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<header class="header">
+    <h1><i class="fas fa-blog"></i> Blog & Guides</h1>
+    <p class="subtitle">Learn how to convert bank statements and manage your financial data</p>
+</header>
+
+<main class="main-content">
+    <div class="blog-hero">
+        <h2>Welcome to Our Blog</h2>
+        <p>Discover expert tips, tutorials, and guides on converting bank statements to Excel format, managing financial data, and optimizing your workflow.</p>
+    </div>
+
+    <div class="blog-categories">
+        <h3>Categories</h3>
+        <div class="category-tags">
+            <span class="category-tag active">All</span>
+            <span class="category-tag">Tutorials</span>
+            <span class="category-tag">Tips & Tricks</span>
+            <span class="category-tag">Bank Guides</span>
+            <span class="category-tag">Excel Tips</span>
+        </div>
+    </div>
+
+    <div class="blog-posts">
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-graduation-cap"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 27, 2025</span>
+                    <span class="blog-post-category">Tutorial</span>
+                </div>
+                <h3><a href="#">How to Convert HDFC Bank Statements to Excel</a></h3>
+                <p>Step-by-step guide on converting HDFC Bank PDF statements to Excel format. Learn about OCR processing and how to handle image-based PDFs.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-lightbulb"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 25, 2025</span>
+                    <span class="blog-post-category">Tips</span>
+                </div>
+                <h3><a href="#">5 Excel Tips for Managing Bank Statement Data</a></h3>
+                <p>Discover powerful Excel formulas and techniques to analyze your converted bank statement data. Learn about pivot tables, filters, and more.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-shield-alt"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 23, 2025</span>
+                    <span class="blog-post-category">Security</span>
+                </div>
+                <h3><a href="#">Security Best Practices for Financial Documents</a></h3>
+                <p>Learn how to securely handle and process your bank statements. Understand data privacy and security measures when converting financial documents.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-university"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 20, 2025</span>
+                    <span class="blog-post-category">Guide</span>
+                </div>
+                <h3><a href="#">ICICI Bank Statement Conversion Guide</a></h3>
+                <p>Complete guide to converting ICICI Bank statements. Understand text-based PDF processing and how to extract transaction data accurately.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-chart-bar"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 18, 2025</span>
+                    <span class="blog-post-category">Analysis</span>
+                </div>
+                <h3><a href="#">Analyzing Your Financial Data in Excel</a></h3>
+                <p>Learn how to create meaningful financial reports from your converted bank statements. Discover charts, graphs, and analysis techniques.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+
+        <article class="blog-post-card">
+            <div class="blog-post-image">
+                <i class="fas fa-question-circle"></i>
+            </div>
+            <div class="blog-post-content">
+                <div class="blog-post-meta">
+                    <span class="blog-post-date"><i class="fas fa-calendar"></i> January 15, 2025</span>
+                    <span class="blog-post-category">FAQ</span>
+                </div>
+                <h3><a href="#">Frequently Asked Questions About PDF to Excel Conversion</a></h3>
+                <p>Get answers to common questions about converting bank statements. Learn about supported formats, file sizes, and processing times.</p>
+                <a href="#" class="read-more">Read More <i class="fas fa-arrow-right"></i></a>
+            </div>
+        </article>
+    </div>
+
+    <div class="blog-cta">
+        <h3>Ready to Convert Your Bank Statements?</h3>
+        <p>Start converting your PDF bank statements to Excel format now. It's free, secure, and fast!</p>
+        <a href="{{ url_for('home') }}#convert" class="cta-button">Convert Now <i class="fas fa-arrow-right"></i></a>
+    </div>
+</main>
+{% endblock %}

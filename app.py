@@ -26,6 +26,8 @@ from storage_utils import get_storage_config, upload_file, generate_presigned_ur
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max file size for Railway deployment
+app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')  # Google Analytics Measurement ID (e.g., G-0JE91PLP8C)
+app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')  # Google Tag Manager Container ID (optional)
 
 # Initialize SocketIO with proper configuration for production
 socketio = SocketIO(
@@ -91,10 +93,25 @@ def progress_callback(progress_data):
     socketio.emit('progress_update', progress_data)
 
 @app.route('/')
-def index():
-    """Main upload page"""
+def home():
+    """Home page with upload functionality"""
     cleanup_old_files()
-    return render_template('index.html', banks=SUPPORTED_BANKS)
+    return render_template('home.html', banks=SUPPORTED_BANKS)
+
+@app.route('/index')
+def index():
+    """Legacy route - redirect to home"""
+    return redirect(url_for('home'))
+
+@app.route('/blogs')
+def blogs():
+    """Blogs page"""
+    return render_template('blogs.html')
+
+@app.route('/pricing')
+def pricing():
+    """Pricing page"""
+    return render_template('pricing.html')
 
 @app.route('/convert', methods=['POST'])
 def convert():
@@ -103,7 +120,7 @@ def convert():
         # Validate form data
         if 'pdf_file' not in request.files:
             flash('Please upload a PDF file.', 'error')
-            return redirect(url_for('index'))
+            return redirect(url_for('home'))
 
         bank_code = request.form.get('bank', 'universal')
         pdf_file = request.files['pdf_file']
@@ -111,11 +128,11 @@ def convert():
         # Validate file
         if pdf_file.filename == '':
             flash('No file selected.', 'error')
-            return redirect(url_for('index'))
+            return redirect(url_for('home'))
             
         if not allowed_file(pdf_file.filename):
             flash('Please upload a PDF file.', 'error')
-            return redirect(url_for('index'))
+            return redirect(url_for('home'))
         
         # Generate unique job ID
         job_id = str(uuid.uuid4())
@@ -175,7 +192,7 @@ def convert():
                 os.remove(filepath)
         except:
             pass
-        return redirect(url_for('index'))
+        return redirect(url_for('home'))
 
 
 @app.route('/status/<job_id>')
@@ -226,7 +243,7 @@ def download_result(job_id, filename):
     
     if not os.path.exists(filepath):
         flash('File not found. It may have expired.', 'error')
-        return redirect(url_for('index'))
+        return redirect(url_for('home'))
     
     return send_file(filepath, as_attachment=True, download_name=filename)
 
@@ -289,7 +306,56 @@ def detailed_health():
 @app.errorhandler(413)
 def too_large(e):
     flash('File too large. Maximum size is 20MB.', 'error')
-    return redirect(url_for('index'))
+    return redirect(url_for('home'))
+
+@app.route('/sitemap.xml')
+def sitemap():
+    """Generate sitemap.xml for SEO"""
+    from flask import Response
+    base_url = request.url_root.rstrip('/')
+    
+    sitemap_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>{base_url}/</loc>
+        <lastmod>2025-01-27</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+    </url>
+    <url>
+        <loc>{base_url}/blogs</loc>
+        <lastmod>2025-01-27</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>0.8</priority>
+    </url>
+    <url>
+        <loc>{base_url}/pricing</loc>
+        <lastmod>2025-01-27</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.9</priority>
+    </url>
+</urlset>"""
+    
+    return Response(sitemap_content, mimetype='application/xml')
+
+@app.route('/robots.txt')
+def robots():
+    """Generate robots.txt for SEO"""
+    from flask import Response
+    base_url = request.url_root.rstrip('/')
+    
+    robots_content = f"""User-agent: *
+Allow: /
+Allow: /blogs
+Allow: /pricing
+Disallow: /uploads/
+Disallow: /processed/
+Disallow: /status/
+Disallow: /download/
+
+Sitemap: {base_url}/sitemap.xml"""
+    
+    return Response(robots_content, mimetype='text/plain')
 
 # For deployment with gunicorn, we need to expose the SocketIO app
 # This allows gunicorn to use: gunicorn app:socketio

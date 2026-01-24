@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Pricing Plans - PDF to Excel Converter | Affordable Bank Statement Tools{% endblock %}
+
+{% block meta_description %}Choose the perfect plan for your bank statement conversion needs. Free tier available. Premium features for power users with advanced OCR and batch processing.{% endblock %}
+
+{% block meta_keywords %}pdf to excel pricing, bank statement converter pricing, excel converter plans, pdf converter cost, free pdf converter{% endblock %}
+
+{% block canonical_url %}{{ url_for('pricing', _external=True) }}{% endblock %}
+
+{% block og_type %}website{% endblock %}
+
+{% block structured_data %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "{{ url_for('home', _external=True) }}"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Pricing",
+      "item": "{{ url_for('pricing', _external=True) }}"
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<header class="header">
+    <h1><i class="fas fa-tags"></i> Pricing Plans</h1>
+    <p class="subtitle">Choose the perfect plan for your bank statement conversion needs</p>
+</header>
+
+<main class="main-content">
+    <div class="pricing-intro">
+        <h2>Simple, Transparent Pricing</h2>
+        <p>Start free and upgrade as you need. No hidden fees, cancel anytime.</p>
+    </div>
+
+    <div class="pricing-plans">
+        <div class="pricing-card">
+            <div class="pricing-header">
+                <h3>Free</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$0</span>
+                    <span class="price-period">/month</span>
+                </div>
+                <p class="pricing-description">Perfect for occasional use</p>
+            </div>
+            <div class="pricing-features">
+                <ul>
+                    <li><i class="fas fa-check"></i> 5 conversions per month</li>
+                    <li><i class="fas fa-check"></i> Files up to 20MB</li>
+                    <li><i class="fas fa-check"></i> HDFC, ICICI, KVB support</li>
+                    <li><i class="fas fa-check"></i> Basic OCR processing</li>
+                    <li><i class="fas fa-check"></i> Standard processing speed</li>
+                    <li><i class="fas fa-check"></i> Email support</li>
+                </ul>
+            </div>
+            <div class="pricing-cta">
+                <a href="{{ url_for('home') }}#convert" class="pricing-button">Get Started Free</a>
+            </div>
+        </div>
+
+        <div class="pricing-card featured">
+            <div class="pricing-badge">Most Popular</div>
+            <div class="pricing-header">
+                <h3>Pro</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$9.99</span>
+                    <span class="price-period">/month</span>
+                </div>
+                <p class="pricing-description">For regular users and small businesses</p>
+            </div>
+            <div class="pricing-features">
+                <ul>
+                    <li><i class="fas fa-check"></i> 50 conversions per month</li>
+                    <li><i class="fas fa-check"></i> Files up to 100MB</li>
+                    <li><i class="fas fa-check"></i> All bank formats supported</li>
+                    <li><i class="fas fa-check"></i> Advanced OCR processing</li>
+                    <li><i class="fas fa-check"></i> Priority processing</li>
+                    <li><i class="fas fa-check"></i> Priority email support</li>
+                    <li><i class="fas fa-check"></i> Batch processing (up to 5 files)</li>
+                </ul>
+            </div>
+            <div class="pricing-cta">
+                <a href="{{ url_for('home') }}#convert" class="pricing-button featured">Start Pro Trial</a>
+            </div>
+        </div>
+
+        <div class="pricing-card">
+            <div class="pricing-header">
+                <h3>Enterprise</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$29.99</span>
+                    <span class="price-period">/month</span>
+                </div>
+                <p class="pricing-description">For teams and high-volume users</p>
+            </div>
+            <div class="pricing-features">
+                <ul>
+                    <li><i class="fas fa-check"></i> Unlimited conversions</li>
+                    <li><i class="fas fa-check"></i> Files up to 500MB</li>
+                    <li><i class="fas fa-check"></i> All bank formats + custom formats</li>
+                    <li><i class="fas fa-check"></i> Premium OCR with AI enhancement</li>
+                    <li><i class="fas fa-check"></i> Fastest processing speed</li>
+                    <li><i class="fas fa-check"></i> 24/7 priority support</li>
+                    <li><i class="fas fa-check"></i> Unlimited batch processing</li>
+                    <li><i class="fas fa-check"></i> API access</li>
+                    <li><i class="fas fa-check"></i> Custom integrations</li>
+                </ul>
+            </div>
+            <div class="pricing-cta">
+                <a href="{{ url_for('home') }}#convert" class="pricing-button">Contact Sales</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="pricing-faq">
+        <h2>Frequently Asked Questions</h2>
+        <div class="faq-grid">
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> Can I change plans anytime?</h4>
+                <p>Yes, you can upgrade or downgrade your plan at any time. Changes take effect immediately.</p>
+            </div>
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> What payment methods do you accept?</h4>
+                <p>We accept all major credit cards, debit cards, and PayPal. Enterprise plans can be invoiced.</p>
+            </div>
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> Is there a free trial?</h4>
+                <p>Yes! The Free plan is always free. Pro and Enterprise plans come with a 14-day free trial.</p>
+            </div>
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> What happens if I exceed my plan limits?</h4>
+                <p>You'll be notified when you're approaching your limit. You can upgrade your plan or wait for the next billing cycle.</p>
+            </div>
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> Are my files secure?</h4>
+                <p>Absolutely. All files are processed securely and automatically deleted after conversion. We never store your financial data.</p>
+            </div>
+            <div class="faq-item">
+                <h4><i class="fas fa-question-circle"></i> Can I cancel anytime?</h4>
+                <p>Yes, you can cancel your subscription at any time. No questions asked, no cancellation fees.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="pricing-cta-section">
+        <h2>Ready to Get Started?</h2>
+        <p>Start converting your bank statements today. No credit card required for the free plan.</p>
+        <a href="{{ url_for('home') }}#convert" class="cta-button-large">Start Converting Now <i class="fas fa-arrow-right"></i></a>
+    </div>
+</main>
+{% endblock %}

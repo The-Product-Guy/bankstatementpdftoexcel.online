@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    {# Primary Meta Tags #}
+    <title>{% block title %}PDF to Excel Converter - Convert Bank Statements Online{% endblock %}</title>
+    <meta name="description" content="{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports HDFC, ICICI, KVB banks. Free, secure, and fast conversion tool with OCR technology.{% endblock %}">
+    <meta name="keywords" content="{% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, hdfc statement, icici statement, bank statement excel{% endblock %}">
+    <meta name="author" content="PDF to Excel Converter">
+    <meta name="robots" content="{% block robots %}index, follow{% endblock %}">
+    <link rel="canonical" href="{% block canonical_url %}{{ request.url }}{% endblock %}">
+    
+    {# Open Graph / Facebook #}
+    <meta property="og:type" content="{% block og_type %}website{% endblock %}">
+    <meta property="og:url" content="{% block og_url %}{{ request.url }}{% endblock %}">
+    <meta property="og:title" content="{% block og_title %}{% block title %}PDF to Excel Converter - Convert Bank Statements Online{% endblock %}{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports HDFC, ICICI, KVB banks. Free, secure, and fast conversion tool.{% endblock %}{% endblock %}">
+    <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='og-image.jpg', _external=True) }}{% endblock %}">
+    <meta property="og:site_name" content="PDF to Excel Converter">
+    
+    {# Twitter #}
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="{% block twitter_url %}{{ request.url }}{% endblock %}">
+    <meta property="twitter:title" content="{% block twitter_title %}{% block title %}PDF to Excel Converter - Convert Bank Statements Online{% endblock %}{% endblock %}">
+    <meta property="twitter:description" content="{% block twitter_description %}{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports HDFC, ICICI, KVB banks. Free, secure, and fast conversion tool.{% endblock %}{% endblock %}">
+    <meta property="twitter:image" content="{% block twitter_image %}{{ url_for('static', filename='og-image.jpg', _external=True) }}{% endblock %}">
+    
+    {# Favicon #}
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    
+    {# Stylesheets #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    {# Structured Data (JSON-LD) #}
+    {% block structured_data %}{% endblock %}
+    
+    {# Google Analytics (gtag.js) #}
+    {% if config.get('GA_MEASUREMENT_ID') %}
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id={{ config.get('GA_MEASUREMENT_ID') }}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', '{{ config.get("GA_MEASUREMENT_ID") }}');
+    </script>
+    {% endif %}
+    
+    {# Google Tag Manager #}
+    {% if config.get('GTM_CONTAINER_ID') %}
+    <!-- Google Tag Manager -->
+    <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer','{{ config.get("GTM_CONTAINER_ID") }}');</script>
+    <!-- End Google Tag Manager -->
+    {% endif %}
+    
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    {# Google Tag Manager (noscript) - Only needed if GTM is used #}
+    {% if config.get('GTM_CONTAINER_ID') %}
+    <!-- Google Tag Manager (noscript) -->
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id={{ config.get('GTM_CONTAINER_ID') }}"
+    height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+    <!-- End Google Tag Manager (noscript) -->
+    {% endif %}
+    
+    {# Navigation #}
+    <nav class="main-nav">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <a href="{{ url_for('home') }}">
+                    <i class="fas fa-file-excel"></i>
+                    <span>PDF to Excel</span>
+                </a>
+            </div>
+            <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="{{ url_for('home') }}" {% if request.endpoint == 'home' %}class="active"{% endif %}>Home</a></li>
+                <li><a href="{{ url_for('blogs') }}" {% if request.endpoint == 'blogs' %}class="active"{% endif %}>Blogs</a></li>
+                <li><a href="{{ url_for('pricing') }}" {% if request.endpoint == 'pricing' %}class="active"{% endif %}>Pricing</a></li>
+                <li><a href="{{ url_for('home') }}#convert" class="nav-cta">Convert Now</a></li>
+            </ul>
+        </div>
+    </nav>
+    
+    {# Main Content #}
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+    
+    {# Footer #}
+    <footer class="main-footer">
+        <div class="footer-container">
+            <div class="footer-section">
+                <h3><i class="fas fa-file-excel"></i> PDF to Excel Converter</h3>
+                <p>Convert bank statement PDFs to Excel format with ease. Secure, fast, and free.</p>
+            </div>
+            <div class="footer-section">
+                <h4>Quick Links</h4>
+                <ul>
+                    <li><a href="{{ url_for('home') }}">Home</a></li>
+                    <li><a href="{{ url_for('blogs') }}">Blogs</a></li>
+                    <li><a href="{{ url_for('pricing') }}">Pricing</a></li>
+                    <li><a href="{{ url_for('home') }}#convert">Convert PDF</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Support</h4>
+                <ul>
+                    <li><a href="{{ url_for('blogs') }}">Help Center</a></li>
+                    <li><a href="{{ url_for('blogs') }}">Tutorials</a></li>
+                    <li><a href="{{ url_for('blogs') }}">FAQs</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Legal</h4>
+                <ul>
+                    <li><a href="{{ url_for('blogs') }}">Privacy</a></li>
+                    <li><a href="{{ url_for('blogs') }}">Terms of Service</a></li>
+                    <li><a href="{{ url_for('blogs') }}">Privacy Policy</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2025 PDF to Excel Converter. All rights reserved.</p>
+            <p><i class="fas fa-shield-alt"></i> Your files are processed securely and automatically deleted after conversion.</p>
+        </div>
+    </footer>
+    
+    {# Scripts #}
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    {% block scripts %}{% endblock %}
+    
+    {# Navigation Toggle Script #}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const navToggle = document.getElementById('navToggle');
+            const navMenu = document.getElementById('navMenu');
+            
+            if (navToggle && navMenu) {
+                navToggle.addEventListener('click', function() {
+                    navMenu.classList.toggle('active');
+                    navToggle.classList.toggle('active');
+                });
+            }
+        });
+    </script>
+</body>
+</html>
