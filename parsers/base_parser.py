@@ -139,15 +139,18 @@ class BaseParser(ABC):
         print(f"    • Transactions found: {transactions_found:,}")
         print(f"    • Success rate: {(transactions_found/total_lines_processed*100):.2f}%" if total_lines_processed > 0 else "    • Success rate: 0%")
     
-    def emit_progress(self, current_page, total_pages, status="Processing"):
+    def emit_progress(self, current_page, total_pages, status="Processing", stage=None):
         """Emit progress update if callback is available"""
         if self.progress_callback:
-            self.progress_callback({
+            payload = {
                 'current_page': current_page,
                 'total_pages': total_pages,
                 'status': status,
                 'percentage': int((current_page / total_pages) * 100) if total_pages > 0 else 0
-            })
+            }
+            if stage:
+                payload['stage'] = stage
+            self.progress_callback(payload)
 
     @staticmethod
     def detect_pdf_type(pdf_path):

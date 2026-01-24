@@ -3,6 +3,10 @@
 PDF to Excel Converter Web Application
 Supports HDFC and ICICI Bank statements
 """
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import tempfile
 import uuid
@@ -16,6 +20,7 @@ from werkzeug.utils import secure_filename
 from parsers.hdfc_parser import HDFCParser
 from parsers.icici_parser import ICICIParser
 from parsers.kvb_parser import KVBParser
+from parsers.universal_parser import UniversalBankParser, ProcessingConfig
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -39,6 +44,12 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 # Supported banks and their parsers
 SUPPORTED_BANKS = {
+    'universal': {
+        'name': 'Universal (Any Bank)',
+        'parser': UniversalBankParser,
+        'description': 'AI-powered parser for any bank statement (uses OpenAI)',
+        'is_ai': True
+    },
     'hdfc': {
         'name': 'HDFC Bank',
         'parser': HDFCParser,
@@ -84,143 +95,122 @@ def index():
     return render_template('index.html', banks=SUPPORTED_BANKS)
 
 @app.route('/convert', methods=['POST'])
-def convert_pdf():
+def convert():
     """Handle PDF conversion"""
     try:
-        # Lazy import heavy dependencies to speed up app startup
-        import pandas as pd
         # Validate form data
-        if 'bank' not in request.form or 'pdf_file' not in request.files:
-            flash('Please select a bank and upload a PDF file.', 'error')
+        if 'pdf_file' not in request.files:
+            flash('Please upload a PDF file.', 'error')
             return redirect(url_for('index'))
-        
-        bank_code = request.form['bank']
+
+        bank_code = request.form.get('bank', 'universal')
         pdf_file = request.files['pdf_file']
-        
-        # Validate bank selection
-        if bank_code not in SUPPORTED_BANKS:
-            flash('Invalid bank selection.', 'error')
-            return redirect(url_for('index'))
         
         # Validate file
         if pdf_file.filename == '':
             flash('No file selected.', 'error')
             return redirect(url_for('index'))
-        
+            
         if not allowed_file(pdf_file.filename):
             flash('Please upload a PDF file.', 'error')
             return redirect(url_for('index'))
         
-        # Save uploaded file
+        # Generate unique job ID
+        job_id = str(uuid.uuid4())
         filename = secure_filename(pdf_file.filename)
-        unique_filename = f"{uuid.uuid4()}_{filename}"
-        filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save uploaded file with ABSOLUTE path (critical for Celery worker)
+        unique_filename = f"{job_id}_{filename}"
+        filepath = os.path.join(os.path.abspath(UPLOAD_FOLDER), unique_filename)
         pdf_file.save(filepath)
         
-        # Process the PDF
-        bank_info = SUPPORTED_BANKS[bank_code]
-        parser_class = bank_info['parser']
-        parser = parser_class(progress_callback)
+        # Get optional API key
+        api_key = request.form.get('api_key')
         
-        # Emit initial progress
-        socketio.emit('progress_update', {
-            'current_page': 0,
-            'total_pages': 0,
-            'status': 'Starting processing...',
-            'percentage': 0
-        })
-        
-        # Parse transactions
-        transactions = parser.parse(filepath, filename)
-        
-        # Force garbage collection after parsing to free memory
-        gc.collect()
-        
-        if not transactions:
-            flash(f'No transactions found in the {bank_info["name"]} statement. Please check if the PDF format is supported.', 'warning')
-            os.remove(filepath)  # Clean up
-            return redirect(url_for('index'))
-        
-        # Create Excel file
-        df = pd.DataFrame(transactions)
-        
-        # Sort by date if possible
+        # Clear any old status for this job_id (in case it existed)
         try:
-            df['Date_Sort'] = pd.to_datetime(df['Date'], format='%d/%m/%y', errors='coerce')
-            df = df.sort_values('Date_Sort', na_position='last')
-            df = df.drop('Date_Sort', axis=1)
+            import redis
+            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            r = redis.StrictRedis.from_url(redis_url)
+            r.delete(f"job_status:{job_id}")
         except:
             pass
         
-        # Generate output filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"{bank_info['name'].replace(' ', '_')}_Transactions_{timestamp}.xlsx"
-        output_filepath = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4()}_{output_filename}")
+        # Trigger Celery Task
+        from worker import process_pdf_task
+        task = process_pdf_task.delay(filepath, filename, job_id, api_key)
         
-        # Save Excel file
-        df.to_excel(output_filepath, index=False)
-        
-        # Calculate summary
-        total_transactions = len(df)
-        deposits_total = df[df['Transaction_Amount'] > 0]['Transaction_Amount'].sum()
-        withdrawals_total = abs(df[df['Transaction_Amount'] < 0]['Transaction_Amount'].sum())
-        deposits_count = (df['Transaction_Amount'] > 0).sum()
-        withdrawals_count = (df['Transaction_Amount'] < 0).sum()
-        net_amount = deposits_total - withdrawals_total
-        
-        # Get date range
-        date_range = ""
-        try:
-            dates = pd.to_datetime(df['Date'], format='%d/%m/%y', errors='coerce').dropna()
-            if len(dates) > 0:
-                start_date = dates.min().strftime('%d %B %Y')
-                end_date = dates.max().strftime('%d %B %Y')
-                date_range = f"{start_date} to {end_date}"
-        except:
-            pass
-        
-        summary = {
-            'bank_name': bank_info['name'],
-            'total_transactions': total_transactions,
-            'deposits_count': deposits_count,
-            'deposits_total': deposits_total,
-            'withdrawals_count': withdrawals_count, 
-            'withdrawals_total': withdrawals_total,
-            'net_amount': net_amount,
-            'date_range': date_range,
-            'output_filename': output_filename
-        }
-        
-        # Emit completion progress
-        socketio.emit('progress_update', {
-            'current_page': total_transactions,
-            'total_pages': total_transactions,
-            'status': 'Processing complete!',
-            'percentage': 100
-        })
-        
-        # Clean up input file
-        os.remove(filepath)
-        
-        # Return Excel file
-        return send_file(
-            output_filepath,
-            as_attachment=True,
-            download_name=output_filename,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        
+        # Return JSON response for AJAX handling, or redirect for legacy
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'status': 'accepted',
+                'job_id': job_id,
+                'task_id': task.id,
+                'message': 'Processing started'
+            }), 202
+            
+        # For non-AJAX, existing templates might need update or we show a pending page
+        # But per user request, we are moving to Progress Bar approach which implies JS
+        return render_template('processing.html', job_id=job_id, filename=filename)
+    
     except Exception as e:
-        flash(f'Error processing PDF: {str(e)}', 'error')
-        # Clean up files on error
+        flash(f'Error processing request: {str(e)}', 'error')
+        # Clean up uploaded file if it exists
         try:
             if 'filepath' in locals() and os.path.exists(filepath):
                 os.remove(filepath)
-            if 'output_filepath' in locals() and os.path.exists(output_filepath):
-                os.remove(output_filepath)
         except:
             pass
         return redirect(url_for('index'))
+
+
+@app.route('/status/<job_id>')
+def job_status(job_id):
+    """Check job status (fallback/polling)"""
+    import redis
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    r = redis.StrictRedis.from_url(redis_url)
+    
+    # Check Redis for progress
+    status_data = r.get(f"job_status:{job_id}")
+    if status_data:
+        try:
+            import ast
+            data = ast.literal_eval(status_data.decode('utf-8'))
+            
+            # Check for completion to provide download link
+            if data.get('percent') >= 100 or data.get('status') == 'Completed successfully':
+                # Find the actual Excel file in the processed directory
+                processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), 'processed'
+                )
+                processed_dir = os.path.join(processed_root, job_id)
+                if os.path.exists(processed_dir):
+                    excel_files = [f for f in os.listdir(processed_dir) if f.endswith('.xlsx')]
+                    if excel_files:
+                        data['download_url'] = url_for('download_result', job_id=job_id, filename=excel_files[0])
+            
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({'status': 'error', 'percent': 0, 'error': str(e)})
+            
+    return jsonify({'status': 'processing', 'percent': 0})
+
+@app.route('/download/<job_id>/<filename>')
+def download_result(job_id, filename):
+    """Download processed file"""
+    processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'processed'
+    )
+    directory = os.path.join(processed_root, job_id)
+    filepath = os.path.join(directory, filename)
+    
+    if not os.path.exists(filepath):
+        flash('File not found. It may have expired.', 'error')
+        return redirect(url_for('index'))
+    
+    return send_file(filepath, as_attachment=True, download_name=filename)
+
 
 @app.route('/health')
 def health_check():
@@ -289,4 +279,4 @@ if __name__ == '__main__':
     # For local development
     port = int(os.environ.get('PORT', 5001))
     print(f"Starting Flask app on port {port}")
-    socketio.run(app, debug=False, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=False, host='0.0.0.0', port=port)

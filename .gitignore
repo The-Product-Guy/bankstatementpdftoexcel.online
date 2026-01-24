@@ -66,8 +66,17 @@ debug_*.py
 
 # Output files
 output/
+processed/
+output_for_verification/
+dump.rdb
 *.xlsx
 *.csv
+
+# Runtime artifacts
+uploads/*
+!uploads/.keep
+__pycache__/
+.pytest_cache/
 
 # Original input files
 input/

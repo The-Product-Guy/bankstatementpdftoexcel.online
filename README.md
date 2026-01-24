@@ -53,12 +53,40 @@ PDF-XLS-Converter/
 ### Prerequisites
 
 - **Python 3.9+**
-- **Tesseract OCR** (for HDFC Bank processing)
+- **Redis** (Required for background processing)
+- **Tesseract OCR** (for Image-based PDFs)
 - **Poppler utilities** (for PDF processing)
 
-### Quick Start
+### Quick Start (Recommended)
 
-1. **Clone & Setup**
+We provide a script to automatically set up and run the application:
+
+```bash
+./run_local.sh
+```
+
+This script will:
+- Check and install system dependencies (Redis, Tesseract, Poppler) via Homebrew
+- Update Python dependencies
+- Start Redis and Celery worker
+- Launch the Flask application
+
+### Manual Setup
+
+1. **Install System Dependencies**
+   
+   **macOS:**
+   ```bash
+   brew install redis tesseract poppler
+   ```
+   
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install redis-server tesseract-ocr poppler-utils
+   ```
+
+2. **Clone & Setup**
    ```bash
    git clone <your-repo-url>
    cd PDF-XLS-Converter
@@ -66,25 +94,26 @@ PDF-XLS-Converter/
    source venv/bin/activate  # Windows: venv\Scripts\activate
    ```
 
-2. **Install System Dependencies**
-   
-   **macOS:**
-   ```bash
-   brew install tesseract poppler
-   ```
-   
-   **Ubuntu/Debian:**
-   ```bash
-   sudo apt-get update
-   sudo apt-get install tesseract-ocr poppler-utils
-   ```
-
 3. **Install Python Dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Run Application**
+4. **Start Services**
+   
+   You need to run these in separate terminals:
+
+   **Terminal 1 (Redis):**
+   ```bash
+   redis-server
+   ```
+
+   **Terminal 2 (Celery Worker):**
+   ```bash
+   celery -A celery_config.celery_app worker --loglevel=info
+   ```
+
+   **Terminal 3 (Flask App):**
    ```bash
    python app.py
    ```

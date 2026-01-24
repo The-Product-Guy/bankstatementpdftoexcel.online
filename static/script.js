@@ -1,6 +1,4 @@
 // DOM Elements
-const bankSelect = document.getElementById('bank');
-const bankDescription = document.getElementById('bankDescription');
 const fileInput = document.getElementById('pdf_file');
 const fileUploadArea = document.getElementById('fileUploadArea');
 const fileInfo = document.getElementById('fileInfo');
@@ -16,14 +14,8 @@ const progressInfo = document.getElementById('progressInfo');
 // Initialize WebSocket connection
 let socket = null;
 
-// Bank descriptions
-const bankDescriptions = {
-    hdfc: 'Image-based PDF statements (OCR processing)',
-    icici: 'Text-based PDF statements'
-};
-
 // Initialize page
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     checkFormValidity();
     setupEventListeners();
     initializeWebSocket();
@@ -32,34 +24,22 @@ document.addEventListener('DOMContentLoaded', function() {
 // Initialize WebSocket connection
 function initializeWebSocket() {
     socket = io();
-    
-    socket.on('connect', function() {
+
+    socket.on('connect', function () {
         console.log('Connected to server');
     });
-    
-    socket.on('progress_update', function(data) {
+
+    socket.on('progress_update', function (data) {
         updateProgress(data);
     });
-    
-    socket.on('disconnect', function() {
+
+    socket.on('disconnect', function () {
         console.log('Disconnected from server');
     });
 }
 
 // Setup event listeners
 function setupEventListeners() {
-    // Bank selection change
-    bankSelect.addEventListener('change', function() {
-        const selectedBank = this.value;
-        if (selectedBank && bankDescriptions[selectedBank]) {
-            bankDescription.textContent = bankDescriptions[selectedBank];
-            bankDescription.classList.add('show');
-        } else {
-            bankDescription.classList.remove('show');
-        }
-        checkFormValidity();
-    });
-
     // File input change
     fileInput.addEventListener('change', handleFileSelect);
 
@@ -102,7 +82,7 @@ function handleDragLeave(e) {
 function handleFileDrop(e) {
     e.preventDefault();
     fileUploadArea.classList.remove('dragover');
-    
+
     const files = e.dataTransfer.files;
     if (files.length > 0) {
         const file = files[0];
@@ -137,14 +117,14 @@ function validateFile(file) {
         showAlert('Please select a PDF file.', 'error');
         return false;
     }
-    
+
     // Check file size (100MB limit)
     const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
         showAlert('File size exceeds 100MB limit. Please choose a smaller file.', 'error');
         return false;
     }
-    
+
     return true;
 }
 
@@ -152,7 +132,7 @@ function validateFile(file) {
 function displayFileInfo(file) {
     fileName.textContent = file.name;
     fileSize.textContent = formatFileSize(file.size);
-    
+
     // Hide upload area, show file info
     fileUploadArea.style.display = 'none';
     fileInfo.style.display = 'flex';
@@ -169,30 +149,35 @@ function clearFileSelection() {
 // Format file size
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
-    
+
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
+
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 // Check form validity and enable/disable convert button
 function checkFormValidity() {
-    const bankSelected = bankSelect.value !== '';
     const fileSelected = fileInput.files.length > 0;
-    
-    convertBtn.disabled = !(bankSelected && fileSelected);
+
+    convertBtn.disabled = !fileSelected;
 }
 
 // Handle form submission
 function handleFormSubmit(e) {
     e.preventDefault();
-    
-    // Show progress modal
+    // Show loading state on button
+    const btnText = convertBtn.querySelector('.btn-text');
+    const loadingSpinner = convertBtn.querySelector('.loading-spinner');
+
+    if (btnText && loadingSpinner) {
+        btnText.style.display = 'none';
+        loadingSpinner.style.display = 'flex';
+    }
+    convertBtn.disabled = true;
+
     showProgressModal();
-    
-    // Submit form via fetch to handle response properly
     submitFormWithProgress();
 }
 
@@ -219,7 +204,7 @@ function resetProgressSteps() {
         } else {
             step.style.opacity = '0.5';
         }
-        
+
         // Reset status icons
         const statusIcon = step.querySelector('.step-status i');
         if (index === 0) {
@@ -232,21 +217,24 @@ function resetProgressSteps() {
 
 // Update progress based on real-time data from server
 function updateProgress(data) {
-    const { current_page, total_pages, status, percentage } = data;
-    
+    const currentPage = data.current_page ?? data.current ?? 0;
+    const totalPages = data.total_pages ?? data.total ?? 0;
+    const status = data.status || 'Processing...';
+    const percentage = data.percent ?? data.percentage ?? 0;
+
     // Update progress bar
     progressFill.style.width = percentage + '%';
-    
+
     // Update progress info text
-    if (current_page > 0 && total_pages > 0) {
-        progressInfo.textContent = `${status} - Page ${current_page} of ${total_pages} (${percentage}%)`;
+    if (currentPage > 0 && totalPages > 0) {
+        progressInfo.textContent = `${status} - Page ${currentPage} of ${totalPages} (${percentage}%)`;
     } else {
         progressInfo.textContent = status;
     }
-    
+
     // Update step indicators based on progress
     const steps = document.querySelectorAll('.progress-step');
-    
+
     if (percentage <= 25) {
         // Step 1: Loading PDF
         updateStepStatus(steps[0], 'active');
@@ -277,10 +265,10 @@ function updateProgress(data) {
 // Update individual step status
 function updateStepStatus(step, status) {
     const statusIcon = step.querySelector('.step-status i');
-    
+
     step.classList.remove('active', 'completed');
     step.style.opacity = status === 'pending' ? '0.5' : '1';
-    
+
     if (status === 'active') {
         step.classList.add('active');
         statusIcon.className = 'fas fa-spinner fa-spin';
@@ -292,20 +280,95 @@ function updateStepStatus(step, status) {
     }
 }
 
+let activeJobId = null;
+let downloadTriggered = false;
+let completionPolls = 0;
+
+function startStatusPolling(jobId) {
+    activeJobId = jobId;
+    downloadTriggered = false;
+    completionPolls = 0;
+    pollJobStatus();
+}
+
+function pollJobStatus() {
+    if (!activeJobId) {
+        return;
+    }
+
+    fetch(`/status/${activeJobId}`)
+        .then(response => response.json())
+        .then(data => {
+            updateProgress(data);
+
+            const status = data.status || '';
+
+            if (status.startsWith('Error')) {
+                activeJobId = null;
+                hideProgressModal();
+                showAlert(status, 'error');
+                return;
+            }
+
+            if (data.download_url && !downloadTriggered) {
+                activeJobId = null;
+                downloadTriggered = true;
+                triggerDownload(data.download_url);
+                hideProgressModal();
+                showAlert('✅ Conversion completed successfully! File has been downloaded.', 'success');
+                return;
+            }
+
+            if (status.startsWith('Completed')) {
+                completionPolls += 1;
+                if (completionPolls >= 5) {
+                    activeJobId = null;
+                    hideProgressModal();
+                    showAlert('Conversion completed, but no file was generated.', 'warning');
+                    return;
+                }
+            }
+
+            setTimeout(pollJobStatus, 1000);
+        })
+        .catch(() => {
+            setTimeout(pollJobStatus, 2000);
+        });
+}
+
+function triggerDownload(url) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
 // Submit form with progress tracking
 async function submitFormWithProgress() {
     try {
         const formData = new FormData(uploadForm);
-        
+
         const response = await fetch(uploadForm.action, {
             method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            },
             body: formData
         });
-        
+
         if (response.ok) {
-            // Check if response is file download
             const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/vnd.openxmlformats')) {
+            if (contentType && contentType.includes('application/json')) {
+                const data = await response.json();
+                if (data && data.job_id) {
+                    startStatusPolling(data.job_id);
+                } else {
+                    hideProgressModal();
+                    showAlert('Unexpected response from server. Please try again.', 'error');
+                }
+            } else if (contentType && contentType.includes('application/vnd.openxmlformats')) {
                 // It's an Excel file - trigger download
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
@@ -316,7 +379,7 @@ async function submitFormWithProgress() {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
-                
+
                 // Show success message
                 setTimeout(() => {
                     hideProgressModal();
@@ -328,9 +391,9 @@ async function submitFormWithProgress() {
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(text, 'text/html');
                 const alerts = doc.querySelectorAll('.alert');
-                
+
                 hideProgressModal();
-                
+
                 if (alerts.length > 0) {
                     alerts.forEach(alert => {
                         const message = alert.textContent.replace('×', '').trim();
@@ -354,23 +417,21 @@ async function submitFormWithProgress() {
 function resetForm() {
     // Reset form fields
     uploadForm.reset();
-    bankSelect.value = '';
-    bankDescription.classList.remove('show');
-    
+
     // Clear file selection
     clearFileSelection();
-    
+
     // Reset convert button
     const btnText = convertBtn.querySelector('.btn-text');
     const loadingSpinner = convertBtn.querySelector('.loading-spinner');
-    
+
     if (btnText && loadingSpinner) {
         btnText.style.display = 'block';
         loadingSpinner.style.display = 'none';
     }
-    
+
     convertBtn.disabled = true;
-    
+
     // Check form validity
     checkFormValidity();
 }
@@ -380,25 +441,25 @@ function showAlert(message, type = 'error') {
     // Remove existing alerts
     const existingAlerts = document.querySelectorAll('.alert');
     existingAlerts.forEach(alert => alert.remove());
-    
+
     // Create new alert
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type}`;
-    
-    const icon = type === 'error' ? 'exclamation-triangle' : 
-                 type === 'warning' ? 'exclamation-circle' : 
-                 type === 'success' ? 'check-circle' : 'info-circle';
-    
+
+    const icon = type === 'error' ? 'exclamation-triangle' :
+        type === 'warning' ? 'exclamation-circle' :
+            type === 'success' ? 'check-circle' : 'info-circle';
+
     alertDiv.innerHTML = `
         <i class="fas fa-${icon}"></i>
         ${message}
         <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
     `;
-    
+
     // Insert alert at top of main content
     const mainContent = document.querySelector('.main-content');
     mainContent.insertBefore(alertDiv, mainContent.firstChild);
-    
+
     // Auto-remove after appropriate time
     const autoRemoveTime = type === 'success' ? 7000 : 5000;
     setTimeout(() => {

@@ -4,8 +4,8 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 120,
-    "restartPolicyType": "ON_FAILURE"
+    "startCommand": "gunicorn --worker-class eventlet -w 1 app:app --bind 0.0.0.0:$PORT",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
   }
 }

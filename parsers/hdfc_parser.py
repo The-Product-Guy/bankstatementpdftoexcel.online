@@ -43,8 +43,13 @@ class HDFCParser(BaseParser):
                 print(f"    📝 OCR processing page {page_num + 1}...")
                 self.emit_progress(page_num + 1, total_pages, f"Processing page {page_num + 1} of {total_pages}")
                 
-                # Convert single page to image (reduced DPI for memory efficiency)
-                images = convert_from_path(pdf_path, dpi=120, first_page=page_num + 1, last_page=page_num + 1)
+                # Get optimal DPI based on file size
+                import os
+                file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+                dpi = 200 if file_size_mb <= 5 else (180 if file_size_mb <= 10 else (150 if file_size_mb <= 15 else 120))
+                
+                # Convert single page to image with optimal DPI
+                images = convert_from_path(pdf_path, dpi=dpi, first_page=page_num + 1, last_page=page_num + 1)
                 if images:
                     page_text = pytesseract.image_to_string(images[0])
                     all_text += page_text + "\n"

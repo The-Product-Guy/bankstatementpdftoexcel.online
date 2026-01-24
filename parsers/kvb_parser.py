@@ -40,7 +40,8 @@ class KVBParser(BaseParser):
     
     def ocr_page(self, img: Image.Image) -> List[str]:
         """Run OCR on a PIL image and return lines, preserving spaces."""
-        config = "--psm 6 -c preserve_interword_spaces=1"
+        # Enhanced OCR configuration for better accuracy on bank statements
+        config = "--psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/-:.,()[] "
         text = pytesseract.image_to_string(img, config=config)
         lines = [ln.rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
         return [ln for ln in lines if ln.strip()]
@@ -264,13 +265,31 @@ class KVBParser(BaseParser):
             line_ref=line_ref
         )
     
+    def get_optimal_dpi(self, pdf_path: str) -> int:
+        """Determine optimal DPI based on file size and page count."""
+        import os
+        file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+        
+        # Smart DPI selection to balance quality and memory usage
+        if file_size_mb <= 5:
+            return 200  # High quality for small files
+        elif file_size_mb <= 10:
+            return 180  # Good quality for medium files
+        elif file_size_mb <= 15:
+            return 150  # Reasonable quality for larger files
+        else:
+            return 120  # Memory-conserving for very large files
+    
     def parse(self, pdf_path: str, filename: str) -> List[Dict[str, Any]]:
         """Parse KVB PDF statement and return list of transactions."""
         try:
-            # Get total page count first for memory-efficient processing
+            # Get total page count and optimal DPI
             import pdfplumber
             with pdfplumber.open(pdf_path) as pdf:
                 total_pages = len(pdf.pages)
+            
+            optimal_dpi = self.get_optimal_dpi(pdf_path)
+            print(f"Using {optimal_dpi} DPI for optimal quality/memory balance")
             
             all_lines: List[str] = []
             
@@ -281,19 +300,26 @@ class KVBParser(BaseParser):
                 print(f"Processing page {page_num + 1}/{total_pages} for KVB statement...")
                 self.emit_progress(page_num + 1, total_pages, f"OCR processing page {page_num + 1} of {total_pages}")
                 
-                # Convert single page to image (reduced DPI for memory efficiency)
-                images = convert_from_path(pdf_path, dpi=120, first_page=page_num + 1, last_page=page_num + 1)
+                # Convert single page to image with optimal DPI
+                images = convert_from_path(pdf_path, dpi=optimal_dpi, first_page=page_num + 1, last_page=page_num + 1)
                 if images:
                     img = images[0]
                     
-                    # Simplified image processing to reduce memory usage
+                    # Enhanced image processing for better OCR
                     gray = img.convert("L")
+                    # Light enhancement without excessive memory usage
+                    enhanced = gray.point(lambda x: 0 if x < 160 else 255, '1').convert('L')
                     
-                    lines = self.ocr_page(gray)
+                    lines = self.ocr_page(enhanced)
                     all_lines.extend(lines)
                     
-                    # Clear image from memory immediately
-                    del images, img, gray
+                    # Clear images from memory immediately
+                    del images, img, gray, enhanced
+                    
+                    # Force garbage collection every 5 pages
+                    if page_num % 5 == 4:
+                        import gc
+                        gc.collect()
             
             # Stitch wrapped lines into logical rows
             logical_rows = self.stitch_logical_rows(all_lines)

@@ -1,42 +1,32 @@
-# Use Python 3.9 slim image
-FROM python:3.9-slim
+# Use Python 3.11 slim image
+FROM python:3.11-slim
+
+# Install system dependencies for OCR and Image Processing
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libgl1-mesa-glx \
+    libgomp1 \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    poppler-utils \
-    libgl1-mesa-dri \
-    libglib2.0-0 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install Python packages
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entrypoint script
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Install Python dependencies
+# Note: Install paddlepaddle and paddleocr separately if needed or via requirements
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p uploads
-
-# Set environment variables
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
+# Create necessary directories
+RUN mkdir -p uploads processed
 
 # Expose port
-EXPOSE 8080
+EXPOSE 5000
 
-# Health check (simple and reliable)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f "http://localhost:${PORT:-8080}/health" || exit 1
-
-# Ensure our entrypoint always runs (even if a Start Command is set in Railway UI)
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Command to run (will be overridden by Railway service config)
+CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "app:app", "--bind", "0.0.0.0:5000"]
