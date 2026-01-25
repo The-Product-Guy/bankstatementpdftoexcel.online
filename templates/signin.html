@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In | StatementFlow{% endblock %}
+
+{% block content %}
+<main class="main-content">
+    <section class="signin-section">
+        <div class="signin-card">
+            <h1>Sign in</h1>
+            <p>Get 5 lifetime conversions when you sign up.</p>
+            <form method="POST" action="{{ url_for('auth_start') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label for="email" class="form-label">Work email</label>
+                <input id="email" name="email" type="email" required class="signin-input" placeholder="you@company.com">
+                <button type="submit" class="btn-primary signin-btn">Send magic link</button>
+            </form>
+            <p class="signin-note">We’ll email you a secure, one-time sign-in link.</p>
+        </div>
+    </section>
+</main>
+{% endblock %}

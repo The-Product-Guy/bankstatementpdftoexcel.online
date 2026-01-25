@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Admin | StatementFlow{% endblock %}
+
+{% block content %}
+<main class="main-content">
+    <section class="admin-section">
+        <div class="admin-card">
+            <h1>Admin Dashboard</h1>
+            <div class="admin-stats">
+                <div>
+                    <span class="stat-label">Users</span>
+                    <span class="stat-value">{{ stats.users }}</span>
+                </div>
+                <div>
+                    <span class="stat-label">Jobs</span>
+                    <span class="stat-value">{{ stats.jobs }}</span>
+                </div>
+                <div>
+                    <span class="stat-label">Completed</span>
+                    <span class="stat-value">{{ stats.completed }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Recent Jobs</h2>
+            <div class="admin-table">
+                <div class="admin-row admin-header">
+                    <span>Job ID</span>
+                    <span>Status</span>
+                    <span>Pages</span>
+                    <span>Created</span>
+                </div>
+                {% for job in recent_jobs %}
+                <div class="admin-row">
+                    <span>{{ job.id }}</span>
+                    <span>{{ job.status }}</span>
+                    <span>{{ job.page_count or '-' }}</span>
+                    <span>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+</main>
+{% endblock %}

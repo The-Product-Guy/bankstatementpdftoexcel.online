@@ -27,7 +27,11 @@ class ProcessingConfig:
     llm_model: str = "gpt-4o-mini"
     max_pages: Optional[int] = None  # Limit for SaaS
     dpi: int = 200
+    dpi_high: int = 300
     preprocess_images: bool = True
+    adaptive_preprocess: bool = True
+    quality_threshold: float = 0.55
+    min_ocr_chars: int = 40
     min_table_transactions: Optional[int] = 5
 
 
@@ -966,11 +970,39 @@ class UniversalBankParser(BaseParser):
             
             page_image = images[0]
             table_image = page_image
-            
+            raw_image = page_image
+            quality_score = None
+
             # Preprocess image if enabled
             if self.config.preprocess_images:
-                from .image_preprocessor import preprocess_for_ocr
-                page_image = preprocess_for_ocr(page_image)
+                from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
+                quality_score = get_image_quality_score(raw_image)
+
+                if (
+                    self.config.adaptive_preprocess
+                    and quality_score < self.config.quality_threshold
+                    and self.config.dpi_high > self.config.dpi
+                ):
+                    # Re-render at higher DPI for low-quality scans
+                    high_images = convert_from_path(
+                        pdf_path,
+                        dpi=self.config.dpi_high,
+                        first_page=page_num + 1,
+                        last_page=page_num + 1
+                    )
+                    if high_images:
+                        page_image = high_images[0]
+                        table_image = page_image
+                        raw_image = page_image
+                        quality_score = get_image_quality_score(raw_image)
+                    del high_images
+
+                binarize = bool(
+                    self.config.adaptive_preprocess
+                    and quality_score is not None
+                    and quality_score < self.config.quality_threshold
+                )
+                page_image = preprocess_for_ocr(page_image, binarize=binarize)
             
             # Run OCR
             if self.paddle_processor:
@@ -979,6 +1011,20 @@ class UniversalBankParser(BaseParser):
                 # Fallback to Tesseract
                 import pytesseract
                 page_text = pytesseract.image_to_string(page_image)
+
+            # Secondary OCR pass for low-yield pages
+            if (
+                self.config.adaptive_preprocess
+                and self.config.preprocess_images
+                and len(page_text.strip()) < self.config.min_ocr_chars
+            ):
+                from .image_preprocessor import preprocess_for_ocr
+                fallback_image = preprocess_for_ocr(raw_image, binarize=True)
+                if self.paddle_processor:
+                    page_text = self.paddle_processor.process_image_to_text(fallback_image)
+                else:
+                    import pytesseract
+                    page_text = pytesseract.image_to_string(fallback_image)
             
             page_texts.append((page_num + 1, page_text))
             total_ocr_chars += len(page_text)

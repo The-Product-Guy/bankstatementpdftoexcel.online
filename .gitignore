@@ -71,6 +71,7 @@ output_for_verification/
 dump.rdb
 *.xlsx
 *.csv
+local.db
 
 # Runtime artifacts
 uploads/*

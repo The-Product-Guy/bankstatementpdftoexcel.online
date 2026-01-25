@@ -78,6 +78,7 @@
             automatically removing repetitive page headers for a single, seamless table. 100% Secure: Files are
             deleted instantly after processing.
         </p>
+        <p class="hero-note">Best for bank statements and table-based PDFs. Non-tabular documents may return an empty file.</p>
 
         <div class="converter-card" id="convert">
             <div class="converter-header">
@@ -98,13 +99,14 @@
                         class="file-input"
                         aria-describedby="uploadHelp"
                         data-max-size="{{ max_upload_mb }}"
+                        data-max-pages="{{ max_pages }}"
                     >
                     <div class="file-upload-content">
                         <i class="fas fa-cloud-upload-alt upload-icon"></i>
                         <p class="upload-text">
                             <strong>Drop your Bank Statement PDF here</strong> or Browse
                         </p>
-                        <p class="upload-subtext" id="uploadHelp">Maximum file size: {{ max_upload_mb }}MB</p>
+                        <p class="upload-subtext" id="uploadHelp">Maximum file size: {{ max_upload_mb }}MB · Maximum pages: {{ max_pages }}</p>
                     </div>
                 </div>
 
@@ -126,12 +128,13 @@
                 </button>
             </form>
             <p class="converter-note">Supports all major global banks. No data is stored.</p>
+            <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
         </div>
     </div>
 
     <div class="hero-visual">
         <div class="visual-frame">
-            <img src="{{ url_for('static', filename='hero-conversion.png') }}" alt="PDF to Excel conversion visual" />
+            <img src="{{ url_for('static', filename='og-image.png') }}" alt="PDF to Excel conversion visual" />
         </div>
         <div class="data-lines"></div>
     </div>
@@ -262,6 +265,17 @@
                 <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
             </div>
             <p class="progress-info" id="progressInfo" role="status" aria-live="polite">Starting conversion...</p>
+        </div>
+    </div>
+</div>
+
+<div id="limitModal" class="limit-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="limitTitle" aria-describedby="limitMessage" aria-hidden="true" tabindex="-1">
+    <div class="limit-content">
+        <h3 id="limitTitle">File limit reached</h3>
+        <p id="limitMessage">Your file exceeds the allowed limit.</p>
+        <div class="limit-actions">
+            <a class="btn-primary" href="https://smallpdfsplit.online/" target="_blank" rel="noopener">Split your PDF</a>
+            <button type="button" class="btn-secondary" id="limitClose">Close</button>
         </div>
     </div>
 </div>

@@ -228,6 +228,17 @@ h1, h2, h3 {
     color: rgba(255, 255, 255, 0.75);
 }
 
+.converter-note.subtle {
+    margin-top: 6px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.hero-note {
+    margin-top: 12px;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.75);
+}
+
 .file-upload-area {
     border: 2px dashed rgba(255, 255, 255, 0.35);
     border-radius: 16px;
@@ -502,6 +513,103 @@ h1, h2, h3 {
     gap: 14px;
 }
 
+/* Sign-in */
+.signin-section {
+    display: flex;
+    justify-content: center;
+    padding: 40px 0;
+}
+
+.signin-card {
+    background: rgba(18, 13, 40, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 20px;
+    padding: 32px;
+    width: min(480px, 92%);
+    box-shadow: var(--shadow);
+    text-align: center;
+}
+
+.signin-card p {
+    color: var(--muted);
+    margin: 10px 0 20px;
+}
+
+.signin-input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    margin-bottom: 16px;
+}
+
+.signin-input::placeholder {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.signin-btn {
+    width: 100%;
+}
+
+.signin-note {
+    font-size: 0.85rem;
+}
+
+/* Admin */
+.admin-section {
+    display: grid;
+    gap: 24px;
+    padding-bottom: 40px;
+}
+
+.admin-card {
+    background: rgba(18, 13, 40, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: var(--shadow-soft);
+}
+
+.admin-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.admin-stats .stat-label {
+    color: var(--muted);
+    font-size: 0.85rem;
+    display: block;
+}
+
+.admin-stats .stat-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.admin-table {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.admin-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-row.admin-header {
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.18);
+}
+
 .btn-primary,
 .btn-secondary {
     display: inline-flex;
@@ -605,6 +713,41 @@ h1, h2, h3 {
 .progress-info {
     text-align: center;
     color: var(--muted);
+}
+
+/* Limit Modal */
+.limit-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 8, 26, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1001;
+    backdrop-filter: blur(6px);
+}
+
+.limit-content {
+    background: rgba(20, 15, 38, 0.95);
+    border-radius: 18px;
+    padding: 28px;
+    max-width: 480px;
+    width: 92%;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: var(--shadow);
+    text-align: center;
+}
+
+.limit-content p {
+    color: var(--muted);
+    margin: 12px 0 20px;
+}
+
+.limit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
 }
 
 /* Alerts */

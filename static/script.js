@@ -11,6 +11,10 @@ const progressModal = document.getElementById('progressModal');
 const progressFill = document.getElementById('progressFill');
 const progressInfo = document.getElementById('progressInfo');
 const progressBar = document.getElementById('progressBar');
+const limitModal = document.getElementById('limitModal');
+const limitTitle = document.getElementById('limitTitle');
+const limitMessage = document.getElementById('limitMessage');
+const limitClose = document.getElementById('limitClose');
 
 // Initialize WebSocket connection
 let socket = null;
@@ -54,6 +58,10 @@ function setupEventListeners() {
 
     // Form submission
     uploadForm.addEventListener('submit', handleFormSubmit);
+
+    if (limitClose) {
+        limitClose.addEventListener('click', hideLimitModal);
+    }
 
     // Prevent default drag behaviors on document
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -129,11 +137,41 @@ function validateFile(file) {
     const maxSizeMb = parseInt(fileInput.dataset.maxSize || '100', 10);
     const maxSize = maxSizeMb * 1024 * 1024;
     if (file.size > maxSize) {
-        showAlert(`File size exceeds ${maxSizeMb}MB limit. Please choose a smaller file.`, 'error');
+        showLimitModal('FILE_TOO_LARGE', maxSizeMb);
         return false;
     }
 
     return true;
+}
+
+function showLimitModal(type, limitValue, pageCount) {
+    if (!limitModal) {
+        return;
+    }
+
+    if (type === 'FILE_TOO_LARGE') {
+        limitTitle.textContent = 'File too large';
+        limitMessage.textContent = `This file exceeds the ${limitValue}MB limit. Split the PDF and try again.`;
+    } else if (type === 'PAGE_LIMIT_EXCEEDED') {
+        const pageText = pageCount ? ` (${pageCount} pages)` : '';
+        limitTitle.textContent = 'Too many pages';
+        limitMessage.textContent = `This PDF has more than ${limitValue} pages${pageText}. Split the PDF and try again.`;
+    } else {
+        limitTitle.textContent = 'File limit reached';
+        limitMessage.textContent = 'Your file exceeds the allowed limit. Split the PDF and try again.';
+    }
+
+    limitModal.style.display = 'flex';
+    limitModal.setAttribute('aria-hidden', 'false');
+    limitModal.focus();
+}
+
+function hideLimitModal() {
+    if (!limitModal) {
+        return;
+    }
+    limitModal.style.display = 'none';
+    limitModal.setAttribute('aria-hidden', 'true');
 }
 
 // Display file information
@@ -423,6 +461,21 @@ async function submitFormWithProgress() {
             const contentType = response.headers.get('content-type') || '';
             if (contentType.includes('application/json')) {
                 const data = await response.json();
+                if (data.error_code === 'FILE_TOO_LARGE') {
+                    hideProgressModal();
+                    showLimitModal('FILE_TOO_LARGE', data.max_mb);
+                    return;
+                }
+                if (data.error_code === 'PAGE_LIMIT_EXCEEDED') {
+                    hideProgressModal();
+                    showLimitModal('PAGE_LIMIT_EXCEEDED', data.max_pages, data.page_count);
+                    return;
+                }
+                if (data.error_code === 'GUEST_LIMIT_EXCEEDED') {
+                    hideProgressModal();
+                    showAlert('Free limit reached. Please sign in to continue.', 'warning');
+                    return;
+                }
                 throw new Error(data.error || 'Request failed.');
             }
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);

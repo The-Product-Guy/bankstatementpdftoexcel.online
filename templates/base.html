@@ -93,7 +93,11 @@
                 <a href="{{ url_for('blogs') }}" {% if request.endpoint == 'blogs' %}class="active"{% endif %}>Blog</a>
             </div>
             <div class="nav-actions">
-                <a href="/signin" class="nav-signin">Sign In</a>
+                {% if current_user_email %}
+                    <a href="/signout" class="nav-signin">Sign Out</a>
+                {% else %}
+                    <a href="/signin" class="nav-signin">Sign In</a>
+                {% endif %}
             </div>
             <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-controls="navMenu" aria-expanded="false">
                 <span></span>

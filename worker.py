@@ -6,9 +6,12 @@ load_dotenv()
 import os
 import tempfile
 import redis
+from datetime import datetime
 from celery_config import celery_app
 from parsers.universal_parser import create_universal_parser
 from storage_utils import get_storage_config, download_file, upload_file
+from db import get_db_session
+from models import Job, UsageCounter
 import logging
 import pandas as pd
 
@@ -23,6 +26,55 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 # Redis for progress updates (separate from Celery broker if needed, but usually same)
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.StrictRedis.from_url(redis_url)
+
+def _update_job(job_id, **fields):
+    try:
+        with get_db_session() as db:
+            job = db.get(Job, job_id)
+            if not job:
+                return
+            for key, value in fields.items():
+                setattr(job, key, value)
+    except Exception as e:
+        logger.warning(f"DB job update failed for {job_id}: {e}")
+
+def _increment_usage(job_id):
+    try:
+        with get_db_session() as db:
+            job = db.get(Job, job_id)
+            if not job:
+                return
+
+            if job.user_id:
+                counter = db.query(UsageCounter).filter_by(
+                    user_id=job.user_id,
+                    guest_id=None,
+                    scope='lifetime'
+                ).first()
+            else:
+                counter = db.query(UsageCounter).filter_by(
+                    user_id=None,
+                    guest_id=job.guest_id,
+                    scope='lifetime'
+                ).first()
+
+            if not counter:
+                counter = UsageCounter(
+                    user_id=job.user_id,
+                    guest_id=job.guest_id,
+                    scope='lifetime',
+                    conversions_count=0,
+                    pages_total=0,
+                    bytes_total=0
+                )
+                db.add(counter)
+
+            counter.conversions_count += 1
+            counter.pages_total += job.page_count or 0
+            counter.bytes_total += job.file_size_bytes or 0
+            counter.updated_at = datetime.utcnow()
+    except Exception as e:
+        logger.warning(f"DB usage update failed for {job_id}: {e}")
 
 def update_progress(job_id, current, total, status_message, percent_override=None, extra=None):
     """Publish progress update to Redis channel"""
@@ -86,6 +138,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
 
         if not file_path or not os.path.exists(file_path):
             raise FileNotFoundError(f"PDF file not found: {file_path}")
+
+        _update_job(job_id, status="processing", started_at=datetime.utcnow())
 
         # Define progress callback wrapper
         def progress_callback(data):
@@ -181,6 +235,14 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
             else:
                 update_progress(job_id, 100, 100, "Completed - no data extracted", percent_override=100)
         
+        _update_job(
+            job_id,
+            status="completed" if raw_table else "completed_no_data",
+            finished_at=datetime.utcnow(),
+            transaction_count=len(transactions)
+        )
+        _increment_usage(job_id)
+
         return {
             'status': 'success',
             'job_id': job_id,
@@ -191,6 +253,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
         
     except Exception as e:
         logger.error(f"Job {job_id} failed: {str(e)}")
+        _update_job(job_id, status="failed", finished_at=datetime.utcnow(), error=str(e))
         update_progress(job_id, 0, 0, f"Error: {str(e)}")
         return {
             'status': 'error',

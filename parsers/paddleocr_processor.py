@@ -94,6 +94,9 @@ class PaddleOCRProcessor:
         Returns:
             List of dicts with 'text', 'confidence', 'bbox' keys
         """
+        # PaddleOCR expects 3-channel images; convert grayscale to RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         # Convert PIL to numpy array
         img_array = np.array(image)
         
@@ -110,13 +113,27 @@ class PaddleOCRProcessor:
         
         extracted = []
         for line in result[0]:
+            if not isinstance(line, (list, tuple)) or len(line) < 2:
+                continue
             bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-            text = line[1][0]
-            confidence = line[1][1]
+            text_info = line[1]
+            if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                continue
+            if not isinstance(text_info, (list, tuple)) or len(text_info) < 2:
+                continue
+            text = text_info[0]
+            confidence = text_info[1]
             
+            valid_points = [
+                p for p in bbox
+                if isinstance(p, (list, tuple)) and len(p) >= 2
+            ]
+            if len(valid_points) < 4:
+                continue
+
             # Calculate bounding box as (x_min, y_min, x_max, y_max)
-            x_coords = [p[0] for p in bbox]
-            y_coords = [p[1] for p in bbox]
+            x_coords = [p[0] for p in valid_points]
+            y_coords = [p[1] for p in valid_points]
             
             extracted.append({
                 'text': text,
@@ -178,6 +195,8 @@ class PaddleOCRProcessor:
         if not self.use_table_structure or self.table_engine is None:
             return None
         
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         img_array = np.array(image)
         result = self.table_engine(img_array)
         
