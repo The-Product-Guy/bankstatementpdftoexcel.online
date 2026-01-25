@@ -1,12 +1,12 @@
-# 🏦 PDF to Excel Converter - Multi-Bank Web Application
+# 🏦 PDF to Excel Converter - Universal Bank Statement Parser
 
-A modern web application for converting bank statement PDFs to Excel format with support for multiple Indian banks. Features automatic transaction extraction, financial analysis, and secure file processing.
+A modern web application for converting bank statement PDFs to Excel format with universal extraction. Features automatic transaction extraction, reliable OCR, and secure file processing.
 
 ## ✨ Key Features
 
 - **🌐 Web-based Interface** - Beautiful, responsive UI with drag-and-drop upload
-- **🏦 Multi-Bank Support** - HDFC Bank, ICICI Bank, and Karur Vysya Bank (with OCR and text extraction)  
-- **🤖 Smart Processing** - Auto-detects PDF type and uses appropriate parsing method
+- **🏦 Universal Bank Support** - Works across text-based and scanned statements  
+- **🤖 Smart Processing** - Auto-detects PDF type and uses the universal parsing pipeline
 - **📊 Financial Analysis** - Automatic calculation of deposits, withdrawals, and balances
 - **🔒 Secure Processing** - Files automatically deleted after conversion
 - **📱 Responsive Design** - Works seamlessly on desktop and mobile devices
@@ -18,11 +18,7 @@ A modern web application for converting bank statement PDFs to Excel format with
 
 ## 🏦 Supported Banks
 
-| Bank | PDF Type | Processing Method | Features |
-|------|----------|------------------|----------|
-| **HDFC Bank** | Image-based | OCR (Tesseract) | ✅ All page processing<br/>✅ Pipe-delimited format<br/>✅ Large file support (100MB+) |
-| **ICICI Bank** | Text-based | Direct extraction | ✅ Fast processing<br/>✅ Tabular format<br/>✅ High accuracy |
-| **Karur Vysya Bank** | Image-based | OCR (Tesseract) | ✅ Enhanced OCR processing<br/>✅ Handles wrapped text<br/>✅ Summary line extraction |
+Universal parser designed to handle any bank statement format (text-based or scanned) with raw table extraction.
 
 ## 📁 Clean Project Structure
 
@@ -42,9 +38,7 @@ PDF-XLS-Converter/
 ├── parsers/                   # 🏗️ Modular architecture
 │   ├── __init__.py
 │   ├── base_parser.py        # 🔧 Common utilities
-│   ├── hdfc_parser.py        # 🏦 HDFC Bank processor
-│   ├── icici_parser.py       # 🏦 ICICI Bank processor
-│   └── kvb_parser.py         # 🏦 Karur Vysya Bank processor
+│   └── universal_parser.py   # 🌐 Universal bank statement parser
 └── uploads/                   # 📁 Temporary file storage
 ```
 

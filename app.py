@@ -19,9 +19,6 @@ from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 
 # Import parsers
-from parsers.hdfc_parser import HDFCParser
-from parsers.icici_parser import ICICIParser
-from parsers.kvb_parser import KVBParser
 from parsers.universal_parser import UniversalBankParser, ProcessingConfig
 from storage_utils import get_storage_config, upload_file, generate_presigned_url
 
@@ -65,21 +62,6 @@ SUPPORTED_BANKS = {
         'parser': UniversalBankParser,
         'description': 'AI-powered parser for any bank statement (uses OpenAI)',
         'is_ai': True
-    },
-    'hdfc': {
-        'name': 'HDFC Bank',
-        'parser': HDFCParser,
-        'description': 'Image-based PDF statements (OCR processing)'
-    },
-    'icici': {
-        'name': 'ICICI Bank', 
-        'parser': ICICIParser,
-        'description': 'Text-based PDF statements'
-    },
-    'kvb': {
-        'name': 'Karur Vysya Bank',
-        'parser': KVBParser,
-        'description': 'Image-based PDF statements (OCR processing)'
     }
 }
 
@@ -364,8 +346,7 @@ def health_check():
         
         # Test parser imports (critical for app functionality)
         try:
-            HDFCParser()
-            ICICIParser()
+            UniversalBankParser()
         except Exception:
             return "PARSERS_FAILED", 500
         
@@ -394,8 +375,7 @@ def detailed_health():
         
         # Test parsers import
         try:
-            HDFCParser()
-            ICICIParser()
+            UniversalBankParser()
             response_data['checks']['parsers'] = 'OK'
         except Exception:
             response_data['checks']['parsers'] = 'ERROR'

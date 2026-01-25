@@ -168,9 +168,6 @@ PDF-XLS-Converter/
 ├── storage_utils.py        # S3 storage utilities
 ├── parsers/                # PDF parsing modules
 │   ├── base_parser.py      
-│   ├── hdfc_parser.py      
-│   ├── icici_parser.py     
-│   ├── kvb_parser.py       
 │   ├── universal_parser.py 
 │   ├── paddleocr_processor.py
 │   └── llm_table_extractor.py

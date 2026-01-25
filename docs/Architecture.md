@@ -11,9 +11,7 @@ Your current implementation faces two key challenges:
 
 | Component | Current Approach | Limitation |
 |-----------|-----------------|------------|
-| [hdfc_parser.py](file:///Users/sasikumarad/Documents/Personal/PDF-XLS-Converter/parsers/hdfc_parser.py) | Tesseract OCR + regex parsing for pipe-delimited format | Relies on specific format (pipes `|`), fails on varied layouts |
-| [kvb_parser.py](file:///Users/sasikumarad/Documents/Personal/PDF-XLS-Converter/parsers/kvb_parser.py) | Tesseract OCR + position-based column detection | Hardcoded column positions (65, 80, 95 chars) break on different layouts |
-| [icici_parser.py](file:///Users/sasikumarad/Documents/Personal/PDF-XLS-Converter/parsers/icici_parser.py) | PDFPlumber text extraction + regex patterns | Works well for text-based PDFs, OCR fallback has same issues |
+| universal_parser.py | Hybrid OCR + layout-aware parsing | Quality depends on OCR and layout consistency |
 
 ---
 
@@ -102,7 +100,7 @@ A generic parser that works with any bank format:
 
 - Auto-detects table structure using OCR coordinates
 - Uses LLM to understand column headers and map values
-- Falls back to bank-specific parsers for known formats
+- Prioritizes raw, exact-column output
 
 ---
 
