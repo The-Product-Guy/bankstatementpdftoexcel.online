@@ -205,43 +205,59 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
         excel_path = os.path.join(output_dir, excel_filename)
         
         raw_table = getattr(parser, "raw_table", None)
+        has_data = False
 
-        if raw_table:
+        if raw_table and raw_table.get("rows"):
+            # Use raw table format (from layout/table extraction)
             raw_df = pd.DataFrame(raw_table["rows"], columns=raw_table["columns"])
             raw_df.to_excel(excel_path, index=False)
-            if storage:
-                output_key = f"outputs/{job_id}/{excel_filename}"
-                upload_file(storage, excel_path, output_key)
-                update_progress(
-                    job_id,
-                    100,
-                    100,
-                    "Completed successfully",
-                    percent_override=100,
-                    extra={"storage": "s3", "download_key": output_key}
-                )
-            else:
-                update_progress(job_id, 100, 100, "Completed successfully", percent_override=100)
+            has_data = len(raw_table["rows"]) > 0
+            logger.info(f"Job {job_id}: Wrote {len(raw_table['rows'])} rows from raw_table")
+        elif transactions:
+            # Use transactions list (from regex fallback or LLM extraction)
+            # Convert transactions to DataFrame with standard columns
+            df = pd.DataFrame(transactions)
+            # Reorder columns for better readability
+            preferred_order = [
+                'Date', 'Description', 'Reference_Number', 
+                'Withdrawal_Amount', 'Deposit_Amount', 'Transaction_Amount',
+                'Closing_Balance', 'Source_File', 'Page_Line'
+            ]
+            # Only include columns that exist
+            columns = [col for col in preferred_order if col in df.columns]
+            # Add any extra columns not in preferred order
+            columns += [col for col in df.columns if col not in preferred_order]
+            df = df[columns]
+            df.to_excel(excel_path, index=False)
+            has_data = len(transactions) > 0
+            logger.info(f"Job {job_id}: Wrote {len(transactions)} transactions to Excel")
         else:
-            # Create empty Excel if no raw table was extracted
+            # No data extracted at all
             pd.DataFrame().to_excel(excel_path, index=False)
-            if storage:
-                output_key = f"outputs/{job_id}/{excel_filename}"
-                upload_file(storage, excel_path, output_key)
-                update_progress(
-                    job_id,
-                    100,
-                    100,
-                    "Completed - no data extracted",
-                    percent_override=100,
-                    extra={"storage": "s3", "download_key": output_key}
-                )
-            else:
-                update_progress(job_id, 100, 100, "Completed - no data extracted", percent_override=100)
+            logger.warning(f"Job {job_id}: No data extracted, created empty Excel")
+
+        # Upload and update progress
+        if storage:
+            output_key = f"outputs/{job_id}/{excel_filename}"
+            upload_file(storage, excel_path, output_key)
+            update_progress(
+                job_id,
+                100,
+                100,
+                "Completed successfully" if has_data else "Completed - no data extracted",
+                percent_override=100,
+                extra={"storage": "s3", "download_key": output_key}
+            )
+        else:
+            update_progress(
+                job_id, 100, 100, 
+                "Completed successfully" if has_data else "Completed - no data extracted",
+                percent_override=100
+            )
         
         _update_job(
             job_id,
-            status="completed" if raw_table else "completed_no_data",
+            status="completed" if has_data else "completed_no_data",
             finished_at=datetime.utcnow(),
             transaction_count=len(transactions)
         )
