@@ -17,22 +17,61 @@ from datetime import datetime
 from .base_parser import BaseParser
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Read boolean from environment."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read integer from environment."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read float from environment."""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class ProcessingConfig:
-    """Configuration for document processing."""
-    use_paddleocr: bool = True
-    use_llm: bool = True
-    use_table_structure: bool = True
-    prefer_vision: bool = False  # If True, send images directly to LLM
-    llm_model: str = "gpt-4o-mini"
-    max_pages: Optional[int] = None  # Limit for SaaS
-    dpi: int = 200
-    dpi_high: int = 300
-    preprocess_images: bool = True
-    adaptive_preprocess: bool = True
-    quality_threshold: float = 0.55
-    min_ocr_chars: int = 40
-    min_table_transactions: Optional[int] = 5
+    """
+    Configuration for document processing.
+    All settings can be overridden via environment variables for easy tuning.
+    
+    Resource Usage Guide:
+    - LOW:    dpi=150, preprocess=False, adaptive=False, paddleocr=False
+    - MEDIUM: dpi=150, preprocess=True, adaptive=False, paddleocr=False (default)
+    - HIGH:   dpi=200, preprocess=True, adaptive=True, paddleocr=True
+    """
+    # OCR Engine Selection
+    use_paddleocr: bool = _env_bool('USE_PADDLEOCR', False)  # Default to Tesseract (lighter)
+    use_llm: bool = _env_bool('USE_LLM', False)  # LLM extraction (requires API key)
+    use_table_structure: bool = _env_bool('USE_TABLE_STRUCTURE', False)  # PPStructure (heavy)
+    prefer_vision: bool = _env_bool('PREFER_VISION', False)  # Send images to LLM
+    llm_model: str = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
+    
+    # Page Limits
+    max_pages: Optional[int] = None  # Limit for SaaS tiers
+    
+    # Image Processing - RESOURCE CRITICAL
+    dpi: int = _env_int('OCR_DPI', 150)  # Lower = faster, less RAM (150 is good for most)
+    dpi_high: int = _env_int('OCR_DPI_HIGH', 200)  # For low-quality re-render
+    preprocess_images: bool = _env_bool('PREPROCESS_IMAGES', True)  # deskew, denoise
+    adaptive_preprocess: bool = _env_bool('ADAPTIVE_PREPROCESS', False)  # Re-render at high DPI
+    quality_threshold: float = _env_float('QUALITY_THRESHOLD', 0.55)
+    min_ocr_chars: int = _env_int('MIN_OCR_CHARS', 40)
+    
+    # Extraction Tuning
+    min_table_transactions: Optional[int] = _env_int('MIN_TABLE_TRANSACTIONS', 5)
 
 
 @dataclass 
@@ -1394,32 +1433,54 @@ class UniversalBankParser(BaseParser):
 # Factory function for easy instantiation
 def create_universal_parser(
     progress_callback: Optional[Callable] = None,
-    use_llm: bool = True,
-    prefer_vision: bool = False,
-    llm_model: str = "gpt-4o-mini",
+    use_llm: Optional[bool] = None,
+    prefer_vision: Optional[bool] = None,
+    llm_model: Optional[str] = None,
     max_pages: Optional[int] = None,
-    use_table_structure: bool = True,
-    min_table_transactions: Optional[int] = 5
+    use_table_structure: Optional[bool] = None,
+    min_table_transactions: Optional[int] = None
 ) -> UniversalBankParser:
     """
     Create a configured universal parser.
     
+    All parameters default to None, which means "use environment variable".
+    Set explicit values to override environment configuration.
+    
+    Environment Variables (see ProcessingConfig for full list):
+        USE_PADDLEOCR: Use PaddleOCR instead of Tesseract (default: false)
+        USE_LLM: Use LLM for extraction (default: false)
+        USE_TABLE_STRUCTURE: Use PPStructure for tables (default: false)
+        OCR_DPI: Image DPI for OCR (default: 150)
+        PREPROCESS_IMAGES: Enable image preprocessing (default: true)
+        ADAPTIVE_PREPROCESS: Re-render at high DPI for low quality (default: false)
+    
     Args:
         progress_callback: Optional callback for progress updates
-        use_llm: Whether to use LLM for extraction
-        prefer_vision: Whether to send images directly to LLM
-        llm_model: Which OpenAI model to use
+        use_llm: Whether to use LLM for extraction (None = use env)
+        prefer_vision: Whether to send images directly to LLM (None = use env)
+        llm_model: Which OpenAI model to use (None = use env)
         max_pages: Maximum pages to process (for SaaS limits)
+        use_table_structure: Use table structure detection (None = use env)
+        min_table_transactions: Minimum transactions for table mode (None = use env)
         
     Returns:
         Configured UniversalBankParser instance
     """
-    config = ProcessingConfig(
-        use_llm=use_llm,
-        prefer_vision=prefer_vision,
-        llm_model=llm_model,
-        max_pages=max_pages,
-        use_table_structure=use_table_structure,
-        min_table_transactions=min_table_transactions
-    )
+    # Start with environment-based defaults
+    config = ProcessingConfig()
+    
+    # Override with explicit parameters if provided
+    if use_llm is not None:
+        config.use_llm = use_llm
+    if prefer_vision is not None:
+        config.prefer_vision = prefer_vision
+    if llm_model is not None:
+        config.llm_model = llm_model
+    if max_pages is not None:
+        config.max_pages = max_pages
+    if use_table_structure is not None:
+        config.use_table_structure = use_table_structure
+    if min_table_transactions is not None:
+        config.min_table_transactions = min_table_transactions
+    
     return UniversalBankParser(progress_callback, config)

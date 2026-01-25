@@ -178,18 +178,13 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
 
             update_progress(job_id, current_page, total_pages, status, percent_override=percent_override)
 
-        # Create parser instance
-        def env_bool(name, default=False):
-            value = os.environ.get(name)
-            if value is None:
-                return default
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-
+        # Create parser instance with environment-based configuration
+        # All settings are controlled via environment variables in ProcessingConfig
+        # See ProcessingConfig docstring for resource usage guide
         parser = create_universal_parser(
             progress_callback=progress_callback,
-            use_llm=False,
-            use_table_structure=env_bool("USE_TABLE_STRUCTURE", True),
-            min_table_transactions=int(os.environ.get("MIN_TABLE_TRANSACTIONS", "5"))
+            # These override environment defaults - remove to use env vars fully
+            use_llm=False,  # Set USE_LLM=true to enable
         )
         
         # Determine output path using absolute paths
