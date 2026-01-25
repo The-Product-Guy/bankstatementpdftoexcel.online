@@ -49,7 +49,16 @@ def deskew_image(image: np.ndarray) -> np.ndarray:
     # Find minimum area rectangle
     try:
         rect = cv2.minAreaRect(coords)
-        angle = rect[-1]
+        
+        # Validate rect structure - should be ((cx, cy), (w, h), angle)
+        if not rect or not isinstance(rect, tuple) or len(rect) < 3:
+            return image
+        
+        # Safely extract angle (last element of the tuple)
+        try:
+            angle = float(rect[-1])
+        except (TypeError, ValueError, IndexError):
+            return image
         
         # Adjust angle
         if angle < -45:

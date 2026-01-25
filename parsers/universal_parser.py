@@ -66,12 +66,17 @@ class UniversalBankParser(BaseParser):
         
         # Lazy-loaded processors
         self._paddle_processor = None
+        self._paddle_unavailable = False  # Track if PaddleOCR is known unavailable
         self._llm_extractor = None
         self._tesseract_available = True
     
     @property
     def paddle_processor(self):
         """Lazy load PaddleOCR processor."""
+        # Skip if already known to be unavailable
+        if self._paddle_unavailable:
+            return None
+            
         if self._paddle_processor is None and self.config.use_paddleocr:
             try:
                 from .paddleocr_processor import PaddleOCRProcessor
@@ -80,7 +85,13 @@ class UniversalBankParser(BaseParser):
                 )
             except ImportError:
                 print("  ⚠️ PaddleOCR not available, falling back to Tesseract")
+                self._paddle_unavailable = True
         return self._paddle_processor
+    
+    def mark_paddle_unavailable(self):
+        """Mark PaddleOCR as unavailable after a runtime failure."""
+        self._paddle_processor = None
+        self._paddle_unavailable = True
     
     @property
     def llm_extractor(self):
@@ -239,8 +250,16 @@ class UniversalBankParser(BaseParser):
             return 0
         
         # Detect columns from first page
-        if page_texts:
-            first_page_text = page_texts[0][1]
+        if not page_texts:
+            return 0
+        
+        # Safely get first page text
+        try:
+            first_page_text = page_texts[0][1] if page_texts else ""
+        except (IndexError, TypeError):
+            first_page_text = ""
+        
+        if first_page_text:
             print("  🔍 Detecting column structure from first page...")
             column_mapping = self.llm_extractor.detect_columns(first_page_text)
             print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
@@ -694,7 +713,16 @@ class UniversalBankParser(BaseParser):
         chunks: List[Tuple[int, str, str]] = []
 
         def finalize(chunk_idx: int, pages: List[Tuple[int, str]]):
-            page_range = f"{pages[0][0]}-{pages[-1][0]}"
+            if not pages:
+                return
+            # Safely access page numbers
+            try:
+                first_page = pages[0][0]
+                last_page = pages[-1][0]
+                page_range = f"{first_page}-{last_page}"
+            except (IndexError, TypeError):
+                page_range = f"chunk_{chunk_idx}"
+            
             chunk_text = "\n\n".join(
                 f"--- Page {page_num} ---\n{text}"
                 for page_num, text in pages
@@ -947,117 +975,162 @@ class UniversalBankParser(BaseParser):
         total_ocr_chars = 0
         table_transactions = []
         
-        # Process each page
+        # Process each page with comprehensive error handling
         for page_num in range(total_pages):
-            self.emit_progress(
-                page_num + 1, total_pages,
-                f"Processing page {page_num + 1}/{total_pages}",
-                stage="ocr"
-            )
-            
-            print(f"    📝 Processing page {page_num + 1}...")
-            
-            # Convert PDF page to image
-            images = convert_from_path(
-                pdf_path, 
-                dpi=self.config.dpi,
-                first_page=page_num + 1,
-                last_page=page_num + 1
-            )
-            
-            if not images:
-                continue
-            
-            page_image = images[0]
-            table_image = page_image
-            raw_image = page_image
-            quality_score = None
-
-            # Preprocess image if enabled
-            if self.config.preprocess_images:
-                from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
-                quality_score = get_image_quality_score(raw_image)
-
-                if (
-                    self.config.adaptive_preprocess
-                    and quality_score < self.config.quality_threshold
-                    and self.config.dpi_high > self.config.dpi
-                ):
-                    # Re-render at higher DPI for low-quality scans
-                    high_images = convert_from_path(
-                        pdf_path,
-                        dpi=self.config.dpi_high,
+            try:
+                self.emit_progress(
+                    page_num + 1, total_pages,
+                    f"Processing page {page_num + 1}/{total_pages}",
+                    stage="ocr"
+                )
+                
+                print(f"    📝 Processing page {page_num + 1}...")
+                
+                # Convert PDF page to image
+                try:
+                    images = convert_from_path(
+                        pdf_path, 
+                        dpi=self.config.dpi,
                         first_page=page_num + 1,
                         last_page=page_num + 1
                     )
-                    if high_images:
-                        page_image = high_images[0]
-                        table_image = page_image
-                        raw_image = page_image
+                except Exception as e:
+                    print(f"    ⚠️ Failed to convert page {page_num + 1}: {e}")
+                    continue
+                
+                if not images:
+                    print(f"    ⚠️ No image generated for page {page_num + 1}")
+                    continue
+                
+                page_image = images[0]
+                table_image = page_image
+                raw_image = page_image
+                quality_score = None
+
+                # Preprocess image if enabled
+                if self.config.preprocess_images:
+                    try:
+                        from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
                         quality_score = get_image_quality_score(raw_image)
-                    del high_images
 
-                binarize = bool(
-                    self.config.adaptive_preprocess
-                    and quality_score is not None
-                    and quality_score < self.config.quality_threshold
-                )
-                page_image = preprocess_for_ocr(page_image, binarize=binarize)
-            
-            # Run OCR
-            if self.paddle_processor:
-                page_text = self.paddle_processor.process_image_to_text(page_image)
-            else:
-                # Fallback to Tesseract
-                import pytesseract
-                page_text = pytesseract.image_to_string(page_image)
+                        if (
+                            self.config.adaptive_preprocess
+                            and quality_score < self.config.quality_threshold
+                            and self.config.dpi_high > self.config.dpi
+                        ):
+                            # Re-render at higher DPI for low-quality scans
+                            high_images = convert_from_path(
+                                pdf_path,
+                                dpi=self.config.dpi_high,
+                                first_page=page_num + 1,
+                                last_page=page_num + 1
+                            )
+                            if high_images:
+                                page_image = high_images[0]
+                                table_image = page_image
+                                raw_image = page_image
+                                quality_score = get_image_quality_score(raw_image)
+                            del high_images
 
-            # Secondary OCR pass for low-yield pages
-            if (
-                self.config.adaptive_preprocess
-                and self.config.preprocess_images
-                and len(page_text.strip()) < self.config.min_ocr_chars
-            ):
-                from .image_preprocessor import preprocess_for_ocr
-                fallback_image = preprocess_for_ocr(raw_image, binarize=True)
-                if self.paddle_processor:
-                    page_text = self.paddle_processor.process_image_to_text(fallback_image)
-                else:
-                    import pytesseract
-                    page_text = pytesseract.image_to_string(fallback_image)
-            
-            page_texts.append((page_num + 1, page_text))
-            total_ocr_chars += len(page_text)
-
-            if self.config.use_table_structure and self.paddle_processor:
-                try:
-                    tables = self.paddle_processor.detect_table_structure(table_image) or []
-                except Exception:
-                    tables = []
-
-                for table in tables:
-                    html = table.get('html', '')
-                    if not html:
-                        continue
-                    rows = self._parse_table_html(html)
-                    table_transactions.extend(
-                        self._transactions_from_table(
-                            rows,
-                            source_file=source_file,
-                            page_ref=f"Page_{page_num + 1}"
+                        binarize = bool(
+                            self.config.adaptive_preprocess
+                            and quality_score is not None
+                            and quality_score < self.config.quality_threshold
                         )
-                    )
-            
-            # Store image for vision processing if needed
-            if self.config.prefer_vision:
-                page_images.append(page_image)
-            else:
-                del page_image
-            
-            # Clear memory
-            del images
-            if page_num % 3 == 0:
-                gc.collect()
+                        page_image = preprocess_for_ocr(page_image, binarize=binarize)
+                    except Exception as e:
+                        print(f"    ⚠️ Image preprocessing failed for page {page_num + 1}: {e}")
+                        # Continue with original image
+                
+                # Run OCR with PaddleOCR when available; fallback to Tesseract on errors.
+                page_text = ""
+                if self.paddle_processor:
+                    try:
+                        page_text = self.paddle_processor.process_image_to_text(page_image)
+                    except Exception as exc:
+                        print(f"  ⚠️ PaddleOCR failed, falling back to Tesseract: {exc}")
+                        self.mark_paddle_unavailable()
+                        try:
+                            import pytesseract
+                            page_text = pytesseract.image_to_string(page_image)
+                        except Exception as tess_exc:
+                            print(f"    ⚠️ Tesseract also failed for page {page_num + 1}: {tess_exc}")
+                            page_text = ""
+                else:
+                    try:
+                        import pytesseract
+                        page_text = pytesseract.image_to_string(page_image)
+                    except Exception as tess_exc:
+                        print(f"    ⚠️ Tesseract failed for page {page_num + 1}: {tess_exc}")
+                        page_text = ""
+
+                # Secondary OCR pass for low-yield pages
+                if (
+                    self.config.adaptive_preprocess
+                    and self.config.preprocess_images
+                    and len(page_text.strip()) < self.config.min_ocr_chars
+                ):
+                    try:
+                        from .image_preprocessor import preprocess_for_ocr
+                        fallback_image = preprocess_for_ocr(raw_image, binarize=True)
+                        if self.paddle_processor:
+                            try:
+                                page_text = self.paddle_processor.process_image_to_text(fallback_image)
+                            except Exception as exc:
+                                print(f"  ⚠️ PaddleOCR failed on fallback pass, using Tesseract: {exc}")
+                                self.mark_paddle_unavailable()
+                                import pytesseract
+                                page_text = pytesseract.image_to_string(fallback_image)
+                        else:
+                            import pytesseract
+                            page_text = pytesseract.image_to_string(fallback_image)
+                    except Exception as e:
+                        print(f"    ⚠️ Secondary OCR pass failed for page {page_num + 1}: {e}")
+                
+                page_texts.append((page_num + 1, page_text))
+                total_ocr_chars += len(page_text)
+
+                # Table structure detection with error handling
+                if self.config.use_table_structure and self.paddle_processor:
+                    try:
+                        tables = self.paddle_processor.detect_table_structure(table_image) or []
+                    except Exception as exc:
+                        print(f"  ⚠️ Paddle table detection failed, skipping: {exc}")
+                        self.mark_paddle_unavailable()
+                        tables = []
+
+                    for table in tables:
+                        try:
+                            html = table.get('html', '')
+                            if not html:
+                                continue
+                            rows = self._parse_table_html(html)
+                            table_transactions.extend(
+                                self._transactions_from_table(
+                                    rows,
+                                    source_file=source_file,
+                                    page_ref=f"Page_{page_num + 1}"
+                                )
+                            )
+                        except Exception as table_exc:
+                            print(f"    ⚠️ Table parsing failed on page {page_num + 1}: {table_exc}")
+                            continue
+                
+                # Store image for vision processing if needed
+                if self.config.prefer_vision:
+                    page_images.append(page_image)
+                else:
+                    del page_image
+                
+                # Clear memory
+                del images
+                if page_num % 3 == 0:
+                    gc.collect()
+                    
+            except Exception as page_error:
+                # Catch any unexpected errors for this page and continue with next
+                print(f"    ❌ Unexpected error processing page {page_num + 1}: {page_error}")
+                continue
         
         print(f"  📄 OCR extracted {total_ocr_chars:,} characters")
 
@@ -1097,7 +1170,24 @@ class UniversalBankParser(BaseParser):
                 if not page_texts:
                     return total_tokens
 
-                first_page_text = next((text for _, text in page_texts if text.strip()), page_texts[0][1])
+                # Safely get first non-empty page text for column detection
+                first_page_text = ""
+                for _, text in page_texts:
+                    if text and text.strip():
+                        first_page_text = text
+                        break
+                
+                # Fallback to first page if all are empty
+                if not first_page_text and page_texts:
+                    try:
+                        first_page_text = page_texts[0][1]
+                    except (IndexError, TypeError):
+                        first_page_text = ""
+                
+                if not first_page_text:
+                    print("  ⚠️ No text extracted from any page, skipping LLM extraction")
+                    return total_tokens
+                
                 column_mapping = self.llm_extractor.detect_columns(first_page_text)
                 print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
 

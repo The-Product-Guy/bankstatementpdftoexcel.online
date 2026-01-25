@@ -10,7 +10,7 @@ from datetime import datetime
 from celery_config import celery_app
 from parsers.universal_parser import create_universal_parser
 from storage_utils import get_storage_config, download_file, upload_file
-from db import get_db_session
+from db import get_db_session, init_db, DATABASE_URL
 from models import Job, UsageCounter
 import logging
 import pandas as pd
@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 # Suppress verbose HTTP logs from OpenAI SDK
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
+
+# Ensure database tables exist for worker (especially in local/one-off runs).
+try:
+    init_db()
+except Exception as e:
+    logger.warning(f"Database initialization failed: {e}")
+
+if DATABASE_URL.startswith("sqlite"):
+    logger.warning("DATABASE_URL not set; worker is using SQLite. Connect Postgres to this service in Railway.")
 
 # Redis for progress updates (separate from Celery broker if needed, but usually same)
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')

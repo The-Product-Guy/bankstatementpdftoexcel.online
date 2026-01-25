@@ -107,40 +107,84 @@ class PaddleOCRProcessor:
             if "cls" not in str(exc):
                 raise
             result = self.ocr.ocr(img_array)
+        except ImportError:
+            # Re-raise ImportError so caller can fall back to Tesseract
+            raise
+        except Exception as exc:
+            # Catch runtime OCR errors (including tuple index errors) but not import errors
+            # Re-raise to let caller decide on fallback strategy
+            raise RuntimeError(f"PaddleOCR processing failed: {exc}") from exc
         
-        if not result or not result[0]:
+        # Robust result validation for different PaddleOCR versions
+        # PaddleOCR can return: None, [], [[]], [None], [[None]], or valid results
+        if not result:
+            return []
+        
+        # Get the first page result (PaddleOCR returns list of pages)
+        try:
+            page_result = result[0]
+        except (IndexError, TypeError):
+            return []
+        
+        # Handle None or empty page result
+        if not page_result:
+            return []
+        
+        # Ensure page_result is iterable
+        if not isinstance(page_result, (list, tuple)):
             return []
         
         extracted = []
-        for line in result[0]:
-            if not isinstance(line, (list, tuple)) or len(line) < 2:
-                continue
-            bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-            text_info = line[1]
-            if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
-                continue
-            if not isinstance(text_info, (list, tuple)) or len(text_info) < 2:
-                continue
-            text = text_info[0]
-            confidence = text_info[1]
-            
-            valid_points = [
-                p for p in bbox
-                if isinstance(p, (list, tuple)) and len(p) >= 2
-            ]
-            if len(valid_points) < 4:
-                continue
+        for line in page_result:
+            try:
+                # Skip None entries
+                if line is None:
+                    continue
+                    
+                # Validate line structure
+                if not isinstance(line, (list, tuple)) or len(line) < 2:
+                    continue
+                    
+                bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                text_info = line[1]
+                
+                # Validate bbox
+                if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                    continue
+                    
+                # Validate text_info
+                if not isinstance(text_info, (list, tuple)) or len(text_info) < 2:
+                    continue
+                    
+                text = text_info[0]
+                confidence = text_info[1]
+                
+                # Validate text and confidence
+                if not isinstance(text, str) or text is None:
+                    continue
+                if not isinstance(confidence, (int, float)):
+                    confidence = 0.0
+                
+                valid_points = [
+                    p for p in bbox
+                    if isinstance(p, (list, tuple)) and len(p) >= 2
+                ]
+                if len(valid_points) < 4:
+                    continue
 
-            # Calculate bounding box as (x_min, y_min, x_max, y_max)
-            x_coords = [p[0] for p in valid_points]
-            y_coords = [p[1] for p in valid_points]
-            
-            extracted.append({
-                'text': text,
-                'confidence': confidence,
-                'bbox': (min(x_coords), min(y_coords), max(x_coords), max(y_coords)),
-                'bbox_polygon': bbox
-            })
+                # Calculate bounding box as (x_min, y_min, x_max, y_max)
+                x_coords = [p[0] for p in valid_points]
+                y_coords = [p[1] for p in valid_points]
+                
+                extracted.append({
+                    'text': text,
+                    'confidence': confidence,
+                    'bbox': (min(x_coords), min(y_coords), max(x_coords), max(y_coords)),
+                    'bbox_polygon': bbox
+                })
+            except (IndexError, TypeError, ValueError) as e:
+                # Skip malformed entries silently
+                continue
         
         return extracted
     
@@ -187,29 +231,65 @@ class PaddleOCRProcessor:
         
         return '\n'.join(lines)
     
-    def detect_table_structure(self, image: Image.Image) -> Optional[Dict[str, Any]]:
+    def detect_table_structure(self, image: Image.Image) -> Optional[List[Dict[str, Any]]]:
         """
         Detect table structure in the image.
         Returns table cells with their positions and content.
+        
+        Args:
+            image: PIL Image to process
+            
+        Returns:
+            List of table dicts with 'bbox', 'html', 'cells' keys, or None
         """
         if not self.use_table_structure or self.table_engine is None:
             return None
         
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        img_array = np.array(image)
-        result = self.table_engine(img_array)
-        
-        tables = []
-        for item in result:
-            if item.get('type') == 'table':
-                tables.append({
-                    'bbox': item.get('bbox'),
-                    'html': item.get('res', {}).get('html', ''),
-                    'cells': item.get('res', {}).get('cell_bbox', [])
-                })
-        
-        return tables if tables else None
+        try:
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            img_array = np.array(image)
+            
+            result = self.table_engine(img_array)
+            
+            # Validate result
+            if not result:
+                return None
+            
+            if not isinstance(result, (list, tuple)):
+                return None
+            
+            tables = []
+            for item in result:
+                try:
+                    # Validate item is a dict
+                    if not isinstance(item, dict):
+                        continue
+                    
+                    # Check if it's a table
+                    if item.get('type') != 'table':
+                        continue
+                    
+                    # Safely extract res dict
+                    res = item.get('res')
+                    if not isinstance(res, dict):
+                        res = {}
+                    
+                    tables.append({
+                        'bbox': item.get('bbox'),
+                        'html': res.get('html', ''),
+                        'cells': res.get('cell_bbox', [])
+                    })
+                except (TypeError, KeyError, AttributeError):
+                    # Skip malformed items
+                    continue
+            
+            return tables if tables else None
+            
+        except Exception as e:
+            # Catch any PPStructure errors including tuple index errors
+            print(f"    ⚠️ Table structure detection error: {e}")
+            return None
     
     def extract_with_coordinates(
         self, 
