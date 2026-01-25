@@ -90,7 +90,8 @@ trap cleanup SIGINT SIGTERM
 # Start Celery Worker in background
 echo -e "\n${BLUE}👷 Starting Celery worker in background...${NC}"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES # Fix for macOS forking safety issues
-celery -A celery_config.celery_app worker --loglevel=info &
+# Use solo pool to avoid fork() SIGSEGV with PaddleOCR/OpenCV native libraries
+celery -A celery_config.celery_app worker --loglevel=info --pool=solo &
 CELERY_PID=$!
 
 # Give worker a moment to start

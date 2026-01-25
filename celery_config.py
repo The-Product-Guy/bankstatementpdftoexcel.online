@@ -21,7 +21,11 @@ def make_celery(app_name=__name__):
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        broker_connection_retry_on_startup=True
+        broker_connection_retry_on_startup=True,
+        # Use solo pool by default to avoid fork() SIGSEGV with native libraries
+        # PaddleOCR, OpenCV, and other C++ extensions crash when forked
+        # This can be overridden with --pool=prefork if needed
+        worker_pool='solo',
     )
     
     return celery
