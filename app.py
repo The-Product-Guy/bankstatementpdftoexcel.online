@@ -32,6 +32,7 @@ MAX_PAGES = int(os.environ.get('MAX_PAGES', '250'))
 GUEST_CONVERSION_LIMIT = int(os.environ.get('GUEST_CONVERSION_LIMIT', '1'))
 USER_CONVERSION_LIMIT = int(os.environ.get('USER_CONVERSION_LIMIT', '5'))
 MAGIC_LINK_EXP_MINUTES = int(os.environ.get('MAGIC_LINK_EXP_MINUTES', '15'))
+DISABLE_QUOTAS = os.environ.get('DISABLE_QUOTAS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in os.environ.get('ADMIN_EMAILS', '').split(',')
@@ -195,6 +196,8 @@ def get_usage_counter(db, user_id, guest_id):
     ).first()
 
 def check_conversion_quota(user_id, guest_id):
+    if DISABLE_QUOTAS or not os.environ.get('SES_FROM_EMAIL'):
+        return True, None
     try:
         with get_db_session() as db:
             if user_id:

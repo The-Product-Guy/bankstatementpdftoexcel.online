@@ -1323,79 +1323,351 @@ class UniversalBankParser(BaseParser):
         source_file: str
     ) -> None:
         """
-        Fallback regex-based parsing for when LLM is unavailable.
-        Attempts to identify common transaction patterns.
+        Structured OCR text parsing that handles multi-line descriptions
+        and properly extracts columns from bank statement format.
+        Handles OCR artifacts like split amounts (e.g., "1,79, 866.60" should be "1,79,866.60").
         """
         import re
         
-        print("  📝 Using fallback regex parsing...")
+        print("  📝 Using structured OCR parsing...")
+        
+        # Pre-process text to fix common OCR issues with Indian number format
+        # Fix split amounts like "1,79, 866.60" -> "1,79,866.60"
+        text = re.sub(r'(\d),\s+(\d)', r'\1,\2', text)
+        # Fix amounts with extra spaces like "1, 43, 666.60" -> "1,43,666.60"
+        text = re.sub(r'(\d{1,2}),\s*(\d{2}),\s*(\d{3}\.\d{2})', r'\1,\2,\3', text)
         
         lines = text.splitlines()
         
-        # Common date patterns
-        date_patterns = [
-            r'(\d{2}/\d{2}/\d{4})',  # DD/MM/YYYY
-            r'(\d{2}/\d{2}/\d{2})',   # DD/MM/YY
-            r'(\d{2}-\d{2}-\d{4})',   # DD-MM-YYYY
-            r'(\d{4}-\d{2}-\d{2})',   # YYYY-MM-DD
+        # Date pattern - matches DD/MM/YY or DD/MM/YYYY or DD-MM-YYYY
+        date_pattern = re.compile(r'^(\d{2}[/-]\d{2}[/-]\d{2,4})')
+        
+        # Amount pattern - Indian format like 1,43,666.60 or 36,200.00
+        # Must have decimal point with exactly 2 digits after
+        amount_pattern = re.compile(r'(\d{1,3}(?:,\d{2,3})*\.\d{2})')
+        
+        # Reference pattern - 12+ digit transaction references (IMPS/NEFT refs)
+        # More specific to avoid catching ATM IDs and other numbers
+        reference_pattern = re.compile(r'(\d{12,18})')
+        
+        # Skip patterns - generic headers and footers for any bank statement
+        # These patterns are designed to work across different banks globally
+        skip_patterns = [
+            # Column headers
+            r'TXN\s*D(T|ATE)',
+            r'VALUE\s*D(T|ATE)',
+            r'TRANS(ACTION)?\s*D(T|ATE)',
+            r'^DATE$',
+            r'^DESCRIPTION$',
+            r'^PARTICULARS$',
+            r'^NARRATION$',
+            r'^REFERENCE$',
+            r'^REF\.?\s*(NO\.?)?$',
+            r'DEBITS?\s*\/?\s*CREDITS?',
+            r'WITHDRAW(AL)?S?',
+            r'DEPOSITS?',
+            r'^BALANCE$',
+            r'^AMOUNT$',
+            r'^DR\.?$',
+            r'^CR\.?$',
+            # Page headers/footers
+            r'Scanned by',
+            r'Page\s*\d+',
+            r'Page\s*of',
+            r'Continued',
+            r'^\*+$',
+            r'^-+$',
+            # Statement headers (generic)
+            r'STATEMENT\s+OF\s+ACCOUNT',
+            r'ACCOUNT\s+STATEMENT',
+            r'BANK\s+(LTD|LIMITED)',
+            r'INDIAN\s+RUPEES',
+            r'CURRENCY\s*:',
+            r'Account\s*(Number|No\.?)',
+            r'A/C\s*(No\.?|Number)',
+            r'Period\s*(from|to)',
+            r'Statement\s*Period',
+            r'From\s*Date',
+            r'To\s*Date',
+            r'BRANCH\s*:',
+            r'IFSC\s*:',
+            r'MICR\s*:',
+            # Customer info (generic patterns)
+            r'^(Mr|Mrs|Ms|Dr|Shri|Smt)\.\s+',
+            r'Customer\s*(Name|ID)',
+            r'CIF\s*(No\.?|Number)',
+            # Empty/junk lines
+            r'^\d{1,3}\s*$',  # Lines with only short numbers
+            r'^[\s\-_\.]+$',  # Lines with only punctuation
+            # Common footers
+            r'This\s+is\s+(a\s+)?computer',
+            r'Generated\s+(on|by)',
+            r'E\.?\s*&?\s*O\.?\s*E\.?',  # E&OE
+            r'Opening\s*Balance',
+            r'Closing\s*Balance\s*:',
+            r'Total\s*(Debit|Credit)',
         ]
+        skip_re = re.compile('|'.join(skip_patterns), re.IGNORECASE)
         
-        # Amount pattern
-        amount_pattern = r'[\d,]+\.?\d{0,2}'
+        transactions = []
+        current_tx = None
+        line_num = 0
         
-        for line_no, line in enumerate(lines, 1):
+        for line in lines:
+            line_num += 1
+            original_line = line
             line = line.strip()
-            if not line or len(line) < 10:
+            
+            # Skip empty lines and headers
+            if not line or len(line) < 5:
+                continue
+            if skip_re.search(line):
                 continue
             
-            # Try each date pattern
-            for date_pat in date_patterns:
-                date_match = re.search(date_pat, line)
-                if date_match:
-                    # Found a date, try to extract amounts
-                    amounts = re.findall(amount_pattern, line)
-                    amounts = [self.clean_amount_string(a) for a in amounts]
-                    amounts = [a for a in amounts if a is not None and a > 0]
+            # Check if line starts with a date (new transaction)
+            date_match = date_pattern.match(line)
+            
+            if date_match:
+                # Save previous transaction if exists
+                if current_tx:
+                    # Clean up description before saving
+                    current_tx['description'] = self._clean_description(current_tx['description'])
+                    transactions.append(current_tx)
+                
+                txn_date = date_match.group(1)
+                rest_of_line = line[date_match.end():].strip()
+                
+                # Check for second date (value date) - skip it
+                value_date_match = date_pattern.match(rest_of_line)
+                if value_date_match:
+                    rest_of_line = rest_of_line[value_date_match.end():].strip()
+                
+                # Extract all amounts from the line
+                amounts_raw = amount_pattern.findall(line)
+                amounts = [self._parse_amount(a) for a in amounts_raw]
+                amounts = [a for a in amounts if a is not None and a > 0]
+                
+                # Extract reference number - look for common reference patterns globally
+                reference = ""
+                ref_patterns = [
+                    # Indian IMPS/NEFT/UPI references
+                    r'IMPS\s*(?:CR|DR)?[^\d]*(\d{12,16})',
+                    r'NEFT\s*:?\s*(\w{10,20})',
+                    r'UPI[/\s]*(\d{12,})',
+                    r'UTR[:\s]*(\w{12,22})',
+                    # International/Generic patterns
+                    r'REF[:\s#]*(\w{8,20})',
+                    r'TXN[:\s#]*(\w{8,20})',
+                    r'TRANS(?:ACTION)?[:\s#]*(\w{8,20})',
+                    # Cheque numbers
+                    r'CHQ[:\s#]*(\d{6,})',
+                    r'CHEQUE[:\s#]*(\d{6,})',
+                    # Generic long reference numbers (12+ alphanumeric)
+                    r'\b([A-Z]{2,4}\d{10,18})\b',
+                ]
+                for ref_pat in ref_patterns:
+                    ref_match = re.search(ref_pat, rest_of_line, re.IGNORECASE)
+                    if ref_match:
+                        reference = ref_match.group(1)
+                        break
+                
+                # Build description - start with the rest of line
+                description = rest_of_line
+                
+                # Remove amounts from description
+                for amt_str in amounts_raw:
+                    description = description.replace(amt_str, '')
+                
+                # Remove branch code at start (like "1763 ", "1684 ")
+                description = re.sub(r'^\d{4}\s+', '', description)
+                
+                # Clean up IMPS/NEFT format
+                description = re.sub(r'IMPS\s+(CR|DR)-\d+-', r'IMPS \1 ', description)
+                description = re.sub(r'-\s*$', '', description)  # Remove trailing dash
+                
+                # Clean up extra spaces and dashes
+                description = re.sub(r'\s+', ' ', description)
+                description = re.sub(r'\s*-\s*-\s*', ' ', description)
+                description = description.strip(' -')
+                
+                # Determine debit/credit based on amounts and keywords
+                withdrawal = None
+                deposit = None
+                balance = None
+                
+                if len(amounts) >= 2:
+                    balance = amounts[-1]  # Last amount is balance
+                    amount = amounts[-2]   # Second to last is transaction amount
                     
-                    if amounts:
-                        # Extract description (text between date and amounts)
-                        description = line[date_match.end():].strip()
-                        # Remove amounts from description
-                        for amt in amounts:
-                            description = description.replace(str(amt), '').strip()
-                        
-                        # Determine withdrawal vs deposit
+                    # Determine if credit or debit based on keywords (global patterns)
+                    desc_upper = description.upper()
+                    
+                    # Credit indicators (money coming in)
+                    credit_keywords = [
+                        # Indian banking
+                        'IMPS CR', 'NEFT CR', 'RTGS CR', 'UPI CR',
+                        'NEFT :', 'RTGS :', 'UPI /',  # Usually credits in statements
+                        'CASH DEPOSIT', 'BY TRANSFER', 'BY CLG',
+                        # Global/Generic
+                        'CREDIT', 'DEPOSIT', 'RECEIVED', 'INWARD',
+                        'INTEREST', 'DIVIDEND', 'REFUND', 'REVERSAL',
+                        'SALARY', 'BONUS', 'CASHBACK',
+                        'FROM ', 'BY ',  # "From ABC", "By Transfer"
+                        'CR$', ' CR ', 'CR.',  # CR indicator
+                    ]
+                    
+                    # Debit indicators (money going out)
+                    debit_keywords = [
+                        # Indian banking
+                        'IMPS DR', 'NEFT DR', 'RTGS DR', 'UPI DR',
+                        'ATM', 'CASH WITHDRAWAL', 'TO CLG',
+                        'ATW', 'CSW',  # ATM withdrawal codes
+                        # Global/Generic
+                        'DEBIT', 'WITHDRAW', 'PAYMENT', 'PURCHASE',
+                        'TRANSFER TO', 'OUTWARD', 'CHARGE', 'FEE',
+                        'TO ', 'POS ', 'BILL PAY', 'AUTO DEBIT',
+                        'EMI', 'LOAN', 'INSURANCE',
+                        'DR$', ' DR ', 'DR.',  # DR indicator
+                    ]
+                    
+                    is_credit = any(kw in desc_upper for kw in credit_keywords)
+                    is_debit = any(kw in desc_upper for kw in debit_keywords)
+                    
+                    # Opening/Brought forward balance - no transaction amount
+                    if any(bf in desc_upper for bf in ['B/F', 'B/E', 'OPENING', 'BROUGHT FORWARD', 'O/B']):
                         withdrawal = None
                         deposit = None
-                        balance = None
-                        
-                        if len(amounts) >= 3:
-                            withdrawal = amounts[0] if amounts[0] > 0 else None
-                            deposit = amounts[1] if amounts[1] > 0 else None
-                            balance = amounts[-1]
-                        elif len(amounts) == 2:
-                            # Guess based on keywords
-                            desc_lower = description.lower()
-                            if any(w in desc_lower for w in ['cr', 'credit', 'neft cr', 'deposit']):
-                                deposit = amounts[0]
-                            else:
-                                withdrawal = amounts[0]
-                            balance = amounts[1]
-                        elif len(amounts) == 1:
-                            balance = amounts[0]
-                        
-                        tx = self.create_transaction_dict(
-                            date=date_match.group(1),
-                            description=description[:200],  # Limit length
-                            reference="",
-                            withdrawal_amt=withdrawal,
-                            deposit_amt=deposit,
-                            balance_amt=balance,
-                            source_file=source_file,
-                            line_ref=line_no
-                        )
-                        self.transactions.append(tx)
-                        break
+                    elif is_credit and not is_debit:
+                        deposit = amount
+                    else:
+                        # Default to debit if unclear (most transactions are debits)
+                        withdrawal = amount
+                elif len(amounts) == 1:
+                    balance = amounts[0]
+                
+                current_tx = {
+                    'txn_date': txn_date,
+                    'description': description,
+                    'reference': reference,
+                    'withdrawal': withdrawal,
+                    'deposit': deposit,
+                    'balance': balance,
+                    'line_num': line_num,
+                }
+            
+            elif current_tx:
+                # Continuation line - append to description
+                if not skip_re.search(line) and not date_pattern.match(line):
+                    # Skip lines that are just amounts or short numbers
+                    if re.match(r'^[\d,.\s]+$', line):
+                        continue
+                    # Skip ATM location codes and short fragments
+                    if len(line) < 4:
+                        continue
+                    
+                    # Clean continuation text
+                    cont_text = line
+                    # Remove leading numbers (like "914" continuation of reference)
+                    cont_text = re.sub(r'^\d{1,4}\s*', '', cont_text)
+                    cont_text = re.sub(r'\s+', ' ', cont_text).strip()
+                    
+                    if cont_text and len(cont_text) >= 3:
+                        current_tx['description'] += ' ' + cont_text
+        
+        # Don't forget the last transaction
+        if current_tx:
+            current_tx['description'] = self._clean_description(current_tx['description'])
+            transactions.append(current_tx)
+        
+        # Convert to standard format and store as raw_table for Excel output
+        raw_rows = []
+        for tx in transactions:
+            std_tx = self.create_transaction_dict(
+                date=tx['txn_date'],
+                description=tx['description'][:500],
+                reference=tx['reference'],
+                withdrawal_amt=tx['withdrawal'],
+                deposit_amt=tx['deposit'],
+                balance_amt=tx['balance'],
+                source_file=source_file,
+                line_ref=tx['line_num']
+            )
+            self.transactions.append(std_tx)
+            
+            # Also build raw table for direct Excel output
+            raw_rows.append([
+                tx['txn_date'],
+                tx['description'],
+                tx['reference'],
+                tx['withdrawal'] if tx['withdrawal'] else '',
+                tx['deposit'] if tx['deposit'] else '',
+                tx['balance'] if tx['balance'] else '',
+            ])
+        
+        # Set raw_table for worker.py to use
+        if raw_rows:
+            self.raw_table = {
+                'columns': ['Date', 'Description', 'Reference', 'Debit', 'Credit', 'Balance'],
+                'rows': raw_rows
+            }
+        
+        print(f"  📊 Parsed {len(transactions)} transactions from OCR text")
+    
+    def _clean_description(self, desc: str) -> str:
+        """Clean up description text, removing OCR artifacts."""
+        import re
+        if not desc:
+            return ""
+        # Remove partial amounts like "1,43," or "1,"
+        desc = re.sub(r'\d{1,2},\s*$', '', desc)
+        desc = re.sub(r'\b\d{1,2},\d{2},\s*$', '', desc)
+        desc = re.sub(r'\b\d{1,2},\s+', ' ', desc)
+        # Remove standalone short numbers
+        desc = re.sub(r'\s+\d{1,3}\s+', ' ', desc)
+        # Remove extra spaces
+        desc = re.sub(r'\s+', ' ', desc).strip()
+        # Remove trailing/leading dashes
+        desc = desc.strip(' -/')
+        return desc
+    
+    def _parse_amount(self, amount_str: str) -> Optional[float]:
+        """
+        Parse various global number formats to float.
+        Supports:
+        - Indian: 1,23,456.78
+        - US/UK: 1,234,567.89
+        - European: 1.234.567,89 (comma as decimal)
+        """
+        if not amount_str:
+            return None
+        try:
+            cleaned = amount_str.replace(' ', '')
+            
+            # Detect format based on last separator
+            # If comma is near the end (e.g., "1234,56"), it's European format
+            if ',' in cleaned and '.' in cleaned:
+                # Has both - determine which is decimal
+                last_comma = cleaned.rfind(',')
+                last_dot = cleaned.rfind('.')
+                if last_comma > last_dot:
+                    # European format: 1.234,56 -> comma is decimal
+                    cleaned = cleaned.replace('.', '').replace(',', '.')
+                else:
+                    # US/Indian format: 1,234.56 -> dot is decimal
+                    cleaned = cleaned.replace(',', '')
+            elif ',' in cleaned:
+                # Only commas - could be European decimal or thousand separator
+                # If exactly 2 digits after comma, treat as decimal
+                parts = cleaned.split(',')
+                if len(parts) == 2 and len(parts[1]) == 2:
+                    cleaned = cleaned.replace(',', '.')
+                else:
+                    cleaned = cleaned.replace(',', '')
+            # Dot-only is standard format, no change needed
+            
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
     
     def get_processing_stats(self) -> Optional[ProcessingStats]:
         """Get statistics from the last processing run."""
