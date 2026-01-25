@@ -10,6 +10,7 @@ const uploadForm = document.getElementById('uploadForm');
 const progressModal = document.getElementById('progressModal');
 const progressFill = document.getElementById('progressFill');
 const progressInfo = document.getElementById('progressInfo');
+const progressBar = document.getElementById('progressBar');
 
 // Initialize WebSocket connection
 let socket = null;
@@ -112,16 +113,23 @@ function handleFileSelect(e) {
 
 // Validate file
 function validateFile(file) {
+    const fileName = (file.name || '').toLowerCase();
+    const isPdfType = file.type === 'application/pdf' ||
+        file.type === 'application/x-pdf' ||
+        file.type === 'application/octet-stream' ||
+        fileName.endsWith('.pdf');
+
     // Check file type
-    if (file.type !== 'application/pdf') {
+    if (!isPdfType) {
         showAlert('Please select a PDF file.', 'error');
         return false;
     }
 
     // Check file size (100MB limit)
-    const maxSize = 100 * 1024 * 1024; // 100MB
+    const maxSizeMb = parseInt(fileInput.dataset.maxSize || '100', 10);
+    const maxSize = maxSizeMb * 1024 * 1024;
     if (file.size > maxSize) {
-        showAlert('File size exceeds 100MB limit. Please choose a smaller file.', 'error');
+        showAlert(`File size exceeds ${maxSizeMb}MB limit. Please choose a smaller file.`, 'error');
         return false;
     }
 
@@ -184,12 +192,17 @@ function handleFormSubmit(e) {
 // Show progress modal
 function showProgressModal() {
     progressModal.style.display = 'flex';
+    progressModal.setAttribute('aria-hidden', 'false');
+    progressModal.setAttribute('aria-busy', 'true');
+    progressModal.focus();
     resetProgressSteps();
 }
 
 // Hide progress modal and reset form
 function hideProgressModal() {
     progressModal.style.display = 'none';
+    progressModal.setAttribute('aria-hidden', 'true');
+    progressModal.setAttribute('aria-busy', 'false');
     resetForm();
 }
 
@@ -224,6 +237,9 @@ function updateProgress(data) {
 
     // Update progress bar
     progressFill.style.width = percentage + '%';
+    if (progressBar) {
+        progressBar.setAttribute('aria-valuenow', `${percentage}`);
+    }
 
     // Update progress info text
     if (currentPage > 0 && totalPages > 0) {
@@ -404,12 +420,17 @@ async function submitFormWithProgress() {
                 }
             }
         } else {
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const data = await response.json();
+                throw new Error(data.error || 'Request failed.');
+            }
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
     } catch (error) {
         console.error('Form submission error:', error);
         hideProgressModal();
-        showAlert('❌ An error occurred during conversion. Please try again.', 'error');
+        showAlert(`❌ ${error.message || 'An error occurred during conversion. Please try again.'}`, 'error');
     }
 }
 
@@ -445,6 +466,7 @@ function showAlert(message, type = 'error') {
     // Create new alert
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type}`;
+    alertDiv.setAttribute('role', 'alert');
 
     const icon = type === 'error' ? 'exclamation-triangle' :
         type === 'warning' ? 'exclamation-circle' :

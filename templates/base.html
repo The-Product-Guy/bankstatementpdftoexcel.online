@@ -11,6 +11,11 @@
     <meta name="author" content="PDF to Excel Converter">
     <meta name="robots" content="{% block robots %}index, follow{% endblock %}">
     <link rel="canonical" href="{% block canonical_url %}{{ request.url }}{% endblock %}">
+
+    {# Fonts #}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     {# Open Graph / Facebook #}
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">
@@ -75,24 +80,26 @@
     
     {# Navigation #}
     <nav class="main-nav">
-        <div class="nav-container">
+        <div class="nav-container" id="navContainer">
             <div class="nav-brand">
                 <a href="{{ url_for('home') }}">
-                    <i class="fas fa-file-excel"></i>
-                    <span>PDF to Excel</span>
+                    <i class="fas fa-layer-group"></i>
+                    <span>StatementFlow</span>
                 </a>
             </div>
-            <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation">
+            <div class="nav-links" id="navMenu">
+                <a href="{{ url_for('home') }}#how-it-works">How it Works</a>
+                <a href="{{ url_for('pricing') }}" {% if request.endpoint == 'pricing' %}class="active"{% endif %}>Pricing</a>
+                <a href="{{ url_for('blogs') }}" {% if request.endpoint == 'blogs' %}class="active"{% endif %}>Blog</a>
+            </div>
+            <div class="nav-actions">
+                <a href="/signin" class="nav-signin">Sign In</a>
+            </div>
+            <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-controls="navMenu" aria-expanded="false">
                 <span></span>
                 <span></span>
                 <span></span>
             </button>
-            <ul class="nav-menu" id="navMenu">
-                <li><a href="{{ url_for('home') }}" {% if request.endpoint == 'home' %}class="active"{% endif %}>Home</a></li>
-                <li><a href="{{ url_for('blogs') }}" {% if request.endpoint == 'blogs' %}class="active"{% endif %}>Blogs</a></li>
-                <li><a href="{{ url_for('pricing') }}" {% if request.endpoint == 'pricing' %}class="active"{% endif %}>Pricing</a></li>
-                <li><a href="{{ url_for('home') }}#convert" class="nav-cta">Convert Now</a></li>
-            </ul>
         </div>
     </nav>
     
@@ -149,11 +156,14 @@
         document.addEventListener('DOMContentLoaded', function() {
             const navToggle = document.getElementById('navToggle');
             const navMenu = document.getElementById('navMenu');
+            const navContainer = document.getElementById('navContainer');
             
-            if (navToggle && navMenu) {
+            if (navToggle && navMenu && navContainer) {
                 navToggle.addEventListener('click', function() {
                     navMenu.classList.toggle('active');
+                    navContainer.classList.toggle('nav-open');
                     navToggle.classList.toggle('active');
+                    navToggle.setAttribute('aria-expanded', navMenu.classList.contains('active'));
                 });
             }
         });

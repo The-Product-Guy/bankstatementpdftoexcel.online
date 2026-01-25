@@ -12,7 +12,9 @@ import tempfile
 import uuid
 import gc
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
+import secrets
+from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for, session
+from werkzeug.exceptions import RequestEntityTooLarge
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 
@@ -25,14 +27,24 @@ from storage_utils import get_storage_config, upload_file, generate_presigned_ur
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max file size for Railway deployment
+MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '100'))
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')  # Google Analytics Measurement ID (e.g., G-XXXXXXXXXX)
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')  # Google Tag Manager Container ID (optional)
 
 # Initialize SocketIO with proper configuration for production
+allowed_origins_env = os.environ.get('SOCKETIO_CORS_ORIGINS') or os.environ.get('ALLOWED_ORIGINS')
+if allowed_origins_env:
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(',') if origin.strip()]
+else:
+    allowed_origins = "*"
+
 socketio = SocketIO(
     app, 
-    cors_allowed_origins="*",
+    cors_allowed_origins=allowed_origins,
     async_mode='eventlet',
     logger=False,
     engineio_logger=False,
@@ -75,6 +87,54 @@ def allowed_file(filename):
     """Check if uploaded file is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'pdf'
 
+def is_pdf_file(file_storage):
+    """Validate uploaded file is a PDF by extension and magic bytes."""
+    if not file_storage or not file_storage.filename:
+        return False
+    if not allowed_file(file_storage.filename):
+        return False
+    mimetype = (file_storage.mimetype or '').lower()
+    if mimetype and mimetype not in {'application/pdf', 'application/x-pdf', 'application/octet-stream'}:
+        return False
+    try:
+        header = file_storage.stream.read(1024)
+        file_storage.stream.seek(0)
+    except Exception:
+        return False
+    return b'%PDF-' in header[:1024]
+
+def is_ajax_request():
+    return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
+def get_client_ip():
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+def rate_limited(key, limit, window_seconds):
+    try:
+        import redis
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        r = redis.StrictRedis.from_url(redis_url)
+        count = r.incr(key)
+        if count == 1:
+            r.expire(key, window_seconds)
+        return count > limit
+    except Exception:
+        return False
+
+def get_csrf_token():
+    token = session.get('csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['csrf_token'] = token
+    return token
+
+@app.context_processor
+def inject_csrf_token():
+    return {'csrf_token': get_csrf_token}
+
 def cleanup_old_files():
     """Clean up old uploaded files"""
     try:
@@ -92,11 +152,40 @@ def progress_callback(progress_data):
     """Callback function to emit progress updates via WebSocket"""
     socketio.emit('progress_update', progress_data)
 
+@app.after_request
+def add_security_headers(response):
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdnjs.cloudflare.com "
+        "https://www.googletagmanager.com https://www.google-analytics.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'"
+    )
+    response.headers.setdefault('Content-Security-Policy', csp)
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    return response
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_upload(error):
+    message = f'File too large. Maximum allowed size is {MAX_UPLOAD_MB}MB.'
+    if is_ajax_request():
+        return jsonify({'status': 'error', 'error': message}), 413
+    flash(message, 'error')
+    return redirect(url_for('home'))
+
 @app.route('/')
 def home():
     """Home page with upload functionality"""
     cleanup_old_files()
-    return render_template('home.html', banks=SUPPORTED_BANKS)
+    return render_template('home.html', banks=SUPPORTED_BANKS, max_upload_mb=MAX_UPLOAD_MB)
 
 @app.route('/index')
 def index():
@@ -117,6 +206,21 @@ def pricing():
 def convert():
     """Handle PDF conversion"""
     try:
+        if rate_limited(f"rate:convert:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_CONVERT', '15')), 3600):
+            message = 'Too many conversion requests. Please try again later.'
+            if is_ajax_request():
+                return jsonify({'status': 'error', 'error': message}), 429
+            flash(message, 'error')
+            return redirect(url_for('home'))
+
+        csrf_token = request.form.get('csrf_token')
+        if not csrf_token or csrf_token != session.get('csrf_token'):
+            message = 'Invalid request token. Please refresh and try again.'
+            if is_ajax_request():
+                return jsonify({'status': 'error', 'error': message}), 400
+            flash(message, 'error')
+            return redirect(url_for('home'))
+
         # Validate form data
         if 'pdf_file' not in request.files:
             flash('Please upload a PDF file.', 'error')
@@ -130,7 +234,7 @@ def convert():
             flash('No file selected.', 'error')
             return redirect(url_for('home'))
             
-        if not allowed_file(pdf_file.filename):
+        if not is_pdf_file(pdf_file):
             flash('Please upload a PDF file.', 'error')
             return redirect(url_for('home'))
         
@@ -198,6 +302,8 @@ def convert():
 @app.route('/status/<job_id>')
 def job_status(job_id):
     """Check job status (fallback/polling)"""
+    if rate_limited(f"rate:status:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_STATUS', '120')), 60):
+        return jsonify({'status': 'error', 'percent': 0, 'error': 'Too many status requests.'}), 429
     import redis
     redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
     r = redis.StrictRedis.from_url(redis_url)
