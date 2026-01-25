@@ -97,8 +97,13 @@ class PaddleOCRProcessor:
         # Convert PIL to numpy array
         img_array = np.array(image)
         
-        # Run OCR
-        result = self.ocr.ocr(img_array, cls=True)
+        # Run OCR with compatibility for PaddleOCR API changes
+        try:
+            result = self.ocr.ocr(img_array, cls=True)
+        except TypeError as exc:
+            if "cls" not in str(exc):
+                raise
+            result = self.ocr.ocr(img_array)
         
         if not result or not result[0]:
             return []
