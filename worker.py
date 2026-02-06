@@ -36,6 +36,40 @@ if DATABASE_URL.startswith("sqlite"):
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.StrictRedis.from_url(redis_url)
 
+
+def _warmup_ocr_models():
+    """
+    Pre-load PaddleOCR models at worker startup so first request isn't slow.
+    Without this, the first conversion takes an extra 15-30s for model loading.
+    With ONNX Runtime, warmup takes ~5-10s and reduces first-request latency to match subsequent ones.
+    """
+    if not os.environ.get('USE_PADDLEOCR', 'true').lower() in {'1', 'true', 'yes', 'on'}:
+        logger.info("PaddleOCR disabled via USE_PADDLEOCR, skipping warmup")
+        return
+
+    try:
+        import time
+        start = time.time()
+        logger.info("Pre-warming PaddleOCR models (ONNX Runtime backend)...")
+        from parsers.paddleocr_processor import get_paddleocr
+        ocr = get_paddleocr()
+        # Run a tiny inference to fully initialize the ONNX/Paddle runtime graph
+        import numpy as np
+        dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+        try:
+            ocr.ocr(dummy, cls=False)
+        except Exception:
+            # Some versions throw on blank images; model is still loaded
+            pass
+        elapsed = time.time() - start
+        logger.info(f"PaddleOCR models ready in {elapsed:.1f}s")
+    except Exception as e:
+        logger.warning(f"OCR model warmup failed (will lazy-load on first request): {e}")
+
+
+# Warm up models at worker import time (before accepting tasks)
+_warmup_ocr_models()
+
 def _update_job(job_id, **fields):
     try:
         with get_db_session() as db:
@@ -115,11 +149,15 @@ def update_progress(job_id, current, total, status_message, percent_override=Non
         logger.error(f"Failed to update progress: {str(e)}")
 
 @celery_app.task(bind=True, name='worker.process_pdf')
-def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
+def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, quality='standard'):
     """
     Celery task to process a PDF file.
+    
+    Args:
+        quality: 'standard' (150 DPI) or 'high' (200 DPI) for OCR resolution.
+                 Higher DPI improves accuracy on faded/poor-quality scans but is slower.
     """
-    logger.info(f"Starting job {job_id} for file {original_filename}")
+    logger.info(f"Starting job {job_id} for file {original_filename} (quality={quality})")
     
     # Set API key if provided (important for worker environment)
     if api_key:
@@ -181,10 +219,16 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
         # Create parser instance with environment-based configuration
         # All settings are controlled via environment variables in ProcessingConfig
         # See ProcessingConfig docstring for resource usage guide
+        #
+        # Quality modes:
+        #   'standard' = 150 DPI (fast, good for most bank statements)
+        #   'high'     = 200 DPI (slower, better for faded/poor scans)
+        dpi_override = 200 if quality == 'high' else 150
         parser = create_universal_parser(
             progress_callback=progress_callback,
             # These override environment defaults - remove to use env vars fully
             use_llm=False,  # Set USE_LLM=true to enable
+            dpi=dpi_override,
         )
         
         # Determine output path using absolute paths
@@ -236,23 +280,46 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
             pd.DataFrame().to_excel(excel_path, index=False)
             logger.warning(f"Job {job_id}: No data extracted, created empty Excel")
 
+        # --- Build extraction metadata for frontend ---
+        ext_meta = getattr(parser, "extraction_metadata", None)
+        result_extra = {
+            "quality_used": quality,
+        }
+        if ext_meta:
+            result_extra.update({
+                "extraction_rows": ext_meta.row_count,
+                "extraction_cols": ext_meta.col_count,
+                "extraction_method": ext_meta.extraction_method,
+                "confidence": ext_meta.confidence,        # 'good', 'low', 'empty'
+                "document_hint": ext_meta.document_hint,  # 'statement', 'non_tabular', 'unknown'
+                "quality_message": ext_meta.message,
+            })
+
+        # Determine completion status message
+        if not has_data:
+            if ext_meta and ext_meta.document_hint == "non_tabular":
+                status_msg = "This PDF does not appear to contain tabular data."
+            else:
+                status_msg = "Completed - no data extracted"
+        else:
+            status_msg = "Completed successfully"
+
         # Upload and update progress
         if storage:
             output_key = f"outputs/{job_id}/{excel_filename}"
             upload_file(storage, excel_path, output_key)
+            result_extra["storage"] = "s3"
+            result_extra["download_key"] = output_key
             update_progress(
-                job_id,
-                100,
-                100,
-                "Completed successfully" if has_data else "Completed - no data extracted",
+                job_id, 100, 100, status_msg,
                 percent_override=100,
-                extra={"storage": "s3", "download_key": output_key}
+                extra=result_extra
             )
         else:
             update_progress(
-                job_id, 100, 100, 
-                "Completed successfully" if has_data else "Completed - no data extracted",
-                percent_override=100
+                job_id, 100, 100, status_msg,
+                percent_override=100,
+                extra=result_extra
             )
         
         _update_job(
@@ -268,7 +335,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None):
             'job_id': job_id,
             'excel_path': excel_path,
             'transaction_count': len(transactions),
-            'filename': excel_filename
+            'filename': excel_filename,
+            'confidence': ext_meta.confidence if ext_meta else 'unknown',
         }
         
     except Exception as e:

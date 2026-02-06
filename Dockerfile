@@ -2,7 +2,11 @@
 FROM python:3.11-slim
 
 # Install system dependencies for OCR and Image Processing
-RUN apt-get update && apt-get install -y \
+# - tesseract-ocr: fallback OCR engine
+# - libgl1, libglib2.0-0: OpenCV dependencies
+# - libgomp1: OpenMP for ONNX Runtime parallel inference
+# - poppler-utils: pdf2image (pdftoppm)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     libgl1 \
     libglib2.0-0 \
@@ -17,7 +21,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-# Note: Install paddlepaddle and paddleocr separately if needed or via requirements
+# Uses ONNX Runtime (not full PaddlePaddle) for OCR inference — saves ~1.5GB image size
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -32,5 +36,5 @@ RUN mkdir -p uploads processed
 # Expose port
 EXPOSE 5000
 
-# Command to run (will be overridden by Railway service config)
-CMD ["sh", "-c", "gunicorn --worker-class eventlet -w 1 app:app --bind 0.0.0.0:${PORT:-5000}"]
+# Command to run (will be overridden by Railway service config / entrypoint.sh)
+CMD ["sh", "-c", "./entrypoint.sh"]

@@ -85,3 +85,28 @@ class UsageCounter(Base):
     pages_total = Column(Integer, default=0)
     bytes_total = Column(Integer, default=0)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FeedbackSubmission(Base):
+    """
+    Tracks user-submitted feedback when a conversion produces poor results.
+    If the user opts in, their PDF is kept for analysis; otherwise only the
+    metadata is stored.
+    """
+    __tablename__ = "feedback_submissions"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    job_id = Column(String, ForeignKey("jobs.id"), index=True)
+    user_id = Column(String, ForeignKey("users.id"))
+    guest_id = Column(String, index=True)
+    feedback_type = Column(String, nullable=False)      # 'empty_result', 'incorrect_data', 'formatting', 'other'
+    message = Column(Text)                               # Optional free-text from user
+    pdf_shared = Column(Boolean, default=False)          # Did user consent to share their PDF?
+    pdf_storage_key = Column(String)                     # S3 key if PDF was shared
+    extraction_rows = Column(Integer)                    # How many rows we extracted
+    extraction_cols = Column(Integer)                    # How many columns we detected
+    quality_used = Column(String)                        # 'standard' or 'high'
+    status = Column(String, default="new")               # 'new', 'reviewed', 'resolved'
+    created_at = Column(DateTime, default=datetime.utcnow)
+    ip = Column(String)
+    user_agent = Column(String)

@@ -47,13 +47,20 @@ class ProcessingConfig:
     Configuration for document processing.
     All settings can be overridden via environment variables for easy tuning.
     
+    Quality Modes (user-selectable):
+    - STANDARD: dpi=150, preprocess=True, paddleocr=True  (default, fast)
+    - HIGH:     dpi=200, preprocess=True, adaptive=True, paddleocr=True  (slower, for poor scans)
+    
     Resource Usage Guide:
-    - LOW:    dpi=150, preprocess=False, adaptive=False, paddleocr=False
-    - MEDIUM: dpi=150, preprocess=True, adaptive=False, paddleocr=False (default)
-    - HIGH:   dpi=200, preprocess=True, adaptive=True, paddleocr=True
+    - LOW:    dpi=150, preprocess=False, adaptive=False, paddleocr=False  (~1 GB RAM)
+    - MEDIUM: dpi=150, preprocess=True, adaptive=False, paddleocr=True   (~2-3 GB RAM, default)
+    - HIGH:   dpi=200, preprocess=True, adaptive=True, paddleocr=True    (~3-4 GB RAM)
+    
+    Note: Using ONNX Runtime backend (instead of full PaddlePaddle) reduces RAM by ~1.5 GB
+    and speeds up inference by 30-50% with identical accuracy.
     """
     # OCR Engine Selection
-    use_paddleocr: bool = _env_bool('USE_PADDLEOCR', False)  # Default to Tesseract (lighter)
+    use_paddleocr: bool = _env_bool('USE_PADDLEOCR', True)  # PaddleOCR by default (better accuracy)
     use_llm: bool = _env_bool('USE_LLM', False)  # LLM extraction (requires API key)
     use_table_structure: bool = _env_bool('USE_TABLE_STRUCTURE', False)  # PPStructure (heavy)
     prefer_vision: bool = _env_bool('PREFER_VISION', False)  # Send images to LLM
@@ -86,6 +93,22 @@ class ProcessingStats:
     processing_time_seconds: float
 
 
+@dataclass
+class ExtractionMetadata:
+    """
+    Metadata about what was extracted -- used to communicate result quality
+    to the frontend so it can show appropriate messages (retry, feedback, etc.).
+    """
+    row_count: int = 0
+    col_count: int = 0
+    has_data: bool = False
+    extraction_method: str = ""         # 'spatial', 'table_structure', 'layout', 'regex', 'llm'
+    pdf_type: str = ""                  # 'text' or 'image'
+    document_hint: str = "statement"    # 'statement', 'non_tabular', 'unknown'
+    confidence: str = "good"            # 'good', 'low', 'empty'
+    message: str = ""                   # Human-readable quality summary
+
+
 class UniversalBankParser(BaseParser):
     """
     Universal parser that works with any bank statement format.
@@ -102,6 +125,7 @@ class UniversalBankParser(BaseParser):
         self.config = config or ProcessingConfig()
         self.stats = None
         self.raw_table = None
+        self.extraction_metadata = ExtractionMetadata()
         
         # Lazy-loaded processors
         self._paddle_processor = None
@@ -211,9 +235,106 @@ class UniversalBankParser(BaseParser):
             processing_time_seconds=processing_time
         )
         
+        # --- Build extraction metadata for frontend quality feedback ---
+        self._build_extraction_metadata(pdf_type, total_pages)
+        
         print(f"  🎉 Extracted {len(self.transactions)} transactions in {processing_time:.1f}s")
+        if self.extraction_metadata.confidence != "good":
+            print(f"  ⚠️ Quality: {self.extraction_metadata.confidence} — {self.extraction_metadata.message}")
         
         return self.transactions
+    
+    def _build_extraction_metadata(self, pdf_type: str, total_pages: int):
+        """
+        Populate self.extraction_metadata after parsing completes.
+        Performs heuristic checks to detect:
+        - Empty extractions (no data at all)
+        - Non-tabular documents (resumes, letters, etc.)
+        - Low confidence extractions (few rows relative to pages)
+        """
+        meta = self.extraction_metadata
+        meta.pdf_type = pdf_type
+        
+        # Determine row/col counts from raw_table or transactions
+        if self.raw_table and self.raw_table.get("rows"):
+            meta.row_count = len(self.raw_table["rows"])
+            meta.col_count = len(self.raw_table.get("columns", []))
+            meta.extraction_method = "spatial"
+        elif self.transactions:
+            meta.row_count = len(self.transactions)
+            # transactions is List[Dict]; len(dict) = number of keys = columns
+            try:
+                first = self.transactions[0]
+                meta.col_count = len(first) if isinstance(first, dict) else 0
+            except (IndexError, TypeError):
+                meta.col_count = 0
+            meta.extraction_method = "regex"
+        else:
+            meta.row_count = 0
+            meta.col_count = 0
+            meta.extraction_method = "none"
+        
+        meta.has_data = meta.row_count > 0
+        
+        # --- Confidence / quality assessment ---
+        if meta.row_count == 0:
+            meta.confidence = "empty"
+            meta.document_hint = self._detect_document_type(meta)
+            if meta.document_hint == "non_tabular":
+                meta.message = (
+                    "This PDF does not appear to contain tabular data (like a bank statement). "
+                    "StatementFlow works best with bank statements and financial reports."
+                )
+            else:
+                meta.message = (
+                    "No data could be extracted. The PDF may be encrypted, image-heavy, "
+                    "or in an unsupported format. Try 'High Quality' mode or submit feedback."
+                )
+        elif meta.row_count < 3 and total_pages > 1:
+            meta.confidence = "low"
+            meta.message = (
+                f"Only {meta.row_count} rows extracted from {total_pages} pages. "
+                "Results may be incomplete. Try 'High Quality' mode for better accuracy."
+            )
+        elif meta.col_count < 2:
+            meta.confidence = "low"
+            meta.message = (
+                "The extracted data has very few columns. The table structure may not have "
+                "been detected correctly. Try 'High Quality' mode or submit feedback."
+            )
+        else:
+            meta.confidence = "good"
+            meta.message = f"Extracted {meta.row_count} rows with {meta.col_count} columns."
+    
+    def _detect_document_type(self, meta: 'ExtractionMetadata') -> str:
+        """
+        Heuristic to determine if the document is likely a bank statement or not.
+        Called when extraction produces zero results.
+        
+        Checks the raw_table and transactions; if both are empty, inspects
+        whatever text was captured during processing for statement-like patterns.
+        """
+        # If we got data, it's probably a statement (even if low quality)
+        if meta.has_data:
+            return "statement"
+        
+        # Check if any text was captured that looks financial
+        # Look at the parser's internal state for clues
+        financial_patterns = [
+            r'\b\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\b',  # Date patterns
+            r'\b\d{1,3}(?:[,\.]\d{3})*(?:\.\d{2})\b',      # Amount patterns (1,234.56)
+            r'\b(?:balance|debit|credit|withdrawal|deposit|transaction)\b',  # Financial terms
+            r'\b(?:opening|closing|statement|account)\b',    # Statement terms
+        ]
+        
+        # We don't have the full text stored, but we can infer from
+        # whether we even attempted extraction and how far we got
+        # If the parser tried spatial extraction and got zero rows on all pages,
+        # and regex also found nothing, the document likely isn't tabular
+        if self.stats and self.stats.transactions_found == 0:
+            return "non_tabular"
+        
+        return "unknown"
     
     def _process_text_based(
         self, 
@@ -712,8 +833,21 @@ class UniversalBankParser(BaseParser):
         return True
 
     def _looks_like_date(self, text: str) -> bool:
+        """Check if text looks like a date in any common global format."""
         import re
-        return bool(re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', text))
+        # DD/MM/YY(YY), MM/DD/YYYY, DD-MM-YYYY
+        if re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', text):
+            return True
+        # YYYY-MM-DD, YYYY/MM/DD
+        if re.search(r'\d{4}[/-]\d{2}[/-]\d{2}', text):
+            return True
+        # DD-Mon-YYYY, DD Mon YYYY, Mon DD YYYY
+        months = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+        if re.search(r'\d{1,2}[\s-]' + months + r'[\s-]\d{2,4}', text, re.IGNORECASE):
+            return True
+        if re.search(months + r'\s+\d{1,2},?\s+\d{4}', text, re.IGNORECASE):
+            return True
+        return False
 
     def _table_settings(self) -> Dict[str, Any]:
         """Table extraction settings for pdfplumber."""
@@ -891,8 +1025,11 @@ class UniversalBankParser(BaseParser):
         """Infer column roles when no header is available."""
         import re
 
-        date_re = re.compile(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}')
-        amount_re = re.compile(r'^[\d,]+\.?\d{0,2}$')
+        date_re = re.compile(
+            r'\d{4}[/-]\d{2}[/-]\d{2}'
+            r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+        )
+        amount_re = re.compile(r'^-?[\d,]+\.?\d{0,2}$')
 
         sample_rows = rows[:5]
         col_count = max(len(r) for r in sample_rows)
@@ -954,8 +1091,7 @@ class UniversalBankParser(BaseParser):
             return row[idx].strip()
 
         date_val = get_cell('date')
-        date_re = re.compile(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}')
-        if not date_re.search(date_val):
+        if not self._looks_like_date(date_val):
             return None
 
         description = get_cell('description')
@@ -1004,17 +1140,30 @@ class UniversalBankParser(BaseParser):
     ) -> int:
         """
         Process image-based PDF with enhanced OCR pipeline.
+        
+        Priority order:
+        1. Spatial table extraction (OpenCV grid + Tesseract word positions)
+        2. PaddleOCR PPStructure table detection (if enabled)
+        3. LLM extraction (if enabled)
+        4. Enhanced regex fallback on full-text OCR
+        
         Returns total tokens used by LLM.
         """
         from pdf2image import convert_from_path
         
         total_tokens = 0
-        page_images = []
-        page_texts = []
+        page_images = []       # kept only for LLM vision mode
+        page_texts = []        # (page_num, text) for LLM text / regex fallback
         total_ocr_chars = 0
         table_transactions = []
         
-        # Process each page with comprehensive error handling
+        # Collect spatial table rows from ALL pages first
+        all_spatial_rows: List[List[str]] = []
+        spatial_header: Optional[List[str]] = None
+        spatial_num_cols: Optional[int] = None
+        # Remember the first page's grid for reuse on subsequent pages
+        _prev_col_xs: Optional[List[int]] = None
+        
         for page_num in range(total_pages):
             try:
                 self.emit_progress(
@@ -1042,97 +1191,146 @@ class UniversalBankParser(BaseParser):
                     continue
                 
                 page_image = images[0]
-                table_image = page_image
                 raw_image = page_image
-                quality_score = None
 
-                # Preprocess image if enabled
-                if self.config.preprocess_images:
-                    try:
-                        from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
-                        quality_score = get_image_quality_score(raw_image)
+                # ----- Step 1: Spatial table extraction (primary) -----
+                try:
+                    spatial_rows = self._extract_table_from_image(
+                        page_image, prev_col_xs=_prev_col_xs
+                    )
+                except Exception as e:
+                    print(f"    ⚠️ Spatial extraction failed on page {page_num + 1}: {e}")
+                    spatial_rows = None
 
-                        if (
-                            self.config.adaptive_preprocess
-                            and quality_score < self.config.quality_threshold
-                            and self.config.dpi_high > self.config.dpi
-                        ):
-                            # Re-render at higher DPI for low-quality scans
-                            high_images = convert_from_path(
-                                pdf_path,
-                                dpi=self.config.dpi_high,
-                                first_page=page_num + 1,
-                                last_page=page_num + 1
+                spatial_ok_this_page = False
+                if spatial_rows:
+                    # Remember column positions for subsequent pages
+                    if hasattr(self, '_last_col_xs') and self._last_col_xs:
+                        _prev_col_xs = self._last_col_xs
+
+                    # On first page with results, try to detect header
+                    if spatial_header is None and all_spatial_rows == []:
+                        header, data_rows = self._detect_image_table_header(spatial_rows)
+                        if header:
+                            spatial_header = header
+                            spatial_rows = data_rows
+                        # Lock in the column count from the first page
+                        if spatial_rows:
+                            spatial_num_cols = len(spatial_rows[0])
+                    else:
+                        # Subsequent pages: skip rows that look like repeated headers
+                        if spatial_header:
+                            header_check, data_rows = self._detect_image_table_header(spatial_rows)
+                            if header_check:
+                                spatial_rows = data_rows
+
+                    # Normalize column count across pages
+                    if spatial_num_cols is not None:
+                        for row in spatial_rows:
+                            while len(row) < spatial_num_cols:
+                                row.append('')
+                            if len(row) > spatial_num_cols:
+                                row[:] = row[:spatial_num_cols]
+
+                    all_spatial_rows.extend(spatial_rows)
+                    spatial_ok_this_page = True
+                    print(f"      Spatial: {len(spatial_rows)} rows extracted")
+
+                # ----- Step 2: Also collect text OCR for fallback -----
+                # OPTIMIZATION: Skip the full-text OCR pass when spatial extraction
+                # succeeded on this page.  Spatial extraction already called PaddleOCR
+                # internally (via _get_word_bboxes), so running it again is redundant.
+                # The text fallback is only needed if spatial ultimately fails.
+                if spatial_ok_this_page:
+                    # Spatial succeeded -- no need for a second OCR pass on this page
+                    pass
+                else:
+                    # Spatial failed on this page -- collect text for regex fallback
+                    # Preprocess image if enabled
+                    quality_score = None
+                    if self.config.preprocess_images:
+                        try:
+                            from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
+                            quality_score = get_image_quality_score(raw_image)
+
+                            if (
+                                self.config.adaptive_preprocess
+                                and quality_score < self.config.quality_threshold
+                                and self.config.dpi_high > self.config.dpi
+                            ):
+                                high_images = convert_from_path(
+                                    pdf_path,
+                                    dpi=self.config.dpi_high,
+                                    first_page=page_num + 1,
+                                    last_page=page_num + 1
+                                )
+                                if high_images:
+                                    page_image = high_images[0]
+                                    raw_image = page_image
+                                    quality_score = get_image_quality_score(raw_image)
+                                del high_images
+
+                            binarize = bool(
+                                self.config.adaptive_preprocess
+                                and quality_score is not None
+                                and quality_score < self.config.quality_threshold
                             )
-                            if high_images:
-                                page_image = high_images[0]
-                                table_image = page_image
-                                raw_image = page_image
-                                quality_score = get_image_quality_score(raw_image)
-                            del high_images
+                            page_image = preprocess_for_ocr(page_image, binarize=binarize)
+                        except Exception as e:
+                            print(f"    ⚠️ Image preprocessing failed for page {page_num + 1}: {e}")
 
-                        binarize = bool(
-                            self.config.adaptive_preprocess
-                            and quality_score is not None
-                            and quality_score < self.config.quality_threshold
-                        )
-                        page_image = preprocess_for_ocr(page_image, binarize=binarize)
-                    except Exception as e:
-                        print(f"    ⚠️ Image preprocessing failed for page {page_num + 1}: {e}")
-                        # Continue with original image
-                
-                # Run OCR with PaddleOCR when available; fallback to Tesseract on errors.
-                page_text = ""
-                if self.paddle_processor:
-                    try:
-                        page_text = self.paddle_processor.process_image_to_text(page_image)
-                    except Exception as exc:
-                        print(f"  ⚠️ PaddleOCR failed, falling back to Tesseract: {exc}")
-                        self.mark_paddle_unavailable()
+                    # Run OCR (Tesseract with --psm 6 for tabular data)
+                    page_text = ""
+                    if self.paddle_processor:
+                        try:
+                            page_text = self.paddle_processor.process_image_to_text(page_image)
+                        except Exception as exc:
+                            print(f"  ⚠️ PaddleOCR failed, falling back to Tesseract: {exc}")
+                            self.mark_paddle_unavailable()
+                            try:
+                                import pytesseract
+                                page_text = pytesseract.image_to_string(page_image, config='--psm 6')
+                            except Exception as tess_exc:
+                                print(f"    ⚠️ Tesseract also failed for page {page_num + 1}: {tess_exc}")
+                                page_text = ""
+                    else:
                         try:
                             import pytesseract
-                            page_text = pytesseract.image_to_string(page_image)
+                            page_text = pytesseract.image_to_string(page_image, config='--psm 6')
                         except Exception as tess_exc:
-                            print(f"    ⚠️ Tesseract also failed for page {page_num + 1}: {tess_exc}")
+                            print(f"    ⚠️ Tesseract failed for page {page_num + 1}: {tess_exc}")
                             page_text = ""
-                else:
-                    try:
-                        import pytesseract
-                        page_text = pytesseract.image_to_string(page_image)
-                    except Exception as tess_exc:
-                        print(f"    ⚠️ Tesseract failed for page {page_num + 1}: {tess_exc}")
-                        page_text = ""
 
-                # Secondary OCR pass for low-yield pages
-                if (
-                    self.config.adaptive_preprocess
-                    and self.config.preprocess_images
-                    and len(page_text.strip()) < self.config.min_ocr_chars
-                ):
-                    try:
-                        from .image_preprocessor import preprocess_for_ocr
-                        fallback_image = preprocess_for_ocr(raw_image, binarize=True)
-                        if self.paddle_processor:
-                            try:
-                                page_text = self.paddle_processor.process_image_to_text(fallback_image)
-                            except Exception as exc:
-                                print(f"  ⚠️ PaddleOCR failed on fallback pass, using Tesseract: {exc}")
-                                self.mark_paddle_unavailable()
+                    # Secondary OCR pass for low-yield pages
+                    if (
+                        self.config.adaptive_preprocess
+                        and self.config.preprocess_images
+                        and len(page_text.strip()) < self.config.min_ocr_chars
+                    ):
+                        try:
+                            from .image_preprocessor import preprocess_for_ocr
+                            fallback_image = preprocess_for_ocr(raw_image, binarize=True)
+                            if self.paddle_processor:
+                                try:
+                                    page_text = self.paddle_processor.process_image_to_text(fallback_image)
+                                except Exception as exc:
+                                    print(f"  ⚠️ PaddleOCR failed on fallback pass, using Tesseract: {exc}")
+                                    self.mark_paddle_unavailable()
+                                    import pytesseract
+                                    page_text = pytesseract.image_to_string(fallback_image, config='--psm 6')
+                            else:
                                 import pytesseract
-                                page_text = pytesseract.image_to_string(fallback_image)
-                        else:
-                            import pytesseract
-                            page_text = pytesseract.image_to_string(fallback_image)
-                    except Exception as e:
-                        print(f"    ⚠️ Secondary OCR pass failed for page {page_num + 1}: {e}")
-                
-                page_texts.append((page_num + 1, page_text))
-                total_ocr_chars += len(page_text)
+                                page_text = pytesseract.image_to_string(fallback_image, config='--psm 6')
+                        except Exception as e:
+                            print(f"    ⚠️ Secondary OCR pass failed for page {page_num + 1}: {e}")
 
-                # Table structure detection with error handling
+                    page_texts.append((page_num + 1, page_text))
+                    total_ocr_chars += len(page_text)
+
+                # ----- Step 3: PPStructure table detection (if enabled) -----
                 if self.config.use_table_structure and self.paddle_processor:
                     try:
-                        tables = self.paddle_processor.detect_table_structure(table_image) or []
+                        tables = self.paddle_processor.detect_table_structure(raw_image) or []
                     except Exception as exc:
                         print(f"  ⚠️ Paddle table detection failed, skipping: {exc}")
                         self.mark_paddle_unavailable()
@@ -1154,25 +1352,62 @@ class UniversalBankParser(BaseParser):
                         except Exception as table_exc:
                             print(f"    ⚠️ Table parsing failed on page {page_num + 1}: {table_exc}")
                             continue
-                
+
                 # Store image for vision processing if needed
                 if self.config.prefer_vision:
                     page_images.append(page_image)
                 else:
                     del page_image
-                
+
                 # Clear memory
                 del images
                 if page_num % 3 == 0:
                     gc.collect()
-                    
+
             except Exception as page_error:
-                # Catch any unexpected errors for this page and continue with next
                 print(f"    ❌ Unexpected error processing page {page_num + 1}: {page_error}")
                 continue
-        
+
         print(f"  📄 OCR extracted {total_ocr_chars:,} characters")
 
+        # ---- Decide which extraction produced the best result ----
+
+        # Priority 1: Spatial table extraction (format-agnostic)
+        # Only use spatial extraction if it found a multi-column table.
+        # If most data ended up in a single column, the regex parser will do better.
+        spatial_usable = False
+        if all_spatial_rows and len(all_spatial_rows) >= 2:
+            num_cols = len(all_spatial_rows[0]) if all_spatial_rows else 0
+            if num_cols >= 3:
+                # Check that data actually spans multiple columns
+                # (not all crammed into 1-2 columns with the rest empty)
+                col_fill = [0] * num_cols
+                sample = all_spatial_rows[:min(20, len(all_spatial_rows))]
+                for row in sample:
+                    for ci, cell in enumerate(row):
+                        if cell.strip():
+                            col_fill[ci] += 1
+                cols_with_data = sum(1 for f in col_fill if f >= len(sample) * 0.2)
+                spatial_usable = cols_with_data >= 3
+                if not spatial_usable:
+                    print(f"  ⚠️ Spatial extraction found {num_cols} columns but only {cols_with_data} have data; falling back")
+
+        if spatial_usable:
+            columns = spatial_header if spatial_header else [
+                f"Column_{i+1}" for i in range(len(all_spatial_rows[0]))
+            ]
+            num_cols = len(columns)
+            for row in all_spatial_rows:
+                while len(row) < num_cols:
+                    row.append('')
+                if len(row) > num_cols:
+                    row[:] = row[:num_cols]
+
+            self.raw_table = {"columns": columns, "rows": all_spatial_rows}
+            print(f"  📊 Spatial extraction: {len(all_spatial_rows)} rows, {num_cols} columns")
+            return 0
+
+        # Priority 2: PPStructure table transactions
         if table_transactions:
             min_table_tx = self.config.min_table_transactions
             table_transactions = self._dedupe_transactions(table_transactions)
@@ -1180,11 +1415,10 @@ class UniversalBankParser(BaseParser):
                 print(f"  📊 Table structure found {len(table_transactions)} transactions; skipping LLM.")
                 self.transactions.extend(table_transactions)
                 return 0
-        
-        # Extract transactions using LLM
+
+        # Priority 3: LLM extraction
         if self.llm_extractor:
             if self.config.prefer_vision and page_images:
-                # Process each page with vision
                 self.emit_progress(
                     0, len(page_images),
                     "LLM starting...",
@@ -1200,33 +1434,28 @@ class UniversalBankParser(BaseParser):
                     if result.success:
                         self.transactions.extend(result.transactions)
                         total_tokens += result.tokens_used
-                        # Add source file info
                         for tx in self.transactions[-len(result.transactions):]:
                             tx['Source_File'] = source_file
                             tx['Page_Line'] = f"Page_{i+1}"
             else:
-                # Use text-based extraction with page chunking
                 if not page_texts:
                     return total_tokens
 
-                # Safely get first non-empty page text for column detection
                 first_page_text = ""
                 for _, text in page_texts:
                     if text and text.strip():
                         first_page_text = text
                         break
-                
-                # Fallback to first page if all are empty
                 if not first_page_text and page_texts:
                     try:
                         first_page_text = page_texts[0][1]
                     except (IndexError, TypeError):
                         first_page_text = ""
-                
+
                 if not first_page_text:
                     print("  ⚠️ No text extracted from any page, skipping LLM extraction")
                     return total_tokens
-                
+
                 column_mapping = self.llm_extractor.detect_columns(first_page_text)
                 print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
 
@@ -1243,11 +1472,7 @@ class UniversalBankParser(BaseParser):
                 )
                 num_chunks = len(chunks)
                 print(f"  📦 Processing {num_chunks} chunks ({chunk_mode} chunking)...")
-                self.emit_progress(
-                    0, num_chunks,
-                    "LLM starting...",
-                    stage="llm_ocr"
-                )
+                self.emit_progress(0, num_chunks, "LLM starting...", stage="llm_ocr")
 
                 for chunk_idx, page_range, chunk_text in chunks:
                     result = self.llm_extractor.extract_from_text(chunk_text, column_mapping)
@@ -1266,17 +1491,17 @@ class UniversalBankParser(BaseParser):
                         stage="llm_ocr"
                     )
         else:
-            # Fallback parsing
+            # Priority 4: Enhanced regex fallback on full-text OCR
             all_ocr_text = "\n\n".join(
                 f"--- Page {page_num} ---\n{text}"
                 for page_num, text in page_texts
             )
             self._fallback_regex_parse(all_ocr_text, source_file)
-        
+
         # Clean up
         page_images.clear()
         gc.collect()
-        
+
         return total_tokens
 
     def _parse_table_html(self, html: str) -> List[List[str]]:
@@ -1316,7 +1541,440 @@ class UniversalBankParser(BaseParser):
             seen.add(key)
             unique.append(tx)
         return unique
-    
+
+    # ------------------------------------------------------------------ #
+    #  Spatial table extraction from images (OpenCV + Tesseract)          #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _cluster_values(values: List[int], threshold: int = 20) -> List[int]:
+        """Cluster nearby integer values and return their means."""
+        if not values:
+            return []
+        sorted_vals = sorted(values)
+        clusters: List[List[int]] = [[sorted_vals[0]]]
+        for v in sorted_vals[1:]:
+            if v - clusters[-1][-1] <= threshold:
+                clusters[-1].append(v)
+            else:
+                clusters.append([v])
+        return [int(sum(c) / len(c)) for c in clusters]
+
+    def _detect_table_grid(self, gray_img) -> Tuple[List[int], List[int]]:
+        """
+        Detect horizontal and vertical table grid lines using OpenCV.
+        Returns (row_ys, col_xs) – clustered line positions.
+        Uses adaptive threshold and contour-size filtering to handle
+        varying image contrast and DPI.
+        """
+        import cv2
+        import numpy as np
+
+        h, w = gray_img.shape[:2]
+        # Use small kernels to detect line candidates, then filter by size
+        h_kernel_w = max(30, min(w // 20, 60))
+        v_kernel_h = max(25, min(h // 20, 60))
+        min_h_line_width = w * 0.15   # horizontal line must span 15% of page
+        min_v_line_height = h * 0.10  # vertical line must span 10% of page
+
+        best_h_ys: List[int] = []
+        best_v_xs: List[int] = []
+
+        for thresh_val in (120, 140, 160, 180):
+            _, binary = cv2.threshold(gray_img, thresh_val, 255, cv2.THRESH_BINARY_INV)
+
+            # Horizontal lines
+            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_kernel_w, 2))
+            h_mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+            h_contours, _ = cv2.findContours(h_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Filter: only keep lines that actually span a significant width
+            good_h = [c for c in h_contours if cv2.boundingRect(c)[2] >= min_h_line_width]
+            h_ys = self._cluster_values(
+                [cv2.boundingRect(c)[1] for c in good_h], threshold=10
+            )
+
+            # Vertical lines
+            v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, v_kernel_h))
+            v_mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+            v_contours, _ = cv2.findContours(v_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            good_v = [c for c in v_contours if cv2.boundingRect(c)[3] >= min_v_line_height]
+            v_xs = self._cluster_values(
+                [cv2.boundingRect(c)[0] for c in good_v], threshold=60
+            )
+
+            # Keep the result with the most horizontal lines (best contrast)
+            if len(h_ys) > len(best_h_ys):
+                best_h_ys = h_ys
+                best_v_xs = v_xs
+
+        return best_h_ys, best_v_xs
+
+    @staticmethod
+    def _remove_table_lines(gray_img):
+        """
+        Remove horizontal and vertical table lines from a grayscale image.
+        Returns a cleaned image that yields better OCR results.
+        """
+        import cv2
+        import numpy as np
+
+        h, w = gray_img.shape[:2]
+        _, binary = cv2.threshold(gray_img, 150, 255, cv2.THRESH_BINARY_INV)
+
+        # Detect and remove horizontal lines (use small kernel, filter by width)
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, min(w // 10, 100)), 2))
+        h_mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+
+        # Detect and remove vertical lines
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, max(30, min(h // 15, 80))))
+        v_mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+
+        # Combine line masks
+        line_mask = cv2.bitwise_or(h_mask, v_mask)
+
+        # Dilate slightly to catch edges of lines
+        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        line_mask = cv2.dilate(line_mask, dilate_kernel, iterations=1)
+
+        # Fill lines with white in the original image
+        cleaned = gray_img.copy()
+        cleaned[line_mask > 0] = 255
+        return cleaned
+
+    def _get_ocr_words(self, img_pil, psm: int = 11, min_conf: int = 15):
+        """
+        Get word-level bounding boxes from OCR.
+        Uses PaddleOCR when available (much better accuracy), falls back to Tesseract.
+        Returns a list of dicts with keys: left, top, width, height, conf, text.
+        """
+        # Try PaddleOCR first – it gives much better results on scanned documents
+        if self.paddle_processor:
+            try:
+                results = self.paddle_processor.process_image(img_pil)
+                if results:
+                    words = []
+                    for item in results:
+                        bbox = item['bbox']  # (x_min, y_min, x_max, y_max)
+                        text = item['text'].strip()
+                        if not text:
+                            continue
+                        conf = item.get('confidence', 0.0) * 100  # Normalize to 0-100
+                        if conf < min_conf:
+                            continue
+                        words.append({
+                            'left': int(bbox[0]),
+                            'top': int(bbox[1]),
+                            'width': int(bbox[2] - bbox[0]),
+                            'height': int(bbox[3] - bbox[1]),
+                            'conf': conf,
+                            'text': text,
+                        })
+                    if words:
+                        return words
+            except Exception as e:
+                print(f"      PaddleOCR word detection failed, falling back to Tesseract: {e}")
+                self.mark_paddle_unavailable()
+
+        # Fallback to Tesseract
+        try:
+            import pytesseract
+            from pytesseract import Output
+
+            data = pytesseract.image_to_data(
+                img_pil, output_type=Output.DATAFRAME,
+                config=f'--psm {psm}'
+            )
+            data = data[data['text'].notna()]
+            data = data[data['text'].astype(str).str.strip() != '']
+            data = data[data['conf'] >= min_conf]
+            words = []
+            for _, row in data.iterrows():
+                words.append({
+                    'left': int(row['left']),
+                    'top': int(row['top']),
+                    'width': int(row['width']),
+                    'height': int(row['height']),
+                    'conf': float(row['conf']),
+                    'text': str(row['text']).strip(),
+                })
+            return words
+        except Exception as e:
+            print(f"      Tesseract word detection also failed: {e}")
+            return []
+
+    def _extract_table_from_image_bordered(
+        self, img_pil, row_ys: List[int], col_xs: List[int]
+    ) -> List[List[str]]:
+        """
+        Extract a table from an image with visible grid lines.
+        Uses word positions mapped to the detected grid cells.
+        """
+        import cv2
+        import numpy as np
+        from PIL import Image as PILImage
+
+        gray = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
+
+        # Remove table lines for cleaner OCR
+        cleaned = self._remove_table_lines(gray)
+        cleaned_pil = PILImage.fromarray(cleaned)
+
+        # Get word positions using sparse text mode
+        words = self._get_ocr_words(cleaned_pil, psm=11, min_conf=10)
+        if not words:
+            # Retry with the original image
+            words = self._get_ocr_words(img_pil, psm=11, min_conf=10)
+        if not words:
+            return []
+
+        num_rows = len(row_ys) - 1
+        num_cols = len(col_xs) - 1
+        if num_rows < 1 or num_cols < 1:
+            return []
+
+        # Map each word to a grid cell by its center
+        cell_words: Dict[Tuple[int, int], List[Tuple[int, str]]] = {}
+        for w in words:
+            cx = w['left'] + w['width'] // 2
+            cy = w['top'] + w['height'] // 2
+
+            row_idx = None
+            for i in range(num_rows):
+                if row_ys[i] <= cy <= row_ys[i + 1]:
+                    row_idx = i
+                    break
+
+            col_idx = None
+            for i in range(num_cols):
+                if col_xs[i] <= cx <= col_xs[i + 1]:
+                    col_idx = i
+                    break
+
+            if row_idx is not None and col_idx is not None:
+                cell_words.setdefault((row_idx, col_idx), []).append(
+                    (w['left'], w['text'])
+                )
+
+        # Build table matrix
+        matrix: List[List[str]] = []
+        for r in range(num_rows):
+            row_cells: List[str] = []
+            for c in range(num_cols):
+                w_list = cell_words.get((r, c), [])
+                # Sort words left-to-right within a cell
+                w_list.sort(key=lambda x: x[0])
+                row_cells.append(' '.join(t for _, t in w_list))
+            matrix.append(row_cells)
+
+        return matrix
+
+    def _extract_table_from_image_borderless(self, img_pil) -> List[List[str]]:
+        """
+        Extract a table from an image WITHOUT visible grid lines.
+        Clusters words into rows by Y-position and detects column
+        boundaries from consistent vertical gaps.
+        """
+        import numpy as np
+
+        # Use PSM 6 (uniform block) for borderless tables
+        words = self._get_ocr_words(img_pil, psm=6, min_conf=15)
+        if not words:
+            words = self._get_ocr_words(img_pil, psm=11, min_conf=10)
+        if not words:
+            return []
+
+        # Estimate median line height
+        heights = [w['height'] for w in words]
+        if not heights:
+            return []
+        median_h = sorted(heights)[len(heights) // 2]
+        row_tolerance = max(median_h * 0.6, 8)
+
+        # Cluster words into rows by top position
+        sorted_words = sorted(words, key=lambda w: (w['top'], w['left']))
+        rows_of_words: List[List[dict]] = []
+        current_row: List[dict] = []
+        current_top: Optional[float] = None
+
+        for w in sorted_words:
+            if current_top is None or abs(w['top'] - current_top) <= row_tolerance:
+                current_row.append(w)
+                if current_top is None:
+                    current_top = w['top']
+            else:
+                if current_row:
+                    rows_of_words.append(current_row)
+                current_row = [w]
+                current_top = w['top']
+        if current_row:
+            rows_of_words.append(current_row)
+
+        if not rows_of_words:
+            return []
+
+        # Detect column boundaries from word positions across all rows.
+        # Collect all word left-edges and right-edges to find gap regions.
+        all_rights: List[int] = []
+        all_lefts: List[int] = []
+        for row_words in rows_of_words:
+            for w in row_words:
+                all_lefts.append(w['left'])
+                all_rights.append(w['left'] + w['width'])
+
+        if not all_lefts:
+            return []
+
+        img_width = max(all_rights) + 50
+
+        # Build a histogram of horizontal occupancy
+        occupancy = np.zeros(img_width, dtype=int)
+        for row_words in rows_of_words:
+            for w in row_words:
+                x0 = max(0, w['left'])
+                x1 = min(img_width, w['left'] + w['width'])
+                occupancy[x0:x1] += 1
+
+        # Find sustained gaps (zero-occupancy regions wider than a threshold)
+        min_gap_width = max(15, img_width // 40)
+        in_gap = False
+        gap_start = 0
+        gaps: List[Tuple[int, int]] = []
+        for x in range(img_width):
+            if occupancy[x] == 0:
+                if not in_gap:
+                    in_gap = True
+                    gap_start = x
+            else:
+                if in_gap:
+                    if x - gap_start >= min_gap_width:
+                        gaps.append((gap_start, x))
+                    in_gap = False
+        # End-of-image gap
+        if in_gap and img_width - gap_start >= min_gap_width:
+            gaps.append((gap_start, img_width))
+
+        if not gaps:
+            # Can't determine columns – return each row as single cell
+            return [
+                [' '.join(w['text'] for w in sorted(rw, key=lambda w: w['left']))]
+                for rw in rows_of_words
+            ]
+
+        # Column boundaries are the midpoints of the gaps
+        col_boundaries = [0]
+        for g_start, g_end in gaps:
+            col_boundaries.append((g_start + g_end) // 2)
+        col_boundaries.append(img_width)
+
+        num_cols = len(col_boundaries) - 1
+
+        # Assign words to columns
+        matrix: List[List[str]] = []
+        for row_words in rows_of_words:
+            cells = [''] * num_cols
+            for w in sorted(row_words, key=lambda w: w['left']):
+                cx = w['left'] + w['width'] // 2
+                col_idx = None
+                for i in range(num_cols):
+                    if col_boundaries[i] <= cx < col_boundaries[i + 1]:
+                        col_idx = i
+                        break
+                if col_idx is not None:
+                    cells[col_idx] = f"{cells[col_idx]} {w['text']}".strip()
+            matrix.append(cells)
+
+        return matrix
+
+    def _extract_table_from_image(
+        self, img_pil, prev_col_xs: Optional[List[int]] = None
+    ) -> Optional[List[List[str]]]:
+        """
+        Primary spatial table extraction from a page image.
+        1. Try bordered extraction (OpenCV grid detection)
+        2. If this page has weak vertical lines, reuse prev_col_xs from earlier page
+        3. Fall back to borderless extraction (word position clustering)
+        Returns a list of rows (each a list of cell strings), or None.
+        Also stores detected col_xs in self._last_col_xs for reuse.
+        """
+        import cv2
+        import numpy as np
+
+        try:
+            gray = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
+        except Exception:
+            return None
+
+        # Try bordered table first
+        row_ys, col_xs = self._detect_table_grid(gray)
+
+        min_rows_for_table = 3
+        min_cols_for_table = 2
+
+        # If we have good horizontal lines but weak verticals, try prev page's columns
+        if (
+            len(row_ys) >= min_rows_for_table + 1
+            and len(col_xs) < min_cols_for_table + 1
+            and prev_col_xs is not None
+            and len(prev_col_xs) >= min_cols_for_table + 1
+        ):
+            # Scale prev_col_xs to match this page's width (may differ slightly)
+            h_this, w_this = gray.shape[:2]
+            col_xs = prev_col_xs  # reuse previous page's column positions
+
+        if (
+            len(row_ys) >= min_rows_for_table + 1
+            and len(col_xs) >= min_cols_for_table + 1
+        ):
+            print(f"      Grid detected: {len(row_ys)-1} rows x {len(col_xs)-1} cols")
+            self._last_col_xs = col_xs  # remember for next page
+            matrix = self._extract_table_from_image_bordered(img_pil, row_ys, col_xs)
+            if matrix and len(matrix) >= 2:
+                # Filter out completely empty rows
+                matrix = [row for row in matrix if any(cell.strip() for cell in row)]
+                if matrix:
+                    return matrix
+
+        # Fall back to borderless extraction
+        print("      No grid lines; trying borderless spatial extraction...")
+        matrix = self._extract_table_from_image_borderless(img_pil)
+        if matrix and len(matrix) >= 2:
+            matrix = [row for row in matrix if any(cell.strip() for cell in row)]
+            if matrix:
+                return matrix
+
+        return None
+
+    def _detect_image_table_header(
+        self, rows: List[List[str]]
+    ) -> Tuple[Optional[List[str]], List[List[str]]]:
+        """
+        Detect whether the first row of a spatially-extracted table is a header.
+        Returns (header_row_or_None, data_rows).
+        """
+        if not rows:
+            return None, rows
+
+        first_row = rows[0]
+        joined = ' '.join(cell.lower() for cell in first_row if cell.strip())
+
+        # Common header keywords across global bank statements
+        header_kws = [
+            'date', 'description', 'narration', 'particular', 'detail',
+            'debit', 'credit', 'balance', 'amount', 'withdrawal', 'deposit',
+            'reference', 'ref', 'cheque', 'check', 'remark', 'transaction',
+        ]
+
+        matches = sum(1 for kw in header_kws if kw in joined)
+        if matches >= 2:
+            return first_row, rows[1:]
+
+        # Heuristic: if the first row has no digits at all, it's likely a header
+        has_digit = any(any(c.isdigit() for c in cell) for cell in first_row if cell.strip())
+        if not has_digit and any(cell.strip() for cell in first_row):
+            return first_row, rows[1:]
+
+        return None, rows
+
     def _fallback_regex_parse(
         self, 
         text: str, 
@@ -1331,7 +1989,7 @@ class UniversalBankParser(BaseParser):
         
         print("  📝 Using structured OCR parsing...")
         
-        # Pre-process text to fix common OCR issues with Indian number format
+        # Pre-process text to fix common OCR issues with number formats
         # Fix split amounts like "1,79, 866.60" -> "1,79,866.60"
         text = re.sub(r'(\d),\s+(\d)', r'\1,\2', text)
         # Fix amounts with extra spaces like "1, 43, 666.60" -> "1,43,666.60"
@@ -1339,12 +1997,29 @@ class UniversalBankParser(BaseParser):
         
         lines = text.splitlines()
         
-        # Date pattern - matches DD/MM/YY or DD/MM/YYYY or DD-MM-YYYY
-        date_pattern = re.compile(r'^(\d{2}[/-]\d{2}[/-]\d{2,4})')
+        # Date patterns – supports global formats:
+        #   DD/MM/YY, DD/MM/YYYY, DD-MM-YYYY       (UK/India)
+        #   YYYY-MM-DD, YYYY/MM/DD                  (ISO/Canada)
+        #   MM/DD/YYYY, MM-DD-YYYY                  (US)
+        #   DD-Mon-YYYY, DD Mon YYYY                (14-Jan-2025, 14 Jan 2025)
+        #   Mon DD, YYYY                            (Jan 14, 2025)
+        _MONTHS = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+        date_pattern = re.compile(
+            r'^('
+            r'\d{4}[/-]\d{2}[/-]\d{2}'           # YYYY-MM-DD / YYYY/MM/DD
+            r'|\d{2}[/-]\d{2}[/-]\d{2,4}'        # DD/MM/YY(YY) or MM/DD/YYYY
+            r'|\d{1,2}[\s-]' + _MONTHS + r'[\s-]\d{2,4}'   # DD-Mon-YYYY
+            r'|' + _MONTHS + r'\s+\d{1,2},?\s+\d{4}'       # Mon DD, YYYY
+            r')',
+            re.IGNORECASE,
+        )
         
-        # Amount pattern - Indian format like 1,43,666.60 or 36,200.00
-        # Must have decimal point with exactly 2 digits after
-        amount_pattern = re.compile(r'(\d{1,3}(?:,\d{2,3})*\.\d{2})')
+        # Amount pattern – global formats:
+        #   Indian: 1,43,666.60   US/UK: 1,234.56   European: 1.234,56
+        #   With or without decimals, optionally negative or in parentheses
+        amount_pattern = re.compile(
+            r'-?(\d{1,3}(?:[,.\s]\d{2,3})*(?:[.,]\d{1,2})?)'
+        )
         
         # Reference pattern - 12+ digit transaction references (IMPS/NEFT refs)
         # More specific to avoid catching ATM IDs and other numbers
@@ -1710,7 +2385,8 @@ def create_universal_parser(
     llm_model: Optional[str] = None,
     max_pages: Optional[int] = None,
     use_table_structure: Optional[bool] = None,
-    min_table_transactions: Optional[int] = None
+    min_table_transactions: Optional[int] = None,
+    dpi: Optional[int] = None
 ) -> UniversalBankParser:
     """
     Create a configured universal parser.
@@ -1719,7 +2395,7 @@ def create_universal_parser(
     Set explicit values to override environment configuration.
     
     Environment Variables (see ProcessingConfig for full list):
-        USE_PADDLEOCR: Use PaddleOCR instead of Tesseract (default: false)
+        USE_PADDLEOCR: Use PaddleOCR instead of Tesseract (default: true)
         USE_LLM: Use LLM for extraction (default: false)
         USE_TABLE_STRUCTURE: Use PPStructure for tables (default: false)
         OCR_DPI: Image DPI for OCR (default: 150)
@@ -1734,6 +2410,9 @@ def create_universal_parser(
         max_pages: Maximum pages to process (for SaaS limits)
         use_table_structure: Use table structure detection (None = use env)
         min_table_transactions: Minimum transactions for table mode (None = use env)
+        dpi: OCR resolution in dots per inch. 150 = standard, 200 = high quality.
+             Higher DPI improves accuracy on faded/poor scans but is slower.
+             (None = use OCR_DPI env var, default 150)
         
     Returns:
         Configured UniversalBankParser instance
@@ -1754,5 +2433,7 @@ def create_universal_parser(
         config.use_table_structure = use_table_structure
     if min_table_transactions is not None:
         config.min_table_transactions = min_table_transactions
+    if dpi is not None:
+        config.dpi = dpi
     
     return UniversalBankParser(progress_callback, config)

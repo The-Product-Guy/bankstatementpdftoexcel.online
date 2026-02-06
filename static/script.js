@@ -15,6 +15,7 @@ const limitModal = document.getElementById('limitModal');
 const limitTitle = document.getElementById('limitTitle');
 const limitMessage = document.getElementById('limitMessage');
 const limitClose = document.getElementById('limitClose');
+const qualitySelector = document.getElementById('qualitySelector');
 
 // Initialize WebSocket connection
 let socket = null;
@@ -61,6 +62,36 @@ function setupEventListeners() {
 
     if (limitClose) {
         limitClose.addEventListener('click', hideLimitModal);
+    }
+
+    // Quality selector toggle
+    if (qualitySelector) {
+        const qualityOptions = qualitySelector.querySelectorAll('.quality-option');
+        qualityOptions.forEach(option => {
+            option.addEventListener('click', function () {
+                qualityOptions.forEach(opt => opt.classList.remove('selected'));
+                this.classList.add('selected');
+                this.querySelector('input[type="radio"]').checked = true;
+            });
+        });
+    }
+
+    // Result banner close
+    const resultClose = document.getElementById('resultClose');
+    if (resultClose) {
+        resultClose.addEventListener('click', () => {
+            document.getElementById('resultBanner').style.display = 'none';
+        });
+    }
+
+    // Feedback modal
+    const feedbackCloseBtn = document.getElementById('feedbackClose');
+    if (feedbackCloseBtn) {
+        feedbackCloseBtn.addEventListener('click', closeFeedbackModal);
+    }
+    const feedbackForm = document.getElementById('feedbackForm');
+    if (feedbackForm) {
+        feedbackForm.addEventListener('submit', submitFeedback);
     }
 
     // Prevent default drag behaviors on document
@@ -179,9 +210,12 @@ function displayFileInfo(file) {
     fileName.textContent = file.name;
     fileSize.textContent = formatFileSize(file.size);
 
-    // Hide upload area, show file info
+    // Hide upload area, show file info and quality selector
     fileUploadArea.style.display = 'none';
     fileInfo.style.display = 'flex';
+    if (qualitySelector) {
+        qualitySelector.style.display = 'block';
+    }
 }
 
 // Clear file selection
@@ -189,6 +223,17 @@ function clearFileSelection() {
     fileInput.value = '';
     fileUploadArea.style.display = 'block';
     fileInfo.style.display = 'none';
+    if (qualitySelector) {
+        qualitySelector.style.display = 'none';
+        // Reset quality to standard
+        const standardOption = qualitySelector.querySelector('[data-quality="standard"]');
+        const highOption = qualitySelector.querySelector('[data-quality="high"]');
+        if (standardOption && highOption) {
+            standardOption.classList.add('selected');
+            highOption.classList.remove('selected');
+            standardOption.querySelector('input[type="radio"]').checked = true;
+        }
+    }
     checkFormValidity();
 }
 
@@ -337,11 +382,13 @@ function updateStepStatus(step, status) {
 let activeJobId = null;
 let downloadTriggered = false;
 let completionPolls = 0;
+let lastJobData = null; // Store last job result metadata for feedback
 
 function startStatusPolling(jobId) {
     activeJobId = jobId;
     downloadTriggered = false;
     completionPolls = 0;
+    lastJobData = null;
     pollJobStatus();
 }
 
@@ -365,20 +412,27 @@ function pollJobStatus() {
             }
 
             if (data.download_url && !downloadTriggered) {
+                const jobId = activeJobId;
                 activeJobId = null;
                 downloadTriggered = true;
+                lastJobData = data;
                 triggerDownload(data.download_url);
                 hideProgressModal();
-                showAlert('✅ Conversion completed successfully! File has been downloaded.', 'success');
+                showResultBanner(data, jobId);
                 return;
             }
 
-            if (status.startsWith('Completed')) {
+            // Handle "completed but no data" case
+            if (status.startsWith('Completed') && !data.download_url) {
                 completionPolls += 1;
-                if (completionPolls >= 5) {
+                // Check if it's a "no data" completion with metadata
+                const confidence = data.confidence || '';
+                if (confidence === 'empty' || confidence === 'low' || completionPolls >= 5) {
+                    const jobId = activeJobId;
                     activeJobId = null;
+                    lastJobData = data;
                     hideProgressModal();
-                    showAlert('Conversion completed, but no file was generated.', 'warning');
+                    showResultBanner(data, jobId);
                     return;
                 }
             }
@@ -397,6 +451,194 @@ function triggerDownload(url) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+}
+
+// ===== Result Banner =====
+
+function showResultBanner(data, jobId) {
+    const banner = document.getElementById('resultBanner');
+    const icon = document.getElementById('resultIcon');
+    const title = document.getElementById('resultTitle');
+    const message = document.getElementById('resultMessage');
+    const meta = document.getElementById('resultMeta');
+    const actions = document.getElementById('resultActions');
+
+    if (!banner) return;
+
+    const confidence = data.confidence || 'good';
+    const rows = data.extraction_rows || 0;
+    const cols = data.extraction_cols || 0;
+    const qualityUsed = data.quality_used || 'standard';
+    const qualityMsg = data.quality_message || '';
+    const docHint = data.document_hint || 'statement';
+
+    // Clear previous state
+    banner.className = 'result-banner';
+    actions.innerHTML = '';
+    meta.textContent = '';
+
+    if (confidence === 'good' && rows > 0) {
+        // Success
+        banner.classList.add('success');
+        icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+        title.textContent = 'Conversion Complete';
+        message.textContent = 'Your file has been downloaded successfully.';
+        meta.textContent = `${rows} rows \u00d7 ${cols} columns extracted`;
+
+        // Still offer feedback in case data isn't perfect
+        const fbBtn = document.createElement('button');
+        fbBtn.className = 'btn-feedback';
+        fbBtn.textContent = 'Report an issue';
+        fbBtn.onclick = () => openFeedbackModal(jobId, data);
+        actions.appendChild(fbBtn);
+
+    } else if (confidence === 'low') {
+        // Low confidence - offer retry + feedback
+        banner.classList.add('warning');
+        icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+        title.textContent = 'Partial Extraction';
+        message.textContent = qualityMsg || 'Some data may be missing or incomplete.';
+        meta.textContent = `${rows} rows extracted \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
+
+        if (qualityUsed === 'standard') {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn-retry';
+            retryBtn.innerHTML = '<i class="fas fa-redo"></i> Retry in High Quality';
+            retryBtn.onclick = () => retryWithHighQuality();
+            actions.appendChild(retryBtn);
+        }
+
+        const fbBtn = document.createElement('button');
+        fbBtn.className = 'btn-feedback';
+        fbBtn.textContent = 'Submit feedback';
+        fbBtn.onclick = () => openFeedbackModal(jobId, data);
+        actions.appendChild(fbBtn);
+
+    } else {
+        // Empty / non-tabular
+        banner.classList.add('error');
+        icon.innerHTML = '<i class="fas fa-times-circle"></i>';
+
+        if (docHint === 'non_tabular') {
+            title.textContent = 'Not a Bank Statement';
+            message.textContent = qualityMsg || 'This PDF does not appear to contain tabular data.';
+        } else {
+            title.textContent = 'No Data Extracted';
+            message.textContent = qualityMsg || 'We could not extract any data from this PDF.';
+        }
+
+        if (qualityUsed === 'standard' && docHint !== 'non_tabular') {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn-retry';
+            retryBtn.innerHTML = '<i class="fas fa-redo"></i> Retry in High Quality';
+            retryBtn.onclick = () => retryWithHighQuality();
+            actions.appendChild(retryBtn);
+        }
+
+        const fbBtn = document.createElement('button');
+        fbBtn.className = 'btn-feedback';
+        fbBtn.textContent = 'Submit feedback';
+        fbBtn.onclick = () => openFeedbackModal(jobId, data);
+        actions.appendChild(fbBtn);
+    }
+
+    banner.style.display = 'block';
+
+    // Auto-hide success banners after 15 seconds
+    if (confidence === 'good') {
+        setTimeout(() => { banner.style.display = 'none'; }, 15000);
+    }
+}
+
+function retryWithHighQuality() {
+    // Hide result banner
+    const banner = document.getElementById('resultBanner');
+    if (banner) banner.style.display = 'none';
+
+    // Switch quality selector to 'high'
+    if (qualitySelector) {
+        const highOption = qualitySelector.querySelector('[data-quality="high"]');
+        const standardOption = qualitySelector.querySelector('[data-quality="standard"]');
+        if (highOption && standardOption) {
+            standardOption.classList.remove('selected');
+            highOption.classList.add('selected');
+            highOption.querySelector('input[type="radio"]').checked = true;
+        }
+    }
+
+    // If file is still selected, auto-submit; otherwise just show the selector
+    if (fileInput.files.length > 0) {
+        showProgressModal();
+        submitFormWithProgress();
+    } else {
+        showAlert('Please re-select your PDF file, then click Convert.', 'warning');
+    }
+}
+
+// ===== Feedback Modal =====
+
+function openFeedbackModal(jobId, data) {
+    const modal = document.getElementById('feedbackModal');
+    if (!modal) return;
+
+    document.getElementById('feedbackJobId').value = jobId || '';
+    document.getElementById('feedbackQuality').value = data.quality_used || 'standard';
+    document.getElementById('feedbackRows').value = data.extraction_rows || 0;
+    document.getElementById('feedbackCols').value = data.extraction_cols || 0;
+
+    // Pre-select feedback type based on confidence
+    const typeSelect = document.getElementById('feedbackType');
+    const confidence = data.confidence || '';
+    if (confidence === 'empty') {
+        typeSelect.value = 'empty_result';
+    } else if (confidence === 'low') {
+        typeSelect.value = 'incorrect_data';
+    }
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.focus();
+}
+
+function closeFeedbackModal() {
+    const modal = document.getElementById('feedbackModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function submitFeedback(e) {
+    e.preventDefault();
+    const form = document.getElementById('feedbackForm');
+    const submitBtn = document.getElementById('feedbackSubmitBtn');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+
+    try {
+        const formData = new FormData(form);
+        const response = await fetch('/feedback', {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            body: formData
+        });
+
+        const result = await response.json();
+        closeFeedbackModal();
+
+        if (result.status === 'ok') {
+            showAlert('Thank you for your feedback! We\'ll use it to improve.', 'success');
+        } else {
+            showAlert(result.error || 'Failed to submit feedback.', 'error');
+        }
+    } catch (err) {
+        closeFeedbackModal();
+        showAlert('Failed to submit feedback. Please try again.', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Feedback';
+    }
 }
 
 // Submit form with progress tracking

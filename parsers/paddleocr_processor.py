@@ -30,7 +30,7 @@ def get_paddleocr():
             )
         except ImportError:
             raise ImportError(
-                "PaddleOCR not installed. Install with: pip install paddlepaddle paddleocr"
+                "PaddleOCR not installed. Install with: pip install paddleocr onnxruntime"
             )
     return _paddle_ocr
 
@@ -116,15 +116,40 @@ class PaddleOCRProcessor:
             raise RuntimeError(f"PaddleOCR processing failed: {exc}") from exc
         
         # Robust result validation for different PaddleOCR versions
-        # PaddleOCR can return: None, [], [[]], [None], [[None]], or valid results
+        # PaddleOCR can return: None, [], [[]], [None], [[None]], or valid results.
+        #
+        # IMPORTANT: With ONNX Runtime backend, some PaddleOCR versions return
+        # results WITHOUT a page wrapper for single-image input:
+        #   PaddlePaddle:  [[line1, line2, ...]]      (list of pages)
+        #   ONNX (some):   [line1, line2, ...]         (flat list of lines)
+        # Each line is: [bbox_polygon, (text, confidence)]
+        # We detect this by checking if result[0] looks like a line vs a page.
         if not result:
             return []
         
-        # Get the first page result (PaddleOCR returns list of pages)
         try:
-            page_result = result[0]
+            first_item = result[0]
         except (IndexError, TypeError):
             return []
+        
+        if first_item is None:
+            return []
+        
+        # Detect whether result is page-wrapped or flat:
+        # A page is a list of lines. A line is [bbox, (text, conf)].
+        # If first_item is a list/tuple AND its first element is also a list/tuple
+        # with 4 points (bbox polygon), then first_item IS a line (flat format).
+        # If first_item is a list/tuple of lines, then first_item is a page.
+        page_result = first_item
+        if isinstance(first_item, (list, tuple)) and len(first_item) >= 2:
+            inner = first_item[0]
+            if isinstance(inner, (list, tuple)) and len(inner) == 4:
+                # inner looks like a bbox polygon [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+                # Check if innermost element is a coordinate pair
+                if isinstance(inner[0], (list, tuple)) and len(inner[0]) == 2:
+                    # first_item is a LINE, not a page → result is flat (no page wrapper)
+                    page_result = result
+                # else: first_item is a page (normal format), page_result = first_item
         
         # Handle None or empty page result
         if not page_result:

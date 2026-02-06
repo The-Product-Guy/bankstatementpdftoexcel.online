@@ -23,7 +23,7 @@ from werkzeug.utils import secure_filename
 from parsers.universal_parser import UniversalBankParser, ProcessingConfig
 from storage_utils import get_storage_config, upload_file, generate_presigned_url
 from db import init_db, get_db_session
-from models import User, AuthToken, Job, UsageCounter
+from models import User, AuthToken, Job, UsageCounter, FeedbackSubmission
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -561,8 +561,11 @@ def convert():
         except Exception as e:
             print(f"⚠️ Failed to record job: {e}")
         
-        # Get optional API key
+        # Get optional API key and quality mode
         api_key = request.form.get('api_key')
+        quality = request.form.get('quality', 'standard')
+        if quality not in ('standard', 'high'):
+            quality = 'standard'
         
         # Clear any old status for this job_id (in case it existed)
         try:
@@ -575,7 +578,7 @@ def convert():
         
         # Trigger Celery Task
         from worker import process_pdf_task
-        task = process_pdf_task.delay(file_ref, filename, job_id, api_key)
+        task = process_pdf_task.delay(file_ref, filename, job_id, api_key, quality)
         
         # Return JSON response for AJAX handling, or redirect for legacy
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -654,6 +657,67 @@ def download_result(job_id, filename):
         return redirect(url_for('home'))
     
     return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+@app.route('/feedback', methods=['POST'])
+def submit_feedback():
+    """
+    Accept user feedback when a conversion produces poor or empty results.
+    Optionally, the user can consent to share their PDF for analysis.
+    """
+    if rate_limited(f"rate:feedback:{get_client_ip()}", 10, 3600):
+        return jsonify({'status': 'error', 'error': 'Too many feedback submissions.'}), 429
+
+    try:
+        user_id, guest_id = get_identity()
+        job_id = request.form.get('job_id', '').strip()
+        feedback_type = request.form.get('feedback_type', 'other').strip()
+        message = request.form.get('message', '').strip()[:2000]  # Cap length
+        share_pdf = request.form.get('share_pdf', '').lower() in {'1', 'true', 'yes', 'on'}
+        quality_used = request.form.get('quality_used', 'standard')
+        extraction_rows = int(request.form.get('extraction_rows', 0) or 0)
+        extraction_cols = int(request.form.get('extraction_cols', 0) or 0)
+
+        if feedback_type not in ('empty_result', 'incorrect_data', 'formatting', 'other'):
+            feedback_type = 'other'
+
+        pdf_storage_key = None
+        # If user consents to share PDF, copy it to a feedback storage location
+        if share_pdf and job_id:
+            storage = get_storage_config()
+            if storage:
+                # PDF is already in S3 under uploads/{job_id}/
+                # Just record the reference — we won't delete feedback PDFs on cleanup
+                try:
+                    with get_db_session() as db:
+                        job = db.get(Job, job_id)
+                        if job and job.storage_key:
+                            pdf_storage_key = job.storage_key  # Reference existing upload
+                except Exception:
+                    pass
+
+        with get_db_session() as db:
+            fb = FeedbackSubmission(
+                job_id=job_id or None,
+                user_id=user_id,
+                guest_id=guest_id,
+                feedback_type=feedback_type,
+                message=message,
+                pdf_shared=share_pdf,
+                pdf_storage_key=pdf_storage_key,
+                extraction_rows=extraction_rows,
+                extraction_cols=extraction_cols,
+                quality_used=quality_used,
+                ip=get_client_ip(),
+                user_agent=request.headers.get('User-Agent', '')[:512]
+            )
+            db.add(fb)
+
+        return jsonify({'status': 'ok', 'message': 'Thank you for your feedback!'}), 200
+
+    except Exception as e:
+        print(f"⚠️ Feedback submission error: {e}")
+        return jsonify({'status': 'error', 'error': 'Failed to submit feedback.'}), 500
 
 
 @app.route('/health')

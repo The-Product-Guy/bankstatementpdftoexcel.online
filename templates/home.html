@@ -119,6 +119,30 @@
                     </button>
                 </div>
 
+                <div class="quality-selector" id="qualitySelector" style="display: none;">
+                    <label class="quality-label">
+                        <i class="fas fa-sliders-h"></i> OCR Quality
+                    </label>
+                    <div class="quality-options">
+                        <label class="quality-option selected" data-quality="standard">
+                            <input type="radio" name="quality" value="standard" checked>
+                            <span class="quality-radio"></span>
+                            <div class="quality-info">
+                                <span class="quality-name">Standard</span>
+                                <span class="quality-desc">Fast &middot; Best for most statements</span>
+                            </div>
+                        </label>
+                        <label class="quality-option" data-quality="high">
+                            <input type="radio" name="quality" value="high">
+                            <span class="quality-radio"></span>
+                            <div class="quality-info">
+                                <span class="quality-name">High Quality</span>
+                                <span class="quality-desc">Slower &middot; For faded or poor scans</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <button type="submit" class="convert-btn" id="convertBtn" disabled>
                     <i class="fas fa-file-excel"></i>
                     <span class="btn-text">Convert to Excel</span>
@@ -266,6 +290,67 @@
             </div>
             <p class="progress-info" id="progressInfo" role="status" aria-live="polite">Starting conversion...</p>
         </div>
+    </div>
+</div>
+
+<!-- Result Banner (shown after conversion completes) -->
+<div id="resultBanner" class="result-banner" style="display: none;" role="alert">
+    <div class="result-content">
+        <div class="result-icon" id="resultIcon">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="result-body">
+            <h3 id="resultTitle">Conversion Complete</h3>
+            <p id="resultMessage">Your file has been downloaded.</p>
+            <div class="result-meta" id="resultMeta"></div>
+        </div>
+        <div class="result-actions" id="resultActions">
+            <!-- Populated dynamically -->
+        </div>
+        <button type="button" class="result-close" id="resultClose">&times;</button>
+    </div>
+</div>
+
+<!-- Feedback Modal -->
+<div id="feedbackModal" class="feedback-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" aria-hidden="true" tabindex="-1">
+    <div class="feedback-content">
+        <h3 id="feedbackTitle"><i class="fas fa-comment-dots"></i> Help Us Improve</h3>
+        <p class="feedback-desc">Your feedback helps us support more bank statement formats.</p>
+
+        <form id="feedbackForm">
+            <input type="hidden" name="job_id" id="feedbackJobId">
+            <input type="hidden" name="quality_used" id="feedbackQuality">
+            <input type="hidden" name="extraction_rows" id="feedbackRows">
+            <input type="hidden" name="extraction_cols" id="feedbackCols">
+
+            <div class="feedback-field">
+                <label>What went wrong?</label>
+                <select name="feedback_type" id="feedbackType">
+                    <option value="empty_result">No data was extracted</option>
+                    <option value="incorrect_data">Data is incorrect or garbled</option>
+                    <option value="formatting">Table structure is wrong</option>
+                    <option value="other">Other issue</option>
+                </select>
+            </div>
+
+            <div class="feedback-field">
+                <label>Additional details <span class="optional">(optional)</span></label>
+                <textarea name="message" id="feedbackMessage" rows="3" maxlength="2000" placeholder="Describe what you expected vs what you got..."></textarea>
+            </div>
+
+            <div class="feedback-field feedback-consent">
+                <label class="consent-label">
+                    <input type="checkbox" name="share_pdf" id="feedbackSharePdf" value="1">
+                    <span>Share my PDF with the StatementFlow team for analysis</span>
+                </label>
+                <p class="consent-note">Your file will only be used to improve extraction accuracy and will be deleted after analysis.</p>
+            </div>
+
+            <div class="feedback-actions">
+                <button type="submit" class="btn-primary" id="feedbackSubmitBtn">Submit Feedback</button>
+                <button type="button" class="btn-secondary" id="feedbackClose">Cancel</button>
+            </div>
+        </form>
     </div>
 </div>
 
