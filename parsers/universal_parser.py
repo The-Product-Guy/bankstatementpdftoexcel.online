@@ -15,6 +15,7 @@ from PIL import Image
 from datetime import datetime
 
 from .base_parser import BaseParser
+from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -41,6 +42,65 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+EXECUTION_PRESETS: Dict[str, Dict[str, Any]] = {
+    # Conservative preset for local development on low-memory machines.
+    "local-low-mem": {
+        "use_paddleocr": False,
+        "use_img2table": False,
+        "use_llm": False,
+        "dpi": 120,
+        "preprocess_images": False,
+        "adaptive_preprocess": False,
+        "min_table_transactions": 3,
+    },
+    # Balanced production preset.
+    "prod-balanced": {
+        "use_paddleocr": True,
+        "use_img2table": True,
+        "use_llm": False,
+        "dpi": 150,
+        "preprocess_images": True,
+        "adaptive_preprocess": False,
+        "min_table_transactions": 5,
+    },
+    # Higher-accuracy preset for difficult documents.
+    "prod-high-accuracy": {
+        "use_paddleocr": True,
+        "use_img2table": True,
+        "use_llm": False,
+        "dpi": 200,
+        "preprocess_images": True,
+        "adaptive_preprocess": True,
+        "min_table_transactions": 3,
+    },
+}
+
+
+def _normalize_execution_preset(name: Optional[str]) -> str:
+    if not name:
+        return ""
+    cleaned = name.strip().lower().replace("_", "-")
+    return cleaned
+
+
+def _apply_execution_preset(config: "ProcessingConfig", preset_name: Optional[str]) -> None:
+    """
+    Apply preset values onto config.
+    Unknown preset names are ignored and keep current config.
+    """
+    normalized = _normalize_execution_preset(preset_name)
+    if not normalized:
+        return
+
+    preset_values = EXECUTION_PRESETS.get(normalized)
+    if not preset_values:
+        return
+
+    for key, value in preset_values.items():
+        setattr(config, key, value)
+    config.execution_preset = normalized
+
+
 @dataclass
 class ProcessingConfig:
     """
@@ -61,6 +121,7 @@ class ProcessingConfig:
     """
     # OCR Engine Selection
     use_paddleocr: bool = _env_bool('USE_PADDLEOCR', True)  # PaddleOCR by default (better accuracy)
+    use_img2table: bool = _env_bool('USE_IMG2TABLE', True)  # img2table primary path for scanned docs
     use_llm: bool = _env_bool('USE_LLM', False)  # LLM extraction (requires API key)
     use_table_structure: bool = _env_bool('USE_TABLE_STRUCTURE', False)  # PPStructure (heavy)
     prefer_vision: bool = _env_bool('PREFER_VISION', False)  # Send images to LLM
@@ -79,6 +140,7 @@ class ProcessingConfig:
     
     # Extraction Tuning
     min_table_transactions: Optional[int] = _env_int('MIN_TABLE_TRANSACTIONS', 5)
+    execution_preset: str = "custom"
 
 
 @dataclass 
@@ -126,6 +188,10 @@ class UniversalBankParser(BaseParser):
         self.stats = None
         self.raw_table = None
         self.extraction_metadata = ExtractionMetadata()
+        self.quality_report: Dict[str, Any] = {}
+        self.active_profile: Optional[BankProfile] = None
+        self.source_filename: str = ""
+        self._profile_announced = False
         
         # Lazy-loaded processors
         self._paddle_processor = None
@@ -167,13 +233,21 @@ class UniversalBankParser(BaseParser):
                 print(f"  ⚠️ LLM extractor not available: {e}")
         return self._llm_extractor
     
-    def parse(self, pdf_path: str, original_filename: str) -> List[Dict[str, Any]]:
+    def parse(
+        self,
+        pdf_path: str,
+        original_filename: str,
+        page_start: int = 1,
+        page_end: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
         Parse any bank statement PDF.
         
         Args:
             pdf_path: Path to the PDF file
             original_filename: Original name of the uploaded file
+            page_start: 1-based first page to process
+            page_end: 1-based last page to process (inclusive), None = end of document
             
         Returns:
             List of transaction dictionaries
@@ -183,6 +257,11 @@ class UniversalBankParser(BaseParser):
         
         self.validate_pdf_file(pdf_path)
         self.transactions = []
+        self.raw_table = None
+        self.quality_report = {}
+        self.active_profile = None
+        self.source_filename = original_filename
+        self._profile_announced = False
         
         print(f"  🌐 Universal Parser processing: {original_filename}")
         
@@ -194,25 +273,48 @@ class UniversalBankParser(BaseParser):
         import pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
             total_pages = len(pdf.pages)
+            first_page_text = ""
+            try:
+                if total_pages > 0:
+                    first_page_text = (pdf.pages[0].extract_text() or "")
+            except Exception:
+                first_page_text = ""
+
+        self._maybe_detect_profile(first_page_text=first_page_text)
+
+        start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
+        pages_to_process = end_page - start_page + 1
         
-        if self.config.max_pages and total_pages > self.config.max_pages:
+        if self.config.max_pages and pages_to_process > self.config.max_pages:
             raise ValueError(
-                f"PDF has {total_pages} pages but limit is {self.config.max_pages}. "
+                f"PDF has {pages_to_process} pages but limit is {self.config.max_pages}. "
                 f"Please upgrade your plan or split the document."
             )
         
-        print(f"  📑 Processing {total_pages} pages")
+        if pages_to_process == total_pages:
+            print(f"  📑 Processing {pages_to_process} pages")
+        else:
+            print(f"  📑 Processing pages {start_page}-{end_page} ({pages_to_process} pages)")
         
         total_tokens = 0
         ocr_method = "paddleocr" if self.paddle_processor else "tesseract"
         
         if pdf_type == "text":
             # Text-based PDF - extract directly and use LLM if available
-            total_tokens = self._process_text_based(pdf_path, original_filename)
+            total_tokens = self._process_text_based(
+                pdf_path,
+                original_filename,
+                page_start=start_page,
+                page_end=end_page
+            )
         else:
             # Image-based PDF - use enhanced OCR pipeline
             total_tokens = self._process_image_based(
-                pdf_path, original_filename, total_pages
+                pdf_path,
+                original_filename,
+                total_pages,
+                page_start=start_page,
+                page_end=end_page
             )
         
         # Calculate stats
@@ -221,13 +323,13 @@ class UniversalBankParser(BaseParser):
         
         if self.llm_extractor and total_tokens > 0:
             estimated_cost = self.llm_extractor.estimate_cost(
-                num_pages=total_pages,
+                num_pages=pages_to_process,
                 text_length=total_tokens * 4  # Rough estimate
             )
         
         self.stats = ProcessingStats(
             total_pages=total_pages,
-            pages_processed=total_pages,
+            pages_processed=pages_to_process,
             transactions_found=len(self.transactions),
             ocr_method=ocr_method,
             llm_tokens_used=total_tokens,
@@ -236,13 +338,220 @@ class UniversalBankParser(BaseParser):
         )
         
         # --- Build extraction metadata for frontend quality feedback ---
-        self._build_extraction_metadata(pdf_type, total_pages)
+        self._build_extraction_metadata(pdf_type, pages_to_process)
+        self.quality_report = self._build_quality_report(pages_to_process, pdf_type)
         
         print(f"  🎉 Extracted {len(self.transactions)} transactions in {processing_time:.1f}s")
+        if self.quality_report:
+            print(
+                f"  📏 Quality score: {self.quality_report.get('accuracy_proxy_pct', 0.0):.1f}% "
+                f"(balance checks: {self.quality_report.get('balance_consistency_pct', 0.0):.1f}%)"
+            )
         if self.extraction_metadata.confidence != "good":
             print(f"  ⚠️ Quality: {self.extraction_metadata.confidence} — {self.extraction_metadata.message}")
         
         return self.transactions
+
+    @staticmethod
+    def _resolve_page_window(
+        total_pages: int,
+        page_start: int = 1,
+        page_end: Optional[int] = None
+    ) -> Tuple[int, int]:
+        """Validate and normalize a 1-based inclusive page window."""
+        if total_pages <= 0:
+            raise ValueError("PDF contains no pages.")
+
+        start = page_start or 1
+        end = page_end if page_end is not None else total_pages
+        if start < 1:
+            start = 1
+        if end > total_pages:
+            end = total_pages
+        if start > end:
+            raise ValueError(
+                f"Invalid page range: start={start}, end={end}, total_pages={total_pages}"
+            )
+        return start, end
+
+    def _maybe_detect_profile(
+        self,
+        first_page_text: str = "",
+        headers: Optional[List[str]] = None
+    ) -> None:
+        """
+        Best-effort bank profile detection from filename, text signatures, and headers.
+        """
+        profile = detect_bank_profile(
+            filename=self.source_filename or "",
+            first_page_text=first_page_text,
+            headers=headers
+        )
+        if not profile:
+            return
+        if self.active_profile and self.active_profile.key == profile.key:
+            return
+
+        self.active_profile = profile
+        self.bank_name = profile.display_name
+        if not self._profile_announced:
+            print(f"  🏷️ Bank profile matched: {profile.display_name}")
+            self._profile_announced = True
+
+    @staticmethod
+    def _normalize_header_text(value: str) -> str:
+        cleaned = value.lower().replace("_", " ")
+        cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+
+    def _build_quality_report(self, total_pages: int, pdf_type: str) -> Dict[str, Any]:
+        """
+        Build a proxy quality report for a parsed document.
+        This is not label-truth accuracy; it is internal consistency scoring.
+        """
+        txs = self.transactions or []
+        row_count = len(txs)
+
+        if row_count == 0:
+            return {
+                "is_proxy": True,
+                "pdf_type": pdf_type,
+                "execution_preset": self.config.execution_preset,
+                "total_pages": total_pages,
+                "row_count": 0,
+                "date_parse_pct": 0.0,
+                "amount_coverage_pct": 0.0,
+                "balance_coverage_pct": 0.0,
+                "balance_checks": 0,
+                "balance_checks_passed": 0,
+                "balance_consistency_pct": 0.0,
+                "accuracy_proxy_pct": 0.0,
+            }
+
+        date_ok = 0
+        amount_ok = 0
+        balance_ok = 0
+        balance_checks = 0
+        balance_checks_passed = 0
+        prev_balance: Optional[float] = None
+
+        for tx in txs:
+            date_val = str(tx.get("Date") or "").strip()
+            if self._looks_like_date(date_val):
+                date_ok += 1
+
+            has_amount = (
+                tx.get("Transaction_Amount") is not None
+                or tx.get("Withdrawal_Amount") is not None
+                or tx.get("Deposit_Amount") is not None
+            )
+            if has_amount:
+                amount_ok += 1
+
+            curr_balance = tx.get("Closing_Balance")
+            if curr_balance is not None:
+                balance_ok += 1
+
+            # Balance consistency: prev_balance + txn_amount ~= curr_balance
+            txn_amount = tx.get("Transaction_Amount")
+            if prev_balance is not None and curr_balance is not None and txn_amount is not None:
+                balance_checks += 1
+                try:
+                    expected = float(prev_balance) + float(txn_amount)
+                    if abs(float(curr_balance) - expected) <= 1.0:
+                        balance_checks_passed += 1
+                except (TypeError, ValueError):
+                    pass
+
+            if curr_balance is not None:
+                prev_balance = curr_balance
+
+        date_rate = date_ok / row_count
+        amount_rate = amount_ok / row_count
+        balance_rate = balance_ok / row_count
+        balance_consistency = (
+            (balance_checks_passed / balance_checks) if balance_checks > 0 else 0.5
+        )
+
+        # Weighted proxy score (0-100)
+        proxy_score = (
+            0.35 * date_rate
+            + 0.25 * amount_rate
+            + 0.10 * balance_rate
+            + 0.30 * balance_consistency
+        ) * 100.0
+
+        return {
+            "is_proxy": True,
+            "pdf_type": pdf_type,
+            "execution_preset": self.config.execution_preset,
+            "total_pages": total_pages,
+            "row_count": row_count,
+            "date_parse_pct": round(date_rate * 100.0, 1),
+            "amount_coverage_pct": round(amount_rate * 100.0, 1),
+            "balance_coverage_pct": round(balance_rate * 100.0, 1),
+            "balance_checks": balance_checks,
+            "balance_checks_passed": balance_checks_passed,
+            "balance_consistency_pct": round(balance_consistency * 100.0, 1),
+            "accuracy_proxy_pct": round(proxy_score, 1),
+        }
+
+    def _derive_transactions_from_raw_table(
+        self, source_file: str, page_ref: str = "Raw_Table"
+    ) -> int:
+        """
+        Convert raw_table rows into canonical transactions when possible.
+        Helps keep downstream output consistent even for image-heavy statements.
+        """
+        if not self.raw_table:
+            return 0
+
+        rows = self.raw_table.get("rows") or []
+        columns = self.raw_table.get("columns") or []
+        if not rows:
+            return 0
+
+        # Build a table with a header row if present.
+        table: List[List[Any]] = []
+        if columns:
+            table.append(columns)
+        table.extend(rows)
+
+        derived = self._transactions_from_table(
+            table=table,
+            source_file=source_file,
+            page_ref=page_ref
+        )
+        if not derived:
+            return 0
+
+        existing_keys = {
+            (
+                tx.get("Date"),
+                tx.get("Description"),
+                tx.get("Withdrawal_Amount"),
+                tx.get("Deposit_Amount"),
+                tx.get("Closing_Balance")
+            )
+            for tx in self.transactions
+        }
+
+        added = 0
+        for tx in derived:
+            key = (
+                tx.get("Date"),
+                tx.get("Description"),
+                tx.get("Withdrawal_Amount"),
+                tx.get("Deposit_Amount"),
+                tx.get("Closing_Balance")
+            )
+            if key in existing_keys:
+                continue
+            self.transactions.append(tx)
+            existing_keys.add(key)
+            added += 1
+        return added
     
     def _build_extraction_metadata(self, pdf_type: str, total_pages: int):
         """
@@ -339,7 +648,9 @@ class UniversalBankParser(BaseParser):
     def _process_text_based(
         self, 
         pdf_path: str, 
-        source_file: str
+        source_file: str,
+        page_start: int = 1,
+        page_end: Optional[int] = None
     ) -> int:
         """
         Process text-based PDF using direct extraction. 
@@ -357,18 +668,21 @@ class UniversalBankParser(BaseParser):
         page_texts = []
         table_transactions = []
         with pdfplumber.open(pdf_path) as pdf:
-            total_pages = len(pdf.pages)
-            
-            for page_num, page in enumerate(pdf.pages, 1):
+            doc_total_pages = len(pdf.pages)
+            start_page, end_page = self._resolve_page_window(doc_total_pages, page_start, page_end)
+            selected_pages = end_page - start_page + 1
+
+            for local_page_num, actual_page_num in enumerate(range(start_page, end_page + 1), 1):
+                page = pdf.pages[actual_page_num - 1]
                 self.emit_progress(
-                    page_num, total_pages, 
-                    f"Extracting text from page {page_num}/{total_pages}",
+                    local_page_num, selected_pages,
+                    f"Extracting text from page {actual_page_num} ({local_page_num}/{selected_pages})",
                     stage="text_extract"
                 )
                 
                 page_text = page.extract_text()
                 if page_text:
-                    page_texts.append((page_num, page_text))
+                    page_texts.append((actual_page_num, page_text))
 
                 try:
                     tables = page.extract_tables(self._table_settings())
@@ -380,7 +694,7 @@ class UniversalBankParser(BaseParser):
                         self._transactions_from_table(
                             table,
                             source_file=source_file,
-                            page_ref=f"Page_{page_num}"
+                            page_ref=f"Page_{actual_page_num}"
                         )
                     )
         
@@ -396,7 +710,12 @@ class UniversalBankParser(BaseParser):
                     return 0
                 print("  ⚠️ Table extraction quality low, falling back to layout/LLM.")
 
-        layout_transactions, raw_table = self._extract_layout_transactions(pdf_path, source_file)
+        layout_transactions, raw_table = self._extract_layout_transactions(
+            pdf_path,
+            source_file,
+            page_start=page_start,
+            page_end=page_end
+        )
         if layout_transactions and self._transactions_quality_ok(layout_transactions):
             print(f"  📐 Layout extraction found {len(layout_transactions)} transactions; skipping LLM.")
             self.transactions.extend(layout_transactions)
@@ -489,7 +808,13 @@ class UniversalBankParser(BaseParser):
         
         return total_tokens
 
-    def _extract_layout_transactions(self, pdf_path: str, source_file: str) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    def _extract_layout_transactions(
+        self,
+        pdf_path: str,
+        source_file: str,
+        page_start: int = 1,
+        page_end: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Extract transactions using word coordinates and header positions."""
         import pdfplumber
 
@@ -501,7 +826,10 @@ class UniversalBankParser(BaseParser):
 
         last_header = None
         with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages, 1):
+            total_pages = len(pdf.pages)
+            start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
+            for actual_page_num in range(start_page, end_page + 1):
+                page = pdf.pages[actual_page_num - 1]
                 header = self._detect_header_layout(page)
                 if header:
                     last_header = header
@@ -526,7 +854,7 @@ class UniversalBankParser(BaseParser):
                         row=row,
                         col_map=header["col_map"],
                         source_file=source_file,
-                        page_ref=f"Page_{page_num}"
+                        page_ref=f"Page_{actual_page_num}"
                     )
                     if tx:
                         transactions.append(tx)
@@ -626,6 +954,8 @@ class UniversalBankParser(BaseParser):
             "s", "no", "transaction", "cheque", "number", "remarks",
             "withdrawal", "deposit", "amount", "inr"
         }
+        if self.active_profile:
+            header_tokens.update(self.active_profile.header_tokens())
 
         def normalize(text: str) -> str:
             cleaned = text.lower().replace("_", " ")
@@ -992,20 +1322,44 @@ class UniversalBankParser(BaseParser):
             "reference", "ref", "cheque", "debit", "credit", "withdraw", "deposit",
             "balance", "amount"
         ]
+        if self.active_profile:
+            header_keywords.extend(self.active_profile.header_tokens())
 
         for idx, row in enumerate(rows[:3]):
-            joined = " ".join(cell.lower() for cell in row if cell)
+            joined = " ".join(self._normalize_header_text(cell) for cell in row if cell)
             if any(k in joined for k in header_keywords):
                 return idx
         return None
 
     def _map_headers(self, headers: List[str]) -> Dict[str, int]:
         """Map header names to standard fields."""
+        self._maybe_detect_profile(headers=headers)
+
         mapping: Dict[str, int] = {}
-        for idx, header in enumerate(headers):
-            h = header.lower().strip()
+        normalized_headers = [self._normalize_header_text(h) for h in headers]
+        profile_aliases = get_profile_header_aliases(self.active_profile)
+
+        # Profile-first mapping for known bank formats.
+        for idx, h in enumerate(normalized_headers):
             if not h:
                 continue
+            for field, aliases in profile_aliases.items():
+                if field in mapping:
+                    continue
+                for alias in aliases:
+                    alias_n = self._normalize_header_text(alias)
+                    if alias_n and alias_n in h:
+                        mapping[field] = idx
+                        break
+                if field in mapping:
+                    break
+
+        for idx, header in enumerate(headers):
+            h = self._normalize_header_text(header)
+            if not h:
+                continue
+
+            tokens = set(h.split())
 
             if 'date' in h or 'txn' in h or 'value' in h:
                 mapping.setdefault('date', idx)
@@ -1013,9 +1367,9 @@ class UniversalBankParser(BaseParser):
                 mapping.setdefault('description', idx)
             elif any(x in h for x in ['ref', 'cheq', 'chq', 'utr', 'instrument']):
                 mapping.setdefault('reference', idx)
-            elif any(x in h for x in ['debit', 'withdraw', 'dr']):
+            elif 'debit' in h or 'withdraw' in h or 'dr' in tokens:
                 mapping.setdefault('debit', idx)
-            elif any(x in h for x in ['credit', 'deposit', 'cr']):
+            elif 'credit' in h or 'deposit' in h or 'cr' in tokens:
                 mapping.setdefault('credit', idx)
             elif 'balance' in h or 'bal' in h:
                 mapping.setdefault('balance', idx)
@@ -1136,7 +1490,9 @@ class UniversalBankParser(BaseParser):
         self, 
         pdf_path: str, 
         source_file: str,
-        total_pages: int
+        total_pages: int,
+        page_start: int = 1,
+        page_end: Optional[int] = None
     ) -> int:
         """
         Process image-based PDF with enhanced OCR pipeline.
@@ -1150,41 +1506,71 @@ class UniversalBankParser(BaseParser):
         """
         total_tokens = 0
 
-        # ===== Priority 1: img2table extraction (primary) =====
-        # img2table handles both table DETECTION and OCR in one pass.
-        # It processes the entire PDF at once, detecting tables across all pages.
-        img2table_result = self._try_img2table_extraction(pdf_path, total_pages)
+        if self.config.use_img2table:
+            # ===== Priority 1: img2table extraction (primary) =====
+            # img2table handles both table DETECTION and OCR in one pass.
+            # It processes the entire PDF at once, detecting tables across all pages.
+            img2table_result = self._try_img2table_extraction(
+                pdf_path,
+                total_pages,
+                page_start=page_start,
+                page_end=page_end
+            )
 
-        if img2table_result:
-            raw_table = img2table_result.get("raw_table")
-            if raw_table and raw_table.get("rows") and len(raw_table["rows"]) >= 2:
-                num_cols = len(raw_table.get("columns", []))
-                num_rows = len(raw_table["rows"])
-                # Validate: at least 3 columns with data in most rows
-                if num_cols >= 2:
-                    self.raw_table = raw_table
-                    print(f"  📊 img2table extraction: {num_rows} rows, {num_cols} columns")
-                    return 0
-                else:
-                    print(f"  ⚠️ img2table found only {num_cols} columns; trying fallbacks")
+            if img2table_result:
+                raw_table = img2table_result.get("raw_table")
+                if raw_table and raw_table.get("rows") and len(raw_table["rows"]) >= 2:
+                    num_cols = len(raw_table.get("columns", []))
+                    num_rows = len(raw_table["rows"])
+                    # Validate: at least 3 columns with data in most rows
+                    if num_cols >= 2:
+                        self.raw_table = raw_table
+                        derived = self._derive_transactions_from_raw_table(
+                            source_file=source_file,
+                            page_ref="Image_Table"
+                        )
+                        print(f"  📊 img2table extraction: {num_rows} rows, {num_cols} columns")
+                        if derived:
+                            print(f"  🧩 Derived {derived} normalized transactions from img2table output")
+                        return 0
+                    else:
+                        print(f"  ⚠️ img2table found only {num_cols} columns; trying fallbacks")
+        else:
+            print("  ℹ️ img2table disabled via USE_IMG2TABLE=false; using spatial/OCR fallback pipeline")
 
         # ===== Priority 2: Legacy spatial extraction fallback =====
         # Falls back to our custom OpenCV spatial extraction + per-page OCR
         print("  🔄 img2table did not produce usable results; trying legacy spatial extraction...")
-        legacy_result = self._try_legacy_spatial_extraction(pdf_path, source_file, total_pages)
+        legacy_result = self._try_legacy_spatial_extraction(
+            pdf_path,
+            source_file,
+            total_pages,
+            page_start=page_start,
+            page_end=page_end
+        )
         if legacy_result is not None:
             return legacy_result  # 0 tokens used, raw_table is set
 
         # ===== Priority 3: Full-text OCR + regex fallback =====
         # If both img2table and spatial failed, do a full OCR pass and try regex
         print("  🔄 Spatial extraction failed; collecting OCR text for regex fallback...")
-        total_tokens = self._try_ocr_text_fallback(pdf_path, source_file, total_pages)
+        total_tokens = self._try_ocr_text_fallback(
+            pdf_path,
+            source_file,
+            total_pages,
+            page_start=page_start,
+            page_end=page_end
+        )
 
         gc.collect()
         return total_tokens
 
     def _try_img2table_extraction(
-        self, pdf_path: str, total_pages: int
+        self,
+        pdf_path: str,
+        total_pages: int,
+        page_start: int = 1,
+        page_end: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Attempt table extraction using img2table library.
@@ -1192,10 +1578,13 @@ class UniversalBankParser(BaseParser):
         """
         try:
             from .img2table_extractor import Img2TableExtractor
+            start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
+            selected_pages = end_page - start_page + 1
+            page_indexes = list(range(start_page - 1, end_page))
 
             self.emit_progress(
-                1, total_pages,
-                f"Detecting tables with img2table ({total_pages} pages)...",
+                1, selected_pages,
+                f"Detecting tables with img2table ({selected_pages} pages)...",
                 stage="ocr"
             )
 
@@ -1206,7 +1595,7 @@ class UniversalBankParser(BaseParser):
 
             result = extractor.extract_tables_from_pdf(
                 pdf_path=pdf_path,
-                pages=None,  # All pages
+                pages=page_indexes,
                 implicit_rows=True,
                 implicit_columns=False,
                 borderless_tables=True,
@@ -1219,7 +1608,7 @@ class UniversalBankParser(BaseParser):
             print(f"  📋 img2table found {table_count} tables, {row_count} rows total")
 
             self.emit_progress(
-                total_pages, total_pages,
+                selected_pages, selected_pages,
                 f"img2table extracted {row_count} rows",
                 stage="ocr"
             )
@@ -1234,7 +1623,12 @@ class UniversalBankParser(BaseParser):
             return None
 
     def _try_legacy_spatial_extraction(
-        self, pdf_path: str, source_file: str, total_pages: int
+        self,
+        pdf_path: str,
+        source_file: str,
+        total_pages: int,
+        page_start: int = 1,
+        page_end: Optional[int] = None
     ) -> Optional[int]:
         """
         Legacy spatial extraction using our custom OpenCV grid detection + PaddleOCR.
@@ -1246,20 +1640,22 @@ class UniversalBankParser(BaseParser):
         spatial_header: Optional[List[str]] = None
         spatial_num_cols: Optional[int] = None
         _prev_col_xs: Optional[List[int]] = None
+        start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
+        selected_pages = end_page - start_page + 1
 
-        for page_num in range(total_pages):
+        for local_page_num, actual_page_num in enumerate(range(start_page, end_page + 1), 1):
             try:
                 self.emit_progress(
-                    page_num + 1, total_pages,
-                    f"Spatial extraction page {page_num + 1}/{total_pages}",
+                    local_page_num, selected_pages,
+                    f"Spatial extraction page {actual_page_num} ({local_page_num}/{selected_pages})",
                     stage="ocr"
                 )
 
                 images = convert_from_path(
                     pdf_path,
                     dpi=self.config.dpi,
-                    first_page=page_num + 1,
-                    last_page=page_num + 1
+                    first_page=actual_page_num,
+                    last_page=actual_page_num
                 )
                 if not images:
                     continue
@@ -1271,7 +1667,7 @@ class UniversalBankParser(BaseParser):
                         page_image, prev_col_xs=_prev_col_xs
                     )
                 except Exception as e:
-                    print(f"    ⚠️ Spatial extraction failed on page {page_num + 1}: {e}")
+                    print(f"    ⚠️ Spatial extraction failed on page {actual_page_num}: {e}")
                     spatial_rows = None
 
                 if spatial_rows:
@@ -1301,11 +1697,11 @@ class UniversalBankParser(BaseParser):
                     all_spatial_rows.extend(spatial_rows)
 
                 del images
-                if page_num % 3 == 0:
+                if local_page_num % 3 == 0:
                     gc.collect()
 
             except Exception as e:
-                print(f"    ❌ Legacy spatial error on page {page_num + 1}: {e}")
+                print(f"    ❌ Legacy spatial error on page {actual_page_num}: {e}")
                 continue
 
         # Check if spatial extraction produced usable results
@@ -1329,13 +1725,24 @@ class UniversalBankParser(BaseParser):
                         if len(row) > num_cols:
                             row[:] = row[:num_cols]
                     self.raw_table = {"columns": columns, "rows": all_spatial_rows}
+                    derived = self._derive_transactions_from_raw_table(
+                        source_file=source_file,
+                        page_ref="Spatial_Table"
+                    )
                     print(f"  📊 Legacy spatial: {len(all_spatial_rows)} rows, {num_cols} columns")
+                    if derived:
+                        print(f"  🧩 Derived {derived} normalized transactions from spatial table")
                     return 0
 
         return None  # Signal failure
 
     def _try_ocr_text_fallback(
-        self, pdf_path: str, source_file: str, total_pages: int
+        self,
+        pdf_path: str,
+        source_file: str,
+        total_pages: int,
+        page_start: int = 1,
+        page_end: Optional[int] = None
     ) -> int:
         """
         Full-text OCR fallback: OCR every page and try regex-based parsing.
@@ -1348,20 +1755,22 @@ class UniversalBankParser(BaseParser):
         page_texts = []
         page_images = []
         total_ocr_chars = 0
+        start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
+        selected_pages = end_page - start_page + 1
 
-        for page_num in range(total_pages):
+        for local_page_num, actual_page_num in enumerate(range(start_page, end_page + 1), 1):
             try:
                 self.emit_progress(
-                    page_num + 1, total_pages,
-                    f"OCR fallback page {page_num + 1}/{total_pages}",
+                    local_page_num, selected_pages,
+                    f"OCR fallback page {actual_page_num} ({local_page_num}/{selected_pages})",
                     stage="ocr"
                 )
 
                 images = convert_from_path(
                     pdf_path,
                     dpi=self.config.dpi,
-                    first_page=page_num + 1,
-                    last_page=page_num + 1
+                    first_page=actual_page_num,
+                    last_page=actual_page_num
                 )
                 if not images:
                     continue
@@ -1398,18 +1807,18 @@ class UniversalBankParser(BaseParser):
                         page_text = ""
 
                 if page_text.strip():
-                    page_texts.append((page_num + 1, page_text))
+                    page_texts.append((actual_page_num, page_text))
                     total_ocr_chars += len(page_text)
 
                 if self.config.prefer_vision:
                     page_images.append(page_image)
 
                 del images
-                if page_num % 3 == 0:
+                if local_page_num % 3 == 0:
                     gc.collect()
 
             except Exception as e:
-                print(f"    ❌ OCR fallback error on page {page_num + 1}: {e}")
+                print(f"    ❌ OCR fallback error on page {actual_page_num}: {e}")
                 continue
 
         print(f"  📄 OCR fallback extracted {total_ocr_chars:,} characters from {len(page_texts)} pages")
@@ -2309,6 +2718,10 @@ class UniversalBankParser(BaseParser):
     def get_processing_stats(self) -> Optional[ProcessingStats]:
         """Get statistics from the last processing run."""
         return self.stats
+
+    def get_quality_report(self) -> Dict[str, Any]:
+        """Get proxy quality metrics from the last processing run."""
+        return self.quality_report or {}
     
     def estimate_processing_cost(
         self, 
@@ -2342,6 +2755,9 @@ class UniversalBankParser(BaseParser):
 # Factory function for easy instantiation
 def create_universal_parser(
     progress_callback: Optional[Callable] = None,
+    execution_preset: Optional[str] = None,
+    use_paddleocr: Optional[bool] = None,
+    use_img2table: Optional[bool] = None,
     use_llm: Optional[bool] = None,
     prefer_vision: Optional[bool] = None,
     llm_model: Optional[str] = None,
@@ -2357,7 +2773,9 @@ def create_universal_parser(
     Set explicit values to override environment configuration.
     
     Environment Variables (see ProcessingConfig for full list):
+        EXECUTION_PRESET: One of local-low-mem | prod-balanced | prod-high-accuracy
         USE_PADDLEOCR: Use PaddleOCR instead of Tesseract (default: true)
+        USE_IMG2TABLE: Use img2table as primary scanned-doc path (default: true)
         USE_LLM: Use LLM for extraction (default: false)
         USE_TABLE_STRUCTURE: Use PPStructure for tables (default: false)
         OCR_DPI: Image DPI for OCR (default: 150)
@@ -2366,6 +2784,9 @@ def create_universal_parser(
     
     Args:
         progress_callback: Optional callback for progress updates
+        execution_preset: Runtime preset name (None = use EXECUTION_PRESET env if set)
+        use_paddleocr: Whether to use PaddleOCR (None = use env)
+        use_img2table: Whether to use img2table pipeline (None = use env)
         use_llm: Whether to use LLM for extraction (None = use env)
         prefer_vision: Whether to send images directly to LLM (None = use env)
         llm_model: Which OpenAI model to use (None = use env)
@@ -2381,8 +2802,17 @@ def create_universal_parser(
     """
     # Start with environment-based defaults
     config = ProcessingConfig()
+
+    # Apply execution preset first; explicit params below may override it.
+    env_preset = os.environ.get("EXECUTION_PRESET", "").strip()
+    selected_preset = execution_preset if execution_preset is not None else env_preset
+    _apply_execution_preset(config, selected_preset)
     
     # Override with explicit parameters if provided
+    if use_paddleocr is not None:
+        config.use_paddleocr = use_paddleocr
+    if use_img2table is not None:
+        config.use_img2table = use_img2table
     if use_llm is not None:
         config.use_llm = use_llm
     if prefer_vision is not None:

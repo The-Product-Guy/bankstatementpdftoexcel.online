@@ -7,7 +7,9 @@ import os
 import tempfile
 import redis
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 from celery_config import celery_app
+from parsers.chunk_utils import build_page_ranges, merge_raw_tables, merge_quality_reports
 from parsers.universal_parser import create_universal_parser
 from storage_utils import get_storage_config, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
@@ -216,19 +218,31 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
             update_progress(job_id, current_page, total_pages, status, percent_override=percent_override)
 
-        # Create parser instance with environment-based configuration
-        # All settings are controlled via environment variables in ProcessingConfig
-        # See ProcessingConfig docstring for resource usage guide
-        #
-        # Quality modes:
-        #   'standard' = 150 DPI (fast, good for most bank statements)
-        #   'high'     = 200 DPI (slower, better for faded/poor scans)
-        dpi_override = 200 if quality == 'high' else 150
+        # Select execution preset by environment + quality mode:
+        # - Local default: local-low-mem
+        # - Railway default: prod-balanced
+        # - High quality: prod-high-accuracy (except local low-mem default)
+        railway_detected = bool(
+            os.environ.get("RAILWAY_ENVIRONMENT")
+            or os.environ.get("RAILWAY_PROJECT_ID")
+            or os.environ.get("RAILWAY_SERVICE_ID")
+        )
+        env_preset = os.environ.get("EXECUTION_PRESET", "").strip().lower()
+        if env_preset:
+            execution_preset = env_preset
+        else:
+            execution_preset = "prod-balanced" if railway_detected else "local-low-mem"
+
+        if quality == "high":
+            if not (execution_preset == "local-low-mem" and not railway_detected and not env_preset):
+                execution_preset = "prod-high-accuracy"
+
+        logger.info(f"Job {job_id}: execution_preset={execution_preset}, quality={quality}")
         parser = create_universal_parser(
             progress_callback=progress_callback,
             # These override environment defaults - remove to use env vars fully
+            execution_preset=execution_preset,
             use_llm=False,  # Set USE_LLM=true to enable
-            dpi=dpi_override,
         )
         
         # Determine output path using absolute paths
@@ -239,9 +253,134 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         os.makedirs(output_dir, exist_ok=True)
         
         update_progress(job_id, 0, 100, "Starting extraction...")
-        
+        chunk_orchestrated = False
+
+        chunk_enabled = os.environ.get("CHUNK_ORCHESTRATION_ENABLED", "true").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        chunk_min_pages = int(os.environ.get("CHUNK_ORCHESTRATION_MIN_PAGES", "80"))
+        chunk_size_pages = int(os.environ.get("CHUNK_SIZE_PAGES", "40"))
+
+        total_pages_for_chunk: Optional[int] = None
+        try:
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                total_pages_for_chunk = len(pdf.pages)
+        except Exception as exc:
+            logger.warning(f"Job {job_id}: failed to read page count for chunking: {exc}")
+
         # Run parsing
-        transactions = parser.parse(file_path, original_filename)
+        if (
+            chunk_enabled
+            and total_pages_for_chunk
+            and total_pages_for_chunk >= chunk_min_pages
+            and chunk_size_pages > 0
+        ):
+            chunk_orchestrated = True
+            page_ranges = build_page_ranges(total_pages_for_chunk, chunk_size_pages)
+            logger.info(
+                f"Job {job_id}: chunk orchestration enabled, pages={total_pages_for_chunk}, "
+                f"chunk_size={chunk_size_pages}, chunks={len(page_ranges)}"
+            )
+
+            all_transactions: List[Dict[str, Any]] = []
+            merged_raw_table: Optional[Dict[str, Any]] = None
+            chunk_quality_reports: List[Dict[str, Any]] = []
+            last_chunk_parser = parser
+
+            for chunk_idx, (start_page, end_page) in enumerate(page_ranges, 1):
+                chunk_total = end_page - start_page + 1
+                update_progress(
+                    job_id,
+                    chunk_idx - 1,
+                    len(page_ranges),
+                    f"Processing chunk {chunk_idx}/{len(page_ranges)} (pages {start_page}-{end_page})",
+                    percent_override=5 + ((chunk_idx - 1) / max(len(page_ranges), 1)) * 85,
+                    extra={
+                        "chunk_index": chunk_idx,
+                        "chunk_total": len(page_ranges),
+                        "chunk_page_start": start_page,
+                        "chunk_page_end": end_page,
+                    }
+                )
+
+                def chunk_progress(
+                    data,
+                    start_page=start_page,
+                    end_page=end_page,
+                    chunk_idx=chunk_idx,
+                    chunk_total=len(page_ranges),
+                    chunk_total_pages=chunk_total
+                ):
+                    local_current = data.get('current_page') or data.get('page_num') or data.get('current') or 0
+                    local_total = data.get('total_pages') or data.get('total') or chunk_total_pages
+                    stage = data.get('stage')
+                    status = data.get('status', 'Processing chunk...')
+
+                    global_current = (start_page - 1) + max(0, int(local_current))
+                    percent_override = None
+                    if total_pages_for_chunk and total_pages_for_chunk > 0:
+                        if stage == 'excel':
+                            percent_override = 95
+                        else:
+                            percent_override = 5 + min(
+                                85,
+                                (global_current / total_pages_for_chunk) * 85
+                            )
+
+                    update_progress(
+                        job_id,
+                        global_current,
+                        total_pages_for_chunk or local_total,
+                        status,
+                        percent_override=percent_override,
+                        extra={
+                            "chunk_index": chunk_idx,
+                            "chunk_total": chunk_total,
+                            "chunk_page_start": start_page,
+                            "chunk_page_end": end_page,
+                        }
+                    )
+
+                chunk_parser = create_universal_parser(
+                    progress_callback=chunk_progress,
+                    execution_preset=execution_preset,
+                    use_llm=False,
+                )
+                chunk_transactions = chunk_parser.parse(
+                    file_path,
+                    original_filename,
+                    page_start=start_page,
+                    page_end=end_page
+                )
+                all_transactions.extend(chunk_transactions)
+                merged_raw_table = merge_raw_tables(
+                    merged_raw_table,
+                    getattr(chunk_parser, "raw_table", None)
+                )
+
+                if hasattr(chunk_parser, "get_quality_report"):
+                    try:
+                        report = chunk_parser.get_quality_report() or {}
+                        if report:
+                            chunk_quality_reports.append(report)
+                    except Exception:
+                        pass
+                last_chunk_parser = chunk_parser
+
+            # Rehydrate parser fields with merged results for downstream output.
+            parser = last_chunk_parser
+            parser.transactions = all_transactions
+            parser.raw_table = merged_raw_table
+            try:
+                pdf_type_for_meta = parser.detect_pdf_type(file_path)
+                parser._build_extraction_metadata(pdf_type_for_meta, total_pages_for_chunk or len(page_ranges))
+            except Exception:
+                pass
+            parser.quality_report = merge_quality_reports(chunk_quality_reports)
+            transactions = all_transactions
+        else:
+            transactions = parser.parse(file_path, original_filename)
         
         update_progress(job_id, 0, 1, "Generating Excel file...", percent_override=95)
         # Generate Excel file from transactions
@@ -249,9 +388,40 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         excel_path = os.path.join(output_dir, excel_filename)
         
         raw_table = getattr(parser, "raw_table", None)
+        quality_report = {}
+        if hasattr(parser, "get_quality_report"):
+            try:
+                quality_report = parser.get_quality_report() or {}
+            except Exception:
+                quality_report = {}
         has_data = False
 
-        if raw_table and raw_table.get("rows"):
+        if raw_table and raw_table.get("rows") and transactions:
+            # Write both representations:
+            # 1) Raw statement-like table for audit
+            # 2) Normalized transactions for downstream use
+            raw_df = pd.DataFrame(raw_table["rows"], columns=raw_table["columns"])
+
+            tx_df = pd.DataFrame(transactions)
+            preferred_order = [
+                'Date', 'Description', 'Reference_Number',
+                'Withdrawal_Amount', 'Deposit_Amount', 'Transaction_Amount',
+                'Closing_Balance', 'Source_File', 'Page_Line'
+            ]
+            columns = [col for col in preferred_order if col in tx_df.columns]
+            columns += [col for col in tx_df.columns if col not in preferred_order]
+            tx_df = tx_df[columns]
+
+            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+                raw_df.to_excel(writer, index=False, sheet_name="Raw_Statement")
+                tx_df.to_excel(writer, index=False, sheet_name="Normalized_Transactions")
+
+            has_data = len(raw_table["rows"]) > 0 or len(transactions) > 0
+            logger.info(
+                f"Job {job_id}: Wrote {len(raw_table['rows'])} raw rows and "
+                f"{len(transactions)} normalized transactions"
+            )
+        elif raw_table and raw_table.get("rows"):
             # Use raw table format (from layout/table extraction)
             raw_df = pd.DataFrame(raw_table["rows"], columns=raw_table["columns"])
             raw_df.to_excel(excel_path, index=False)
@@ -284,6 +454,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         ext_meta = getattr(parser, "extraction_metadata", None)
         result_extra = {
             "quality_used": quality,
+            "execution_preset": execution_preset,
+            "chunk_orchestrated": chunk_orchestrated,
         }
         if ext_meta:
             result_extra.update({
@@ -293,6 +465,15 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 "confidence": ext_meta.confidence,        # 'good', 'low', 'empty'
                 "document_hint": ext_meta.document_hint,  # 'statement', 'non_tabular', 'unknown'
                 "quality_message": ext_meta.message,
+            })
+        if quality_report:
+            result_extra.update({
+                "execution_preset_applied": quality_report.get("execution_preset", execution_preset),
+                "accuracy_proxy_pct": quality_report.get("accuracy_proxy_pct", 0.0),
+                "balance_consistency_pct": quality_report.get("balance_consistency_pct", 0.0),
+                "date_parse_pct": quality_report.get("date_parse_pct", 0.0),
+                "amount_coverage_pct": quality_report.get("amount_coverage_pct", 0.0),
+                "quality_row_count": quality_report.get("row_count", 0),
             })
 
         # Determine completion status message
@@ -337,6 +518,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             'transaction_count': len(transactions),
             'filename': excel_filename,
             'confidence': ext_meta.confidence if ext_meta else 'unknown',
+            'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,
+            'chunk_orchestrated': chunk_orchestrated,
         }
         
     except Exception as e:
