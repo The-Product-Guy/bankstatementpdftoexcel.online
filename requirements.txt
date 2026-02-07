@@ -28,6 +28,12 @@ pytesseract==0.3.13
 paddleocr>=2.7.0
 onnxruntime>=1.16.0
 
+# Table Detection - img2table (primary table extraction for image-based PDFs)
+# Uses OpenCV for table structure detection (bordered + borderless via RLSA algorithm).
+# PaddleOCR is used as the OCR backend for reading cell text.
+# Handles merged cells, implicit rows/columns, and diverse table layouts.
+img2table>=1.3.0
+
 # LLM Integration - OpenAI
 openai>=1.0.0
 httpx>=0.25.0

@@ -1142,58 +1142,130 @@ class UniversalBankParser(BaseParser):
         Process image-based PDF with enhanced OCR pipeline.
         
         Priority order:
-        1. Spatial table extraction (OpenCV grid + Tesseract word positions)
-        2. PaddleOCR PPStructure table detection (if enabled)
-        3. LLM extraction (if enabled)
-        4. Enhanced regex fallback on full-text OCR
+        1. img2table extraction (OpenCV + RLSA table detection, PaddleOCR for text)
+        2. Legacy spatial extraction fallback (our custom OpenCV code)
+        3. Full-text OCR + regex fallback
         
-        Returns total tokens used by LLM.
+        Returns total tokens used by LLM (0 if no LLM was used).
+        """
+        total_tokens = 0
+
+        # ===== Priority 1: img2table extraction (primary) =====
+        # img2table handles both table DETECTION and OCR in one pass.
+        # It processes the entire PDF at once, detecting tables across all pages.
+        img2table_result = self._try_img2table_extraction(pdf_path, total_pages)
+
+        if img2table_result:
+            raw_table = img2table_result.get("raw_table")
+            if raw_table and raw_table.get("rows") and len(raw_table["rows"]) >= 2:
+                num_cols = len(raw_table.get("columns", []))
+                num_rows = len(raw_table["rows"])
+                # Validate: at least 3 columns with data in most rows
+                if num_cols >= 2:
+                    self.raw_table = raw_table
+                    print(f"  📊 img2table extraction: {num_rows} rows, {num_cols} columns")
+                    return 0
+                else:
+                    print(f"  ⚠️ img2table found only {num_cols} columns; trying fallbacks")
+
+        # ===== Priority 2: Legacy spatial extraction fallback =====
+        # Falls back to our custom OpenCV spatial extraction + per-page OCR
+        print("  🔄 img2table did not produce usable results; trying legacy spatial extraction...")
+        legacy_result = self._try_legacy_spatial_extraction(pdf_path, source_file, total_pages)
+        if legacy_result is not None:
+            return legacy_result  # 0 tokens used, raw_table is set
+
+        # ===== Priority 3: Full-text OCR + regex fallback =====
+        # If both img2table and spatial failed, do a full OCR pass and try regex
+        print("  🔄 Spatial extraction failed; collecting OCR text for regex fallback...")
+        total_tokens = self._try_ocr_text_fallback(pdf_path, source_file, total_pages)
+
+        gc.collect()
+        return total_tokens
+
+    def _try_img2table_extraction(
+        self, pdf_path: str, total_pages: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Attempt table extraction using img2table library.
+        Returns the result dict from Img2TableExtractor, or None on failure.
+        """
+        try:
+            from .img2table_extractor import Img2TableExtractor
+
+            self.emit_progress(
+                1, total_pages,
+                f"Detecting tables with img2table ({total_pages} pages)...",
+                stage="ocr"
+            )
+
+            extractor = Img2TableExtractor(
+                dpi=self.config.dpi,
+                use_paddleocr=self.config.use_paddleocr,
+            )
+
+            result = extractor.extract_tables_from_pdf(
+                pdf_path=pdf_path,
+                pages=None,  # All pages
+                implicit_rows=True,
+                implicit_columns=False,
+                borderless_tables=True,
+                min_confidence=30,
+            )
+
+            table_count = len(result.get("tables", []))
+            raw = result.get("raw_table")
+            row_count = len(raw["rows"]) if raw and raw.get("rows") else 0
+            print(f"  📋 img2table found {table_count} tables, {row_count} rows total")
+
+            self.emit_progress(
+                total_pages, total_pages,
+                f"img2table extracted {row_count} rows",
+                stage="ocr"
+            )
+
+            return result
+
+        except ImportError:
+            print("  ⚠️ img2table not installed; skipping")
+            return None
+        except Exception as e:
+            print(f"  ⚠️ img2table extraction failed: {e}")
+            return None
+
+    def _try_legacy_spatial_extraction(
+        self, pdf_path: str, source_file: str, total_pages: int
+    ) -> Optional[int]:
+        """
+        Legacy spatial extraction using our custom OpenCV grid detection + PaddleOCR.
+        Returns 0 (tokens used) if successful, or None if it failed.
         """
         from pdf2image import convert_from_path
-        
-        total_tokens = 0
-        page_images = []       # kept only for LLM vision mode
-        page_texts = []        # (page_num, text) for LLM text / regex fallback
-        total_ocr_chars = 0
-        table_transactions = []
-        
-        # Collect spatial table rows from ALL pages first
+
         all_spatial_rows: List[List[str]] = []
         spatial_header: Optional[List[str]] = None
         spatial_num_cols: Optional[int] = None
-        # Remember the first page's grid for reuse on subsequent pages
         _prev_col_xs: Optional[List[int]] = None
-        
+
         for page_num in range(total_pages):
             try:
                 self.emit_progress(
                     page_num + 1, total_pages,
-                    f"Processing page {page_num + 1}/{total_pages}",
+                    f"Spatial extraction page {page_num + 1}/{total_pages}",
                     stage="ocr"
                 )
-                
-                print(f"    📝 Processing page {page_num + 1}...")
-                
-                # Convert PDF page to image
-                try:
-                    images = convert_from_path(
-                        pdf_path, 
-                        dpi=self.config.dpi,
-                        first_page=page_num + 1,
-                        last_page=page_num + 1
-                    )
-                except Exception as e:
-                    print(f"    ⚠️ Failed to convert page {page_num + 1}: {e}")
-                    continue
-                
-                if not images:
-                    print(f"    ⚠️ No image generated for page {page_num + 1}")
-                    continue
-                
-                page_image = images[0]
-                raw_image = page_image
 
-                # ----- Step 1: Spatial table extraction (primary) -----
+                images = convert_from_path(
+                    pdf_path,
+                    dpi=self.config.dpi,
+                    first_page=page_num + 1,
+                    last_page=page_num + 1
+                )
+                if not images:
+                    continue
+
+                page_image = images[0]
+
                 try:
                     spatial_rows = self._extract_table_from_image(
                         page_image, prev_col_xs=_prev_col_xs
@@ -1202,29 +1274,23 @@ class UniversalBankParser(BaseParser):
                     print(f"    ⚠️ Spatial extraction failed on page {page_num + 1}: {e}")
                     spatial_rows = None
 
-                spatial_ok_this_page = False
                 if spatial_rows:
-                    # Remember column positions for subsequent pages
                     if hasattr(self, '_last_col_xs') and self._last_col_xs:
                         _prev_col_xs = self._last_col_xs
 
-                    # On first page with results, try to detect header
                     if spatial_header is None and all_spatial_rows == []:
                         header, data_rows = self._detect_image_table_header(spatial_rows)
                         if header:
                             spatial_header = header
                             spatial_rows = data_rows
-                        # Lock in the column count from the first page
                         if spatial_rows:
                             spatial_num_cols = len(spatial_rows[0])
                     else:
-                        # Subsequent pages: skip rows that look like repeated headers
                         if spatial_header:
                             header_check, data_rows = self._detect_image_table_header(spatial_rows)
                             if header_check:
                                 spatial_rows = data_rows
 
-                    # Normalize column count across pages
                     if spatial_num_cols is not None:
                         for row in spatial_rows:
                             while len(row) < spatial_num_cols:
@@ -1233,154 +1299,19 @@ class UniversalBankParser(BaseParser):
                                 row[:] = row[:spatial_num_cols]
 
                     all_spatial_rows.extend(spatial_rows)
-                    spatial_ok_this_page = True
-                    print(f"      Spatial: {len(spatial_rows)} rows extracted")
 
-                # ----- Step 2: Also collect text OCR for fallback -----
-                # OPTIMIZATION: Skip the full-text OCR pass when spatial extraction
-                # succeeded on this page.  Spatial extraction already called PaddleOCR
-                # internally (via _get_word_bboxes), so running it again is redundant.
-                # The text fallback is only needed if spatial ultimately fails.
-                if spatial_ok_this_page:
-                    # Spatial succeeded -- no need for a second OCR pass on this page
-                    pass
-                else:
-                    # Spatial failed on this page -- collect text for regex fallback
-                    # Preprocess image if enabled
-                    quality_score = None
-                    if self.config.preprocess_images:
-                        try:
-                            from .image_preprocessor import preprocess_for_ocr, get_image_quality_score
-                            quality_score = get_image_quality_score(raw_image)
-
-                            if (
-                                self.config.adaptive_preprocess
-                                and quality_score < self.config.quality_threshold
-                                and self.config.dpi_high > self.config.dpi
-                            ):
-                                high_images = convert_from_path(
-                                    pdf_path,
-                                    dpi=self.config.dpi_high,
-                                    first_page=page_num + 1,
-                                    last_page=page_num + 1
-                                )
-                                if high_images:
-                                    page_image = high_images[0]
-                                    raw_image = page_image
-                                    quality_score = get_image_quality_score(raw_image)
-                                del high_images
-
-                            binarize = bool(
-                                self.config.adaptive_preprocess
-                                and quality_score is not None
-                                and quality_score < self.config.quality_threshold
-                            )
-                            page_image = preprocess_for_ocr(page_image, binarize=binarize)
-                        except Exception as e:
-                            print(f"    ⚠️ Image preprocessing failed for page {page_num + 1}: {e}")
-
-                    # Run OCR (Tesseract with --psm 6 for tabular data)
-                    page_text = ""
-                    if self.paddle_processor:
-                        try:
-                            page_text = self.paddle_processor.process_image_to_text(page_image)
-                        except Exception as exc:
-                            print(f"  ⚠️ PaddleOCR failed, falling back to Tesseract: {exc}")
-                            self.mark_paddle_unavailable()
-                            try:
-                                import pytesseract
-                                page_text = pytesseract.image_to_string(page_image, config='--psm 6')
-                            except Exception as tess_exc:
-                                print(f"    ⚠️ Tesseract also failed for page {page_num + 1}: {tess_exc}")
-                                page_text = ""
-                    else:
-                        try:
-                            import pytesseract
-                            page_text = pytesseract.image_to_string(page_image, config='--psm 6')
-                        except Exception as tess_exc:
-                            print(f"    ⚠️ Tesseract failed for page {page_num + 1}: {tess_exc}")
-                            page_text = ""
-
-                    # Secondary OCR pass for low-yield pages
-                    if (
-                        self.config.adaptive_preprocess
-                        and self.config.preprocess_images
-                        and len(page_text.strip()) < self.config.min_ocr_chars
-                    ):
-                        try:
-                            from .image_preprocessor import preprocess_for_ocr
-                            fallback_image = preprocess_for_ocr(raw_image, binarize=True)
-                            if self.paddle_processor:
-                                try:
-                                    page_text = self.paddle_processor.process_image_to_text(fallback_image)
-                                except Exception as exc:
-                                    print(f"  ⚠️ PaddleOCR failed on fallback pass, using Tesseract: {exc}")
-                                    self.mark_paddle_unavailable()
-                                    import pytesseract
-                                    page_text = pytesseract.image_to_string(fallback_image, config='--psm 6')
-                            else:
-                                import pytesseract
-                                page_text = pytesseract.image_to_string(fallback_image, config='--psm 6')
-                        except Exception as e:
-                            print(f"    ⚠️ Secondary OCR pass failed for page {page_num + 1}: {e}")
-
-                    page_texts.append((page_num + 1, page_text))
-                    total_ocr_chars += len(page_text)
-
-                # ----- Step 3: PPStructure table detection (if enabled) -----
-                if self.config.use_table_structure and self.paddle_processor:
-                    try:
-                        tables = self.paddle_processor.detect_table_structure(raw_image) or []
-                    except Exception as exc:
-                        print(f"  ⚠️ Paddle table detection failed, skipping: {exc}")
-                        self.mark_paddle_unavailable()
-                        tables = []
-
-                    for table in tables:
-                        try:
-                            html = table.get('html', '')
-                            if not html:
-                                continue
-                            rows = self._parse_table_html(html)
-                            table_transactions.extend(
-                                self._transactions_from_table(
-                                    rows,
-                                    source_file=source_file,
-                                    page_ref=f"Page_{page_num + 1}"
-                                )
-                            )
-                        except Exception as table_exc:
-                            print(f"    ⚠️ Table parsing failed on page {page_num + 1}: {table_exc}")
-                            continue
-
-                # Store image for vision processing if needed
-                if self.config.prefer_vision:
-                    page_images.append(page_image)
-                else:
-                    del page_image
-
-                # Clear memory
                 del images
                 if page_num % 3 == 0:
                     gc.collect()
 
-            except Exception as page_error:
-                print(f"    ❌ Unexpected error processing page {page_num + 1}: {page_error}")
+            except Exception as e:
+                print(f"    ❌ Legacy spatial error on page {page_num + 1}: {e}")
                 continue
 
-        print(f"  📄 OCR extracted {total_ocr_chars:,} characters")
-
-        # ---- Decide which extraction produced the best result ----
-
-        # Priority 1: Spatial table extraction (format-agnostic)
-        # Only use spatial extraction if it found a multi-column table.
-        # If most data ended up in a single column, the regex parser will do better.
-        spatial_usable = False
+        # Check if spatial extraction produced usable results
         if all_spatial_rows and len(all_spatial_rows) >= 2:
             num_cols = len(all_spatial_rows[0]) if all_spatial_rows else 0
             if num_cols >= 3:
-                # Check that data actually spans multiple columns
-                # (not all crammed into 1-2 columns with the rest empty)
                 col_fill = [0] * num_cols
                 sample = all_spatial_rows[:min(20, len(all_spatial_rows))]
                 for row in sample:
@@ -1388,48 +1319,105 @@ class UniversalBankParser(BaseParser):
                         if cell.strip():
                             col_fill[ci] += 1
                 cols_with_data = sum(1 for f in col_fill if f >= len(sample) * 0.2)
-                spatial_usable = cols_with_data >= 3
-                if not spatial_usable:
-                    print(f"  ⚠️ Spatial extraction found {num_cols} columns but only {cols_with_data} have data; falling back")
+                if cols_with_data >= 3:
+                    columns = spatial_header if spatial_header else [
+                        f"Column_{i+1}" for i in range(num_cols)
+                    ]
+                    for row in all_spatial_rows:
+                        while len(row) < num_cols:
+                            row.append('')
+                        if len(row) > num_cols:
+                            row[:] = row[:num_cols]
+                    self.raw_table = {"columns": columns, "rows": all_spatial_rows}
+                    print(f"  📊 Legacy spatial: {len(all_spatial_rows)} rows, {num_cols} columns")
+                    return 0
 
-        if spatial_usable:
-            columns = spatial_header if spatial_header else [
-                f"Column_{i+1}" for i in range(len(all_spatial_rows[0]))
-            ]
-            num_cols = len(columns)
-            for row in all_spatial_rows:
-                while len(row) < num_cols:
-                    row.append('')
-                if len(row) > num_cols:
-                    row[:] = row[:num_cols]
+        return None  # Signal failure
 
-            self.raw_table = {"columns": columns, "rows": all_spatial_rows}
-            print(f"  📊 Spatial extraction: {len(all_spatial_rows)} rows, {num_cols} columns")
-            return 0
+    def _try_ocr_text_fallback(
+        self, pdf_path: str, source_file: str, total_pages: int
+    ) -> int:
+        """
+        Full-text OCR fallback: OCR every page and try regex-based parsing.
+        Also supports LLM extraction if enabled.
+        Returns total tokens used.
+        """
+        from pdf2image import convert_from_path
 
-        # Priority 2: PPStructure table transactions
-        if table_transactions:
-            min_table_tx = self.config.min_table_transactions
-            table_transactions = self._dedupe_transactions(table_transactions)
-            if min_table_tx is None or len(table_transactions) >= min_table_tx:
-                print(f"  📊 Table structure found {len(table_transactions)} transactions; skipping LLM.")
-                self.transactions.extend(table_transactions)
-                return 0
+        total_tokens = 0
+        page_texts = []
+        page_images = []
+        total_ocr_chars = 0
 
-        # Priority 3: LLM extraction
-        if self.llm_extractor:
-            if self.config.prefer_vision and page_images:
+        for page_num in range(total_pages):
+            try:
                 self.emit_progress(
-                    0, len(page_images),
-                    "LLM starting...",
-                    stage="llm_ocr"
+                    page_num + 1, total_pages,
+                    f"OCR fallback page {page_num + 1}/{total_pages}",
+                    stage="ocr"
                 )
+
+                images = convert_from_path(
+                    pdf_path,
+                    dpi=self.config.dpi,
+                    first_page=page_num + 1,
+                    last_page=page_num + 1
+                )
+                if not images:
+                    continue
+
+                page_image = images[0]
+                raw_image = page_image
+
+                # Preprocess if enabled
+                if self.config.preprocess_images:
+                    try:
+                        from .image_preprocessor import preprocess_for_ocr
+                        page_image = preprocess_for_ocr(page_image)
+                    except Exception:
+                        pass
+
+                # Run OCR
+                page_text = ""
+                if self.paddle_processor:
+                    try:
+                        page_text = self.paddle_processor.process_image_to_text(page_image)
+                    except Exception as exc:
+                        print(f"  ⚠️ PaddleOCR failed: {exc}")
+                        self.mark_paddle_unavailable()
+                        try:
+                            import pytesseract
+                            page_text = pytesseract.image_to_string(page_image, config='--psm 6')
+                        except Exception:
+                            page_text = ""
+                else:
+                    try:
+                        import pytesseract
+                        page_text = pytesseract.image_to_string(page_image, config='--psm 6')
+                    except Exception:
+                        page_text = ""
+
+                if page_text.strip():
+                    page_texts.append((page_num + 1, page_text))
+                    total_ocr_chars += len(page_text)
+
+                if self.config.prefer_vision:
+                    page_images.append(page_image)
+
+                del images
+                if page_num % 3 == 0:
+                    gc.collect()
+
+            except Exception as e:
+                print(f"    ❌ OCR fallback error on page {page_num + 1}: {e}")
+                continue
+
+        print(f"  📄 OCR fallback extracted {total_ocr_chars:,} characters from {len(page_texts)} pages")
+
+        # Try LLM extraction if available
+        if self.llm_extractor and page_texts:
+            if self.config.prefer_vision and page_images:
                 for i, img in enumerate(page_images):
-                    self.emit_progress(
-                        i + 1, len(page_images),
-                        f"LLM processing page {i + 1}/{len(page_images)}",
-                        stage="llm_ocr"
-                    )
                     result = self.llm_extractor.extract_from_image(img)
                     if result.success:
                         self.transactions.extend(result.transactions)
@@ -1438,70 +1426,44 @@ class UniversalBankParser(BaseParser):
                             tx['Source_File'] = source_file
                             tx['Page_Line'] = f"Page_{i+1}"
             else:
-                if not page_texts:
-                    return total_tokens
-
                 first_page_text = ""
                 for _, text in page_texts:
                     if text and text.strip():
                         first_page_text = text
                         break
-                if not first_page_text and page_texts:
-                    try:
-                        first_page_text = page_texts[0][1]
-                    except (IndexError, TypeError):
-                        first_page_text = ""
 
-                if not first_page_text:
-                    print("  ⚠️ No text extracted from any page, skipping LLM extraction")
-                    return total_tokens
-
-                column_mapping = self.llm_extractor.detect_columns(first_page_text)
-                print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
-
-                chunk_mode = os.environ.get("LLM_OCR_CHUNKING_MODE", "adaptive").strip().lower()
-                pages_per_chunk = self._get_int_env("LLM_OCR_PAGES_PER_CHUNK", 5)
-                target_chars = self._get_int_env("LLM_OCR_TARGET_CHARS", 8000)
-                max_chars = self._get_int_env("LLM_OCR_MAX_CHARS", 12000)
-                chunks = self._build_chunks(
-                    page_texts=page_texts,
-                    chunk_mode=chunk_mode,
-                    pages_per_chunk=pages_per_chunk,
-                    target_chars=target_chars,
-                    max_chars=max_chars
-                )
-                num_chunks = len(chunks)
-                print(f"  📦 Processing {num_chunks} chunks ({chunk_mode} chunking)...")
-                self.emit_progress(0, num_chunks, "LLM starting...", stage="llm_ocr")
-
-                for chunk_idx, page_range, chunk_text in chunks:
-                    result = self.llm_extractor.extract_from_text(chunk_text, column_mapping)
-                    if result.success:
-                        for tx in result.transactions:
-                            tx['Source_File'] = source_file
-                            tx['Page_Line'] = f"Pages_{page_range}"
-                            self.transactions.append(tx)
-                        total_tokens += result.tokens_used
-                        print(f"    ✅ Chunk {chunk_idx + 1}/{num_chunks}: {len(result.transactions)} transactions")
-                    else:
-                        print(f"    ⚠️ Chunk {chunk_idx + 1}/{num_chunks} failed: {result.error_message}")
-                    self.emit_progress(
-                        chunk_idx + 1, num_chunks,
-                        f"LLM extracting chunk {chunk_idx + 1}/{num_chunks}",
-                        stage="llm_ocr"
+                if first_page_text:
+                    column_mapping = self.llm_extractor.detect_columns(first_page_text)
+                    chunk_mode = os.environ.get("LLM_OCR_CHUNKING_MODE", "adaptive").strip().lower()
+                    pages_per_chunk = self._get_int_env("LLM_OCR_PAGES_PER_CHUNK", 5)
+                    target_chars = self._get_int_env("LLM_OCR_TARGET_CHARS", 8000)
+                    max_chars = self._get_int_env("LLM_OCR_MAX_CHARS", 12000)
+                    chunks = self._build_chunks(
+                        page_texts=page_texts,
+                        chunk_mode=chunk_mode,
+                        pages_per_chunk=pages_per_chunk,
+                        target_chars=target_chars,
+                        max_chars=max_chars
                     )
+                    for chunk_idx, page_range, chunk_text in chunks:
+                        result = self.llm_extractor.extract_from_text(chunk_text, column_mapping)
+                        if result.success:
+                            for tx in result.transactions:
+                                tx['Source_File'] = source_file
+                                tx['Page_Line'] = f"Pages_{page_range}"
+                                self.transactions.append(tx)
+                            total_tokens += result.tokens_used
         else:
-            # Priority 4: Enhanced regex fallback on full-text OCR
-            all_ocr_text = "\n\n".join(
-                f"--- Page {page_num} ---\n{text}"
-                for page_num, text in page_texts
-            )
-            self._fallback_regex_parse(all_ocr_text, source_file)
+            # Regex fallback
+            if page_texts:
+                all_ocr_text = "\n\n".join(
+                    f"--- Page {page_num} ---\n{text}"
+                    for page_num, text in page_texts
+                )
+                self._fallback_regex_parse(all_ocr_text, source_file)
 
-        # Clean up
         page_images.clear()
         gc.collect()
-
         return total_tokens
 
     def _parse_table_html(self, html: str) -> List[List[str]]:

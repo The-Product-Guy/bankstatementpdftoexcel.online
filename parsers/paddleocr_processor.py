@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
 PaddleOCR Processor for Enhanced Table Recognition
-Provides superior OCR accuracy for bank statements with table structure detection
+Provides superior OCR accuracy for bank statements with table structure detection.
+Supports PaddleOCR v2.x and v3.x APIs.
 """
 import os
 import gc
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
 import numpy as np
+
+# Prevent PaddleX from making slow network checks on startup
+os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
 
 # Lazy imports to speed up app startup
 _paddle_ocr = None
@@ -20,17 +24,26 @@ def get_paddleocr():
     if _paddle_ocr is None:
         try:
             from paddleocr import PaddleOCR
-            # Initialize with optimized settings for bank statements
-            # Some PaddleOCR versions don’t accept use_gpu; rely on internal defaults.
-            _paddle_ocr = PaddleOCR(
-                use_angle_cls=True,  # Detect text orientation
-                lang='en',           # English for most bank statements
-                det_db_thresh=0.3,   # Detection confidence threshold
-                rec_batch_num=6,     # Batch size for recognition
-            )
+            # PaddleOCR v3.x uses different parameter names than v2.x.
+            # Try v3 API first, fall back to v2 on TypeError.
+            try:
+                _paddle_ocr = PaddleOCR(
+                    use_textline_orientation=True,
+                    lang='en',
+                    text_det_thresh=0.3,
+                    text_recognition_batch_size=6,
+                )
+            except TypeError:
+                # Older PaddleOCR (v2.x) API
+                _paddle_ocr = PaddleOCR(
+                    use_angle_cls=True,
+                    lang='en',
+                    det_db_thresh=0.3,
+                    rec_batch_num=6,
+                )
         except ImportError:
             raise ImportError(
-                "PaddleOCR not installed. Install with: pip install paddleocr onnxruntime"
+                "PaddleOCR not installed. Install with: pip install paddleocr"
             )
     return _paddle_ocr
 
@@ -100,117 +113,98 @@ class PaddleOCRProcessor:
         # Convert PIL to numpy array
         img_array = np.array(image)
         
-        # Run OCR with compatibility for PaddleOCR API changes
+        # Run OCR - supports PaddleOCR v2.x and v3.x APIs
         try:
-            result = self.ocr.ocr(img_array, cls=True)
-        except TypeError as exc:
-            if "cls" not in str(exc):
-                raise
-            result = self.ocr.ocr(img_array)
+            if hasattr(self.ocr, 'predict'):
+                result = self.ocr.predict(img_array)
+            else:
+                try:
+                    result = self.ocr.ocr(img_array, cls=True)
+                except TypeError:
+                    result = self.ocr.ocr(img_array)
         except ImportError:
-            # Re-raise ImportError so caller can fall back to Tesseract
             raise
         except Exception as exc:
-            # Catch runtime OCR errors (including tuple index errors) but not import errors
-            # Re-raise to let caller decide on fallback strategy
             raise RuntimeError(f"PaddleOCR processing failed: {exc}") from exc
-        
-        # Robust result validation for different PaddleOCR versions
-        # PaddleOCR can return: None, [], [[]], [None], [[None]], or valid results.
-        #
-        # IMPORTANT: With ONNX Runtime backend, some PaddleOCR versions return
-        # results WITHOUT a page wrapper for single-image input:
-        #   PaddlePaddle:  [[line1, line2, ...]]      (list of pages)
-        #   ONNX (some):   [line1, line2, ...]         (flat list of lines)
-        # Each line is: [bbox_polygon, (text, confidence)]
-        # We detect this by checking if result[0] looks like a line vs a page.
+
         if not result:
             return []
-        
+
+        # ---- Normalize results from both v2 and v3 formats ----
+        extracted = []
         try:
             first_item = result[0]
         except (IndexError, TypeError):
             return []
-        
         if first_item is None:
             return []
-        
-        # Detect whether result is page-wrapped or flat:
-        # A page is a list of lines. A line is [bbox, (text, conf)].
-        # If first_item is a list/tuple AND its first element is also a list/tuple
-        # with 4 points (bbox polygon), then first_item IS a line (flat format).
-        # If first_item is a list/tuple of lines, then first_item is a page.
+
+        # v3.x returns [{"rec_texts": [...], "rec_scores": [...], "dt_polys": [...]}]
+        if isinstance(first_item, dict):
+            texts = first_item.get('rec_texts') or first_item.get('texts') or []
+            scores = first_item.get('rec_scores') or first_item.get('scores') or []
+            polys = first_item.get('dt_polys') or first_item.get('polys') or []
+            for i, text in enumerate(texts):
+                if not text or not str(text).strip():
+                    continue
+                conf = float(scores[i]) if i < len(scores) else 0.0
+                if i < len(polys):
+                    poly = polys[i]
+                    try:
+                        xs = [float(p[0]) for p in poly]
+                        ys = [float(p[1]) for p in poly]
+                        extracted.append({
+                            'text': str(text),
+                            'confidence': conf,
+                            'bbox': (min(xs), min(ys), max(xs), max(ys)),
+                            'bbox_polygon': poly,
+                        })
+                    except (IndexError, TypeError, ValueError):
+                        continue
+            return extracted
+
+        # v2.x returns [[line1, line2, ...]] or [line1, line2, ...]
+        # Each line is [bbox_polygon, (text, confidence)]
         page_result = first_item
         if isinstance(first_item, (list, tuple)) and len(first_item) >= 2:
             inner = first_item[0]
             if isinstance(inner, (list, tuple)) and len(inner) == 4:
-                # inner looks like a bbox polygon [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                # Check if innermost element is a coordinate pair
                 if isinstance(inner[0], (list, tuple)) and len(inner[0]) == 2:
-                    # first_item is a LINE, not a page → result is flat (no page wrapper)
-                    page_result = result
-                # else: first_item is a page (normal format), page_result = first_item
-        
-        # Handle None or empty page result
-        if not page_result:
+                    page_result = result  # flat format
+
+        if not page_result or not isinstance(page_result, (list, tuple)):
             return []
-        
-        # Ensure page_result is iterable
-        if not isinstance(page_result, (list, tuple)):
-            return []
-        
-        extracted = []
+
         for line in page_result:
             try:
-                # Skip None entries
-                if line is None:
+                if line is None or not isinstance(line, (list, tuple)) or len(line) < 2:
                     continue
-                    
-                # Validate line structure
-                if not isinstance(line, (list, tuple)) or len(line) < 2:
-                    continue
-                    
-                bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                bbox = line[0]
                 text_info = line[1]
-                
-                # Validate bbox
                 if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
                     continue
-                    
-                # Validate text_info
                 if not isinstance(text_info, (list, tuple)) or len(text_info) < 2:
                     continue
-                    
                 text = text_info[0]
                 confidence = text_info[1]
-                
-                # Validate text and confidence
-                if not isinstance(text, str) or text is None:
+                if not isinstance(text, str) or not text:
                     continue
                 if not isinstance(confidence, (int, float)):
                     confidence = 0.0
-                
-                valid_points = [
-                    p for p in bbox
-                    if isinstance(p, (list, tuple)) and len(p) >= 2
-                ]
+                valid_points = [p for p in bbox if isinstance(p, (list, tuple)) and len(p) >= 2]
                 if len(valid_points) < 4:
                     continue
-
-                # Calculate bounding box as (x_min, y_min, x_max, y_max)
                 x_coords = [p[0] for p in valid_points]
                 y_coords = [p[1] for p in valid_points]
-                
                 extracted.append({
                     'text': text,
                     'confidence': confidence,
                     'bbox': (min(x_coords), min(y_coords), max(x_coords), max(y_coords)),
-                    'bbox_polygon': bbox
+                    'bbox_polygon': bbox,
                 })
-            except (IndexError, TypeError, ValueError) as e:
-                # Skip malformed entries silently
+            except (IndexError, TypeError, ValueError):
                 continue
-        
+
         return extracted
     
     def process_image_to_text(self, image: Image.Image) -> str:
