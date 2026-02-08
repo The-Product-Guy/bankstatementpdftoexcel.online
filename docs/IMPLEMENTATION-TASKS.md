@@ -1,6 +1,6 @@
 # PDF to Excel Production Tracker
 
-Last updated: 2026-02-07
+Last updated: 2026-02-08
 
 ## Phase 1 - Foundation (Completed)
 - [x] Add parser quality report (proxy accuracy, balance consistency, coverage metrics).
@@ -39,3 +39,8 @@ Last updated: 2026-02-07
 
 ## Benchmark Snapshots
 - [x] Local bounded baseline generated: `reports/india_v1_accuracy_local_baseline.csv` (`local-low-mem`, first 20 pages/file, `--disable-paddle`, `--disable-img2table`).
+
+## Hotfixes
+- [x] Worker stability patch: force safe runtime mode (`use_paddleocr=false`, `use_img2table=false`) when PaddleOCR warmup fails in production.
+- [x] Skip `img2table` path in parser when PaddleOCR backend is unavailable (avoid heavy tesseract fallback inside img2table).
+- [x] Pin Celery worker to `--concurrency=1` and cap native thread env vars in `entrypoint.sh`.

@@ -1577,6 +1577,10 @@ class UniversalBankParser(BaseParser):
         Returns the result dict from Img2TableExtractor, or None on failure.
         """
         try:
+            if self.config.use_paddleocr and not self.paddle_processor:
+                print("  ⚠️ Skipping img2table: PaddleOCR backend unavailable in runtime")
+                return None
+
             from .img2table_extractor import Img2TableExtractor
             start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
             selected_pages = end_page - start_page + 1

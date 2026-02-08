@@ -37,6 +37,7 @@ if DATABASE_URL.startswith("sqlite"):
 # Redis for progress updates (separate from Celery broker if needed, but usually same)
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.StrictRedis.from_url(redis_url)
+_PADDLE_WARMUP_AVAILABLE = False
 
 
 def _warmup_ocr_models():
@@ -45,8 +46,11 @@ def _warmup_ocr_models():
     Without this, the first conversion takes an extra 15-30s for model loading.
     With ONNX Runtime, warmup takes ~5-10s and reduces first-request latency to match subsequent ones.
     """
+    global _PADDLE_WARMUP_AVAILABLE
+
     if not os.environ.get('USE_PADDLEOCR', 'true').lower() in {'1', 'true', 'yes', 'on'}:
         logger.info("PaddleOCR disabled via USE_PADDLEOCR, skipping warmup")
+        _PADDLE_WARMUP_AVAILABLE = False
         return
 
     try:
@@ -65,8 +69,10 @@ def _warmup_ocr_models():
             pass
         elapsed = time.time() - start
         logger.info(f"PaddleOCR models ready in {elapsed:.1f}s")
+        _PADDLE_WARMUP_AVAILABLE = True
     except Exception as e:
         logger.warning(f"OCR model warmup failed (will lazy-load on first request): {e}")
+        _PADDLE_WARMUP_AVAILABLE = False
 
 
 # Warm up models at worker import time (before accepting tasks)
@@ -237,11 +243,27 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             if not (execution_preset == "local-low-mem" and not railway_detected and not env_preset):
                 execution_preset = "prod-high-accuracy"
 
+        runtime_use_paddleocr = True
+        runtime_use_img2table = True
+        if not _PADDLE_WARMUP_AVAILABLE:
+            # In environments where PaddleOCR isn't installed (or failed init),
+            # img2table's Paddle backend can fall back to very heavy Tesseract paths
+            # and cause worker instability. Force the safer fallback pipeline.
+            runtime_use_paddleocr = False
+            runtime_use_img2table = False
+            if execution_preset != "local-low-mem":
+                logger.warning(
+                    f"Job {job_id}: PaddleOCR unavailable, forcing safe OCR mode "
+                    f"(preset={execution_preset} -> paddleocr/img2table disabled)"
+                )
+
         logger.info(f"Job {job_id}: execution_preset={execution_preset}, quality={quality}")
         parser = create_universal_parser(
             progress_callback=progress_callback,
             # These override environment defaults - remove to use env vars fully
             execution_preset=execution_preset,
+            use_paddleocr=runtime_use_paddleocr,
+            use_img2table=runtime_use_img2table,
             use_llm=False,  # Set USE_LLM=true to enable
         )
         
@@ -345,6 +367,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 chunk_parser = create_universal_parser(
                     progress_callback=chunk_progress,
                     execution_preset=execution_preset,
+                    use_paddleocr=runtime_use_paddleocr,
+                    use_img2table=runtime_use_img2table,
                     use_llm=False,
                 )
                 chunk_transactions = chunk_parser.parse(
@@ -455,6 +479,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         result_extra = {
             "quality_used": quality,
             "execution_preset": execution_preset,
+            "runtime_use_paddleocr": runtime_use_paddleocr,
+            "runtime_use_img2table": runtime_use_img2table,
             "chunk_orchestrated": chunk_orchestrated,
         }
         if ext_meta:

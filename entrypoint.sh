@@ -28,6 +28,11 @@ echo "PORT environment variable: ${PORT:-'not set'}"
 
 if [ "${SERVICE_ROLE}" = "worker" ]; then
   echo "Starting Celery worker (solo pool, ONNX Runtime backend)..."
+  # Keep native OCR libs constrained to avoid memory spikes in container runtime.
+  export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+  export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
+  export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+  export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
   # Use solo pool to avoid fork() issues with ONNX Runtime/OpenCV native libraries
   # Fork can cause SIGSEGV when native C++ code is involved.
   # For horizontal scaling, increase Railway replicas instead of concurrency.
@@ -36,6 +41,7 @@ if [ "${SERVICE_ROLE}" = "worker" ]; then
   exec celery -A celery_config.celery_app worker \
     --loglevel=info \
     --pool=solo \
+    --concurrency=1 \
     --max-tasks-per-child=50
 fi
 
