@@ -21,7 +21,7 @@ from werkzeug.utils import secure_filename
 
 # Import parsers
 from parsers.universal_parser import UniversalBankParser, ProcessingConfig
-from storage_utils import get_storage_config, upload_file, generate_presigned_url
+from storage_utils import get_storage_config, upload_file, generate_presigned_url, delete_file
 from db import init_db, get_db_session
 from models import User, AuthToken, Job, UsageCounter, FeedbackSubmission
 
@@ -33,6 +33,10 @@ GUEST_CONVERSION_LIMIT = int(os.environ.get('GUEST_CONVERSION_LIMIT', '1'))
 USER_CONVERSION_LIMIT = int(os.environ.get('USER_CONVERSION_LIMIT', '5'))
 MAGIC_LINK_EXP_MINUTES = int(os.environ.get('MAGIC_LINK_EXP_MINUTES', '15'))
 DISABLE_QUOTAS = os.environ.get('DISABLE_QUOTAS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+BETA_MODE = os.environ.get('BETA_MODE', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+ENGLISH_ONLY_BETA = os.environ.get('ENGLISH_ONLY_BETA', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+FEEDBACK_RETENTION_DAYS = int(os.environ.get('FEEDBACK_RETENTION_DAYS', '30'))
+FEEDBACK_RETENTION_SWEEP_MINS = int(os.environ.get('FEEDBACK_RETENTION_SWEEP_MINS', '60'))
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in os.environ.get('ADMIN_EMAILS', '').split(',')
@@ -44,6 +48,7 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')  # Google Analytics Measurement ID (e.g., G-XXXXXXXXXX)
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')  # Google Tag Manager Container ID (optional)
+_last_feedback_retention_sweep = None
 
 # Initialize SocketIO with proper configuration for production
 allowed_origins_env = os.environ.get('SOCKETIO_CORS_ORIGINS') or os.environ.get('ALLOWED_ORIGINS')
@@ -251,6 +256,57 @@ def cleanup_old_files():
     except Exception:
         pass
 
+
+def cleanup_feedback_shared_pdfs(force: bool = False):
+    """
+    Delete user-consented shared PDFs after retention period.
+    Retention applies only to feedback-linked analysis copies.
+    """
+    global _last_feedback_retention_sweep
+
+    if FEEDBACK_RETENTION_DAYS <= 0:
+        return
+
+    now = datetime.utcnow()
+    if (
+        not force
+        and _last_feedback_retention_sweep
+        and now - _last_feedback_retention_sweep < timedelta(minutes=FEEDBACK_RETENTION_SWEEP_MINS)
+    ):
+        return
+
+    storage = get_storage_config()
+    if not storage:
+        _last_feedback_retention_sweep = now
+        return
+
+    cutoff = now - timedelta(days=FEEDBACK_RETENTION_DAYS)
+    try:
+        with get_db_session() as db:
+            stale = (
+                db.query(FeedbackSubmission)
+                .filter(FeedbackSubmission.pdf_shared.is_(True))
+                .filter(FeedbackSubmission.pdf_storage_key.isnot(None))
+                .filter(FeedbackSubmission.created_at < cutoff)
+                .limit(200)
+                .all()
+            )
+            for item in stale:
+                key = item.pdf_storage_key
+                if key:
+                    try:
+                        delete_file(storage, key)
+                    except Exception as exc:
+                        print(f"⚠️ Feedback retention delete failed for {key}: {exc}")
+                        continue
+                item.pdf_storage_key = None
+                if item.status == "new":
+                    item.status = "expired"
+    except Exception as exc:
+        print(f"⚠️ Feedback retention sweep failed: {exc}")
+    finally:
+        _last_feedback_retention_sweep = now
+
 def progress_callback(progress_data):
     """Callback function to emit progress updates via WebSocket"""
     socketio.emit('progress_update', progress_data)
@@ -293,11 +349,15 @@ def handle_large_upload(error):
 def home():
     """Home page with upload functionality"""
     cleanup_old_files()
+    cleanup_feedback_shared_pdfs()
     return render_template(
         'home.html',
         banks=SUPPORTED_BANKS,
         max_upload_mb=MAX_UPLOAD_MB,
-        max_pages=MAX_PAGES
+        max_pages=MAX_PAGES,
+        beta_mode=BETA_MODE,
+        english_only_beta=ENGLISH_ONLY_BETA,
+        feedback_retention_days=FEEDBACK_RETENTION_DAYS
     )
 
 @app.route('/index')

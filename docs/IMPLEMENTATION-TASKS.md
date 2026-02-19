@@ -1,6 +1,6 @@
 # PDF to Excel Production Tracker
 
-Last updated: 2026-02-08
+Last updated: 2026-02-19
 
 ## Phase 1 - Foundation (Completed)
 - [x] Add parser quality report (proxy accuracy, balance consistency, coverage metrics).
@@ -27,10 +27,10 @@ Last updated: 2026-02-08
 - [x] Add profile stats logging (matched/unknown count) to evaluation reports.
 - [x] Add first round of profile regression fixtures (header mapping unit tests).
 
-## Phase 4 - Selective AI Fallback (Planned)
-- [ ] Route only low-confidence segments to LLM (not full-document LLM extraction).
+## Phase 4 - Selective AI Fallback (In Progress)
+- [x] Route only low-confidence page segments to fallback scope (avoid full-document fallback when confidence is weak).
 - [ ] Add max-token and timeout guards per LLM request.
-- [ ] Persist row-level confidence reasons for auditability.
+- [x] Persist row-level confidence reasons for auditability.
 
 ## Phase 5 - Release Gates (Planned)
 - [ ] Define acceptance gates for true extraction accuracy by dataset.
@@ -44,3 +44,10 @@ Last updated: 2026-02-08
 - [x] Worker stability patch: force safe runtime mode (`use_paddleocr=false`, `use_img2table=false`) when PaddleOCR warmup fails in production.
 - [x] Skip `img2table` path in parser when PaddleOCR backend is unavailable (avoid heavy tesseract fallback inside img2table).
 - [x] Pin Celery worker to `--concurrency=1` and cap native thread env vars in `entrypoint.sh`.
+- [x] Enforce transaction ordering by `Page_Line` before writing Excel to preserve page sequence.
+- [x] Make img2table merge deterministic by sorting page indices before row consolidation.
+- [x] Add regression test for page-order sorting (`tests/chunking_checks.py`).
+- [x] Add English-only beta language guard in parser (`ENGLISH_ONLY_BETA`).
+- [x] Add row/cell confidence fields and low-confidence ratio summary to extraction output.
+- [x] Add beta banner and explicit redaction + retention messaging in feedback UI.
+- [x] Add feedback shared-PDF retention cleanup sweep (`FEEDBACK_RETENTION_DAYS`).

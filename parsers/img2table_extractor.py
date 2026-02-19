@@ -154,7 +154,8 @@ class Img2TableExtractor:
         merged_rows = []
         header_row_text = None
 
-        for page_idx, page_tables in extracted.items():
+        for page_idx in sorted(extracted.keys()):
+            page_tables = extracted.get(page_idx) or []
             if not page_tables:
                 continue
 

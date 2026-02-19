@@ -7,7 +7,11 @@ Run with:
 import unittest
 
 import os
-from parsers.chunk_utils import build_page_ranges, merge_raw_tables  # noqa: E402
+from parsers.chunk_utils import (  # noqa: E402
+    build_page_ranges,
+    merge_raw_tables,
+    sort_transactions_for_output,
+)
 from parsers.universal_parser import create_universal_parser  # noqa: E402
 
 
@@ -30,6 +34,21 @@ class TestChunkingHelpers(unittest.TestCase):
         self.assertIsNotNone(merged)
         self.assertEqual(len(merged["rows"]), 2)
         self.assertEqual(merged["rows"][1][1], "B")
+
+    def test_sort_transactions_for_output_by_page_line(self):
+        txs = [
+            {"Date": "x", "Page_Line": "Page_3"},
+            {"Date": "x", "Page_Line": "Page_1"},
+            {"Date": "x", "Page_Line": "Pages_2-4"},
+            {"Date": "x", "Page_Line": "Raw_Table"},
+            {"Date": "x", "Page_Line": "Page_2"},
+        ]
+        sorted_txs = sort_transactions_for_output(txs)
+        sorted_keys = [t.get("Page_Line") for t in sorted_txs]
+        self.assertEqual(
+            sorted_keys,
+            ["Page_1", "Page_2", "Pages_2-4", "Page_3", "Raw_Table"]
+        )
 
 
 class TestParserPageRange(unittest.TestCase):

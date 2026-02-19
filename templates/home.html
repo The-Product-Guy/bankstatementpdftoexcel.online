@@ -69,6 +69,19 @@
     {% endif %}
     {% endwith %}
 
+{% if beta_mode %}
+    <div class="flash-messages">
+        <div class="alert alert-warning" role="status">
+            <i class="fas fa-flask"></i>
+            <strong>Beta:</strong> StatementFlow is in active testing.
+            {% if english_only_beta %}
+                English statements are currently supported.
+            {% endif %}
+            If conversion fails, you can opt in below to share the PDF for analysis.
+        </div>
+    </div>
+{% endif %}
+
 <section class="hero">
     <div class="hero-content">
         <span class="hero-tag">For auditors, accountants, and bookkeepers</span>
@@ -152,6 +165,9 @@
                 </button>
             </form>
             <p class="converter-note">Supports all major global banks. No data is stored.</p>
+            {% if english_only_beta %}
+            <p class="converter-note subtle">Current beta scope: English statement layouts.</p>
+            {% endif %}
             <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
         </div>
     </div>
@@ -343,7 +359,10 @@
                     <input type="checkbox" name="share_pdf" id="feedbackSharePdf" value="1">
                     <span>Share my PDF with the StatementFlow team for analysis</span>
                 </label>
-                <p class="consent-note">Your file will only be used to improve extraction accuracy and will be deleted after analysis.</p>
+                <p class="consent-note">
+                    Please redact sensitive content before sharing.
+                    Shared PDFs are used only for extraction improvements and deleted after {{ feedback_retention_days }} days.
+                </p>
             </div>
 
             <div class="feedback-actions">

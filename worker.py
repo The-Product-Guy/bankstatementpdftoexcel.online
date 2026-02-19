@@ -9,8 +9,13 @@ import redis
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from celery_config import celery_app
-from parsers.chunk_utils import build_page_ranges, merge_raw_tables, merge_quality_reports
-from parsers.universal_parser import create_universal_parser
+from parsers.chunk_utils import (
+    build_page_ranges,
+    merge_raw_tables,
+    merge_quality_reports,
+    sort_transactions_for_output,
+)
+from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
 from storage_utils import get_storage_config, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
 from models import Job, UsageCounter
@@ -405,6 +410,9 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             transactions = all_transactions
         else:
             transactions = parser.parse(file_path, original_filename)
+
+        # Enforce stable output ordering by page sequence to prevent mixed rows in Excel.
+        transactions = sort_transactions_for_output(transactions)
         
         update_progress(job_id, 0, 1, "Generating Excel file...", percent_override=95)
         # Generate Excel file from transactions
@@ -500,6 +508,9 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 "date_parse_pct": quality_report.get("date_parse_pct", 0.0),
                 "amount_coverage_pct": quality_report.get("amount_coverage_pct", 0.0),
                 "quality_row_count": quality_report.get("row_count", 0),
+                "row_confidence_avg": quality_report.get("row_confidence_avg", 0.0),
+                "row_confidence_low_ratio_pct": quality_report.get("row_confidence_low_ratio_pct", 0.0),
+                "row_confidence_low_count": quality_report.get("row_confidence_low_count", 0),
             })
 
         # Determine completion status message
@@ -550,8 +561,12 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         
     except Exception as e:
         logger.error(f"Job {job_id} failed: {str(e)}")
-        _update_job(job_id, status="failed", finished_at=datetime.utcnow(), error=str(e))
-        update_progress(job_id, 0, 0, f"Error: {str(e)}")
+        if isinstance(e, UnsupportedLanguageError):
+            _update_job(job_id, status="unsupported_language", finished_at=datetime.utcnow(), error=str(e))
+            update_progress(job_id, 0, 0, f"Unsupported language: {str(e)}")
+        else:
+            _update_job(job_id, status="failed", finished_at=datetime.utcnow(), error=str(e))
+            update_progress(job_id, 0, 0, f"Error: {str(e)}")
         return {
             'status': 'error',
             'job_id': job_id,

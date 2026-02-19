@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Chunk orchestration utility helpers."""
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -95,3 +96,51 @@ def merge_quality_reports(reports: List[Dict[str, Any]]) -> Dict[str, Any]:
         "balance_consistency_pct": balance_consistency,
         "accuracy_proxy_pct": _weighted("accuracy_proxy_pct"),
     }
+
+
+def _page_order_from_page_line(page_line: Any) -> Tuple[int, int]:
+    """
+    Parse page ordering hints from Page_Line-like strings.
+    Examples:
+    - Page_12 -> (12, 0)
+    - Pages_3-7 -> (3, 0)
+    - Unknown markers -> (very_large, very_large)
+    """
+    if page_line is None:
+        return (10**9, 10**9)
+
+    text = str(page_line).strip()
+    if not text:
+        return (10**9, 10**9)
+
+    # Prefer explicit page-prefixed numbers.
+    page_match = re.search(r"pages?[_\s-]*(\d+)", text, flags=re.IGNORECASE)
+    if page_match:
+        page_no = int(page_match.group(1))
+        trailing = re.findall(r"\d+", text[page_match.end():])
+        secondary = int(trailing[0]) if trailing else 0
+        return (page_no, secondary)
+
+    # Fallback: first numeric token if available.
+    nums = re.findall(r"\d+", text)
+    if nums:
+        first = int(nums[0])
+        second = int(nums[1]) if len(nums) > 1 else 0
+        return (first, second)
+
+    return (10**9, 10**9)
+
+
+def sort_transactions_for_output(transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Stable sort of transactions by source page/line metadata.
+    Keeps original relative order when page metadata is missing.
+    """
+    indexed = list(enumerate(transactions or []))
+    indexed.sort(
+        key=lambda item: (
+            _page_order_from_page_line(item[1].get("Page_Line")),
+            item[0],  # stable fallback for equal/unknown keys
+        )
+    )
+    return [tx for _, tx in indexed]

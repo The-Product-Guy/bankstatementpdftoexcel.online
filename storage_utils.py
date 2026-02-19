@@ -36,6 +36,10 @@ def download_file(storage: Dict[str, Any], key: str, local_path: str) -> None:
     storage["client"].download_file(storage["bucket"], key, local_path)
 
 
+def delete_file(storage: Dict[str, Any], key: str) -> None:
+    storage["client"].delete_object(Bucket=storage["bucket"], Key=key)
+
+
 def generate_presigned_url(
     storage: Dict[str, Any],
     key: str,

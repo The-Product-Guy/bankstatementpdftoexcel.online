@@ -18,6 +18,10 @@ from .base_parser import BaseParser
 from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
 
 
+class UnsupportedLanguageError(ValueError):
+    """Raised when document content is outside current supported language scope."""
+
+
 def _env_bool(name: str, default: bool) -> bool:
     """Read boolean from environment."""
     val = os.environ.get(name)
@@ -140,6 +144,9 @@ class ProcessingConfig:
     
     # Extraction Tuning
     min_table_transactions: Optional[int] = _env_int('MIN_TABLE_TRANSACTIONS', 5)
+    english_only_beta: bool = _env_bool('ENGLISH_ONLY_BETA', True)
+    row_confidence_threshold: float = _env_float('ROW_CONFIDENCE_THRESHOLD', 0.65)
+    low_conf_ratio_for_fallback: float = _env_float('LOW_CONF_RATIO_FOR_FALLBACK', 0.20)
     execution_preset: str = "custom"
 
 
@@ -189,9 +196,11 @@ class UniversalBankParser(BaseParser):
         self.raw_table = None
         self.extraction_metadata = ExtractionMetadata()
         self.quality_report: Dict[str, Any] = {}
+        self.row_confidence_summary: Dict[str, Any] = {}
         self.active_profile: Optional[BankProfile] = None
         self.source_filename: str = ""
         self._profile_announced = False
+        self._row_confidences: List[float] = []
         
         # Lazy-loaded processors
         self._paddle_processor = None
@@ -259,6 +268,8 @@ class UniversalBankParser(BaseParser):
         self.transactions = []
         self.raw_table = None
         self.quality_report = {}
+        self.row_confidence_summary = {}
+        self._row_confidences = []
         self.active_profile = None
         self.source_filename = original_filename
         self._profile_announced = False
@@ -281,6 +292,9 @@ class UniversalBankParser(BaseParser):
                 first_page_text = ""
 
         self._maybe_detect_profile(first_page_text=first_page_text)
+
+        if pdf_type == "text":
+            self._enforce_english_only(first_page_text, "first page text")
 
         start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
         pages_to_process = end_page - start_page + 1
@@ -340,6 +354,9 @@ class UniversalBankParser(BaseParser):
         # --- Build extraction metadata for frontend quality feedback ---
         self._build_extraction_metadata(pdf_type, pages_to_process)
         self.quality_report = self._build_quality_report(pages_to_process, pdf_type)
+        self.row_confidence_summary = self._build_row_confidence_summary()
+        if self.quality_report and self.row_confidence_summary:
+            self.quality_report.update(self.row_confidence_summary)
         
         print(f"  🎉 Extracted {len(self.transactions)} transactions in {processing_time:.1f}s")
         if self.quality_report:
@@ -667,6 +684,7 @@ class UniversalBankParser(BaseParser):
         # Extract all pages' text and try table extraction first
         page_texts = []
         table_transactions = []
+        low_conf_pages: Optional[set] = None
         with pdfplumber.open(pdf_path) as pdf:
             doc_total_pages = len(pdf.pages)
             start_page, end_page = self._resolve_page_window(doc_total_pages, page_start, page_end)
@@ -700,14 +718,24 @@ class UniversalBankParser(BaseParser):
         
         total_chars = sum(len(text) for _, text in page_texts)
         print(f"  📄 Extracted {total_chars:,} characters from {len(page_texts)} pages")
+        if page_texts:
+            sample_text = "\n".join(text for _, text in page_texts[:3])
+            self._enforce_english_only(sample_text, "text extraction sample")
 
         if table_transactions:
             min_table_tx = self.config.min_table_transactions
             if min_table_tx is None or len(table_transactions) >= min_table_tx:
                 if self._transactions_quality_ok(table_transactions):
-                    print(f"  📊 Table extraction found {len(table_transactions)} transactions; skipping LLM.")
-                    self.transactions.extend(table_transactions)
-                    return 0
+                    low_ratio = self._low_confidence_ratio(table_transactions)
+                    if low_ratio <= self.config.low_conf_ratio_for_fallback:
+                        print(f"  📊 Table extraction found {len(table_transactions)} transactions; skipping LLM.")
+                        self.transactions.extend(table_transactions)
+                        return 0
+                    print(
+                        f"  ⚠️ Table extraction low-confidence ratio {low_ratio:.1%} "
+                        f"exceeds threshold {self.config.low_conf_ratio_for_fallback:.1%}; "
+                        "trying targeted fallback path."
+                    )
                 print("  ⚠️ Table extraction quality low, falling back to layout/LLM.")
 
         layout_transactions, raw_table = self._extract_layout_transactions(
@@ -717,10 +745,25 @@ class UniversalBankParser(BaseParser):
             page_end=page_end
         )
         if layout_transactions and self._transactions_quality_ok(layout_transactions):
-            print(f"  📐 Layout extraction found {len(layout_transactions)} transactions; skipping LLM.")
-            self.transactions.extend(layout_transactions)
-            self.raw_table = raw_table
-            return 0
+            low_ratio = self._low_confidence_ratio(layout_transactions)
+            if low_ratio <= self.config.low_conf_ratio_for_fallback or not self.llm_extractor:
+                print(f"  📐 Layout extraction found {len(layout_transactions)} transactions; skipping LLM.")
+                self.transactions.extend(layout_transactions)
+                self.raw_table = raw_table
+                return 0
+            print(
+                f"  ⚠️ Layout low-confidence ratio {low_ratio:.1%}; "
+                "escalating only low-confidence content to fallback."
+            )
+            low_conf_pages = set()
+            for tx in layout_transactions:
+                score = float(tx.get("Row_Confidence", 0.0))
+                if score >= self.config.row_confidence_threshold:
+                    continue
+                page_line = str(tx.get("Page_Line", ""))
+                m = re.search(r"Page[_\s-]*(\d+)", page_line, re.IGNORECASE)
+                if m:
+                    low_conf_pages.add(int(m.group(1)))
         
         if not self.llm_extractor:
             # Fallback to regex-based parsing
@@ -744,8 +787,15 @@ class UniversalBankParser(BaseParser):
             print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
         
         # Build chunks list
+        fallback_page_texts = page_texts
+        if low_conf_pages:
+            scoped = [(p, t) for (p, t) in page_texts if p in low_conf_pages]
+            if scoped:
+                fallback_page_texts = scoped
+                print(f"  🎯 Targeted fallback scope: {len(fallback_page_texts)} low-confidence pages")
+
         chunks = self._build_chunks(
-            page_texts=page_texts,
+            page_texts=fallback_page_texts,
             chunk_mode=chunk_mode,
             pages_per_chunk=pages_per_chunk,
             target_chars=target_chars,
@@ -1179,6 +1229,121 @@ class UniversalBankParser(BaseParser):
             return True
         return False
 
+    def _is_probably_english_text(self, text: str) -> bool:
+        """
+        Heuristic language gate for English-only beta.
+        Returns True when content is likely English/Latin-script dominant.
+        """
+        if not text:
+            return True
+
+        alpha_chars = [ch for ch in text if ch.isalpha()]
+        if len(alpha_chars) < 20:
+            # Not enough signal to confidently classify.
+            return True
+
+        latin_count = sum(1 for ch in alpha_chars if ('a' <= ch.lower() <= 'z'))
+        non_latin_count = len(alpha_chars) - latin_count
+        non_latin_ratio = non_latin_count / max(len(alpha_chars), 1)
+        return non_latin_ratio <= 0.20
+
+    def _enforce_english_only(self, text: str, context: str) -> None:
+        """Raise when ENGLISH_ONLY_BETA is enabled and text looks non-English."""
+        if not self.config.english_only_beta:
+            return
+        if not text:
+            return
+        if not self._is_probably_english_text(text):
+            raise UnsupportedLanguageError(
+                f"English-only beta: unsupported language/script detected in {context}."
+            )
+
+    def _build_row_confidence_summary(self) -> Dict[str, Any]:
+        if not self._row_confidences:
+            return {
+                "row_confidence_avg": 0.0,
+                "row_confidence_low_ratio_pct": 0.0,
+                "row_confidence_low_count": 0,
+            }
+
+        low_threshold = self.config.row_confidence_threshold
+        total = len(self._row_confidences)
+        low_count = sum(1 for score in self._row_confidences if score < low_threshold)
+        avg_score = sum(self._row_confidences) / total
+        low_ratio_pct = (low_count / total) * 100.0
+        return {
+            "row_confidence_avg": round(avg_score, 3),
+            "row_confidence_low_ratio_pct": round(low_ratio_pct, 1),
+            "row_confidence_low_count": low_count,
+        }
+
+    def _low_confidence_ratio(self, transactions: List[Dict[str, Any]]) -> float:
+        if not transactions:
+            return 0.0
+        low_threshold = self.config.row_confidence_threshold
+        scored = [
+            float(tx.get("Row_Confidence", 0.0))
+            for tx in transactions
+            if tx.get("Row_Confidence") is not None
+        ]
+        if not scored:
+            return 0.0
+        low_count = sum(1 for score in scored if score < low_threshold)
+        return low_count / max(len(scored), 1)
+
+    def _annotate_row_confidence(
+        self,
+        tx: Dict[str, Any],
+        row: List[str],
+        col_map: Dict[str, int]
+    ) -> Dict[str, Any]:
+        """Attach row/cell confidence without modifying extracted values."""
+        def _cell(key: str) -> str:
+            idx = col_map.get(key)
+            if idx is None or idx >= len(row):
+                return ""
+            return (row[idx] or "").strip()
+
+        date_val = _cell("date")
+        desc_val = _cell("description")
+        debit_val = _cell("debit")
+        credit_val = _cell("credit")
+        balance_val = _cell("balance")
+
+        date_conf = 1.0 if date_val and self._looks_like_date(date_val) else 0.0
+        desc_conf = 1.0 if len(desc_val) >= 3 else (0.4 if desc_val else 0.0)
+        debit_conf = 1.0 if self.clean_amount_string(debit_val) is not None else (0.5 if not debit_val else 0.2)
+        credit_conf = 1.0 if self.clean_amount_string(credit_val) is not None else (0.5 if not credit_val else 0.2)
+        balance_conf = 1.0 if self.clean_amount_string(balance_val) is not None else 0.0
+
+        amount_conf = max(debit_conf, credit_conf)
+        row_conf = (
+            0.35 * date_conf +
+            0.20 * desc_conf +
+            0.25 * amount_conf +
+            0.20 * balance_conf
+        )
+        row_conf = round(row_conf, 3)
+
+        reasons: List[str] = []
+        if date_conf < 1.0:
+            reasons.append("date_unparseable")
+        if desc_conf < 0.8:
+            reasons.append("description_weak")
+        if amount_conf < 0.8:
+            reasons.append("amount_unreliable")
+        if balance_conf < 0.8:
+            reasons.append("balance_missing_or_invalid")
+
+        tx["Row_Confidence"] = row_conf
+        tx["Confidence_Reasons"] = ";".join(reasons)
+        tx["CellConf_Date"] = round(date_conf, 3)
+        tx["CellConf_Description"] = round(desc_conf, 3)
+        tx["CellConf_Amount"] = round(amount_conf, 3)
+        tx["CellConf_Balance"] = round(balance_conf, 3)
+        self._row_confidences.append(row_conf)
+        return tx
+
     def _table_settings(self) -> Dict[str, Any]:
         """Table extraction settings for pdfplumber."""
         return {
@@ -1475,7 +1640,7 @@ class UniversalBankParser(BaseParser):
             elif len(amounts) == 1:
                 balance = amounts[0]
 
-        return self.create_transaction_dict(
+        tx = self.create_transaction_dict(
             date=date_val,
             description=description,
             reference=reference,
@@ -1485,6 +1650,7 @@ class UniversalBankParser(BaseParser):
             source_file=source_file,
             line_ref=page_ref
         )
+        return self._annotate_row_confidence(tx, row, col_map)
     
     def _process_image_based(
         self, 
@@ -1826,6 +1992,9 @@ class UniversalBankParser(BaseParser):
                 continue
 
         print(f"  📄 OCR fallback extracted {total_ocr_chars:,} characters from {len(page_texts)} pages")
+        if page_texts:
+            sample_text = "\n".join(text for _, text in page_texts[:3])
+            self._enforce_english_only(sample_text, "OCR fallback sample")
 
         # Try LLM extraction if available
         if self.llm_extractor and page_texts:
