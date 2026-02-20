@@ -1482,6 +1482,8 @@ class UniversalBankParser(BaseParser):
 
     def _find_header_row(self, rows: List[List[str]]) -> Optional[int]:
         """Find a probable header row by keyword matching."""
+        import re
+
         header_keywords = [
             "date", "txn", "value", "description", "narration", "particular",
             "reference", "ref", "cheque", "debit", "credit", "withdraw", "deposit",
@@ -1489,10 +1491,28 @@ class UniversalBankParser(BaseParser):
         ]
         if self.active_profile:
             header_keywords.extend(self.active_profile.header_tokens())
+        header_keywords = sorted(set(header_keywords))
+
+        strong_keywords = {
+            "description", "narration", "particular", "reference",
+            "debit", "credit", "withdraw", "deposit", "balance", "amount"
+        }
 
         for idx, row in enumerate(rows[:3]):
-            joined = " ".join(self._normalize_header_text(cell) for cell in row if cell)
-            if any(k in joined for k in header_keywords):
+            joined = " ".join(self._normalize_header_text(cell) for cell in row if cell).strip()
+            if not joined:
+                continue
+
+            matches = {k for k in header_keywords if k in joined}
+            has_strong = any(k in joined for k in strong_keywords)
+            looks_data_like = bool(
+                re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', joined)
+                or re.search(r'\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', joined)
+            )
+
+            if len(matches) >= 2:
+                return idx
+            if has_strong and not looks_data_like:
                 return idx
         return None
 
@@ -1548,23 +1568,52 @@ class UniversalBankParser(BaseParser):
             r'\d{4}[/-]\d{2}[/-]\d{2}'
             r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
         )
-        amount_re = re.compile(r'^-?[\d,]+\.?\d{0,2}$')
+        exact_date_re = re.compile(
+            r'^(?:\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})$'
+        )
+        # Require either decimal precision or grouped separators to avoid
+        # misclassifying long reference numbers as amount columns.
+        amount_re = re.compile(
+            r'^-?(?:\d{1,3}(?:,\d{2,3})+\.\d{2}|\d+\.\d{2}|\d{1,3}(?:,\d{2,3})+)$'
+        )
+        reference_re = re.compile(r'^(?:\d{10,18}|[A-Z0-9]{10,24})$', re.IGNORECASE)
 
-        sample_rows = rows[:5]
+        data_like_rows = []
+        for row in rows:
+            has_date = any(date_re.search((cell or "").replace(" ", "")) for cell in row if cell)
+            has_amount = any(amount_re.match((cell or "").replace(" ", "")) for cell in row if cell)
+            if has_date or has_amount:
+                data_like_rows.append(row)
+            if len(data_like_rows) >= 8:
+                break
+
+        sample_rows = data_like_rows[:5] if data_like_rows else rows[:5]
         col_count = max(len(r) for r in sample_rows)
         date_scores = [0] * col_count
+        exact_date_scores = [0] * col_count
+        mixed_date_scores = [0] * col_count
         amount_scores = [0] * col_count
+        reference_scores = [0] * col_count
 
         for row in sample_rows:
             for idx, cell in enumerate(row):
-                cell_clean = cell.replace(" ", "")
+                cell_text = (cell or "").strip()
+                cell_clean = cell_text.replace(" ", "")
                 if date_re.search(cell_clean):
                     date_scores[idx] += 1
+                    if exact_date_re.match(cell_clean):
+                        exact_date_scores[idx] += 1
+                    elif len(cell_clean) > 10:
+                        mixed_date_scores[idx] += 1
                 if amount_re.match(cell_clean):
                     amount_scores[idx] += 1
+                if reference_re.match(cell_clean):
+                    reference_scores[idx] += 1
 
         mapping: Dict[str, int] = {}
-        if max(date_scores) > 0:
+        if max(exact_date_scores) > 0:
+            mapping['date'] = int(exact_date_scores.index(max(exact_date_scores)))
+        elif max(date_scores) > 0:
             mapping['date'] = int(date_scores.index(max(date_scores)))
 
         # Use last numeric columns for amounts
@@ -1582,14 +1631,26 @@ class UniversalBankParser(BaseParser):
             if len(amount_cols) > 2:
                 mapping['debit'] = amount_cols[2]
 
+        if max(reference_scores) > 0:
+            mapping['reference'] = int(reference_scores.index(max(reference_scores)))
+
         # Description: first non-date, non-amount column
-        for idx in range(col_count):
-            if idx == mapping.get('date'):
-                continue
-            if idx in [mapping.get('debit'), mapping.get('credit'), mapping.get('balance')]:
-                continue
-            mapping.setdefault('description', idx)
-            break
+        mixed_candidates = [
+            i for i, score in enumerate(mixed_date_scores)
+            if score > 0 and i != mapping.get('date')
+        ]
+        if mixed_candidates:
+            mapping['description'] = max(mixed_candidates, key=lambda i: mixed_date_scores[i])
+        else:
+            for idx in range(col_count):
+                if idx == mapping.get('date'):
+                    continue
+                if idx in [mapping.get('debit'), mapping.get('credit'), mapping.get('balance')]:
+                    continue
+                if idx == mapping.get('reference'):
+                    continue
+                mapping.setdefault('description', idx)
+                break
 
         return mapping
 
@@ -1610,24 +1671,88 @@ class UniversalBankParser(BaseParser):
             return row[idx].strip()
 
         date_val = get_cell('date')
-        if not self._looks_like_date(date_val):
-            return None
-
         description = get_cell('description')
         reference = get_cell('reference')
+        date_exact_re = re.compile(
+            r'^\s*(\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*$'
+        )
+        date_prefix_re = re.compile(
+            r'^\s*(\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b'
+        )
+        m_exact = date_exact_re.match(date_val)
+        m = date_prefix_re.match(date_val)
+        if not m_exact and not m:
+            return None
+
+        if m_exact:
+            date_val = m_exact.group(1)
+            m = None
+        if m:
+            extracted_date = m.group(1)
+            remaining = date_val[m.end():].strip(" -|")
+            date_val = extracted_date
+            if remaining and (not description or self._looks_like_date(description) or self._looks_like_reference(description)):
+                description = remaining
+        if description:
+            description = re.sub(
+                r'^\s*' + re.escape(date_val) + r'\b[\s\-|:]*',
+                '',
+                description,
+                flags=re.IGNORECASE,
+            ).strip(" -|")
 
         withdrawal = self.clean_amount_string(get_cell('debit'))
         deposit = self.clean_amount_string(get_cell('credit'))
         balance = self.clean_amount_string(get_cell('balance'))
 
+        def amount_tokens(cell_text: str) -> List[float]:
+            text = (cell_text or "").strip()
+            if not text:
+                return []
+            # Prefer decimal-like amounts to avoid treating long references as money.
+            raw = re.findall(r'-?\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', text)
+            vals: List[float] = []
+            for tok in raw:
+                amt = self.clean_amount_string(tok)
+                if amt is None:
+                    continue
+                vals.append(amt)
+            return vals
+
+        # Common scanned-table pattern: debit and credit in a single merged cell
+        # like "6,000.00 0.00". Parse this before generic fallbacks.
+        if withdrawal is None and deposit is None:
+            merged_amount_col = get_cell('debit') or get_cell('credit') or get_cell('amount')
+            if not merged_amount_col:
+                for cell in row:
+                    raw_count = len(
+                        re.findall(r'-?\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', str(cell or ""))
+                    )
+                    if raw_count >= 2:
+                        merged_amount_col = cell
+                        break
+            pair = amount_tokens(merged_amount_col)
+            if len(pair) >= 2:
+                a, b = pair[0], pair[1]
+                if a and b:
+                    withdrawal, deposit = a, b
+                elif a and not b:
+                    withdrawal = a
+                elif b and not a:
+                    deposit = b
+            elif len(pair) == 1:
+                desc_lower = description.lower()
+                if any(w in desc_lower for w in ['cr', 'credit', 'deposit']):
+                    deposit = pair[0]
+                else:
+                    withdrawal = pair[0]
+
         if withdrawal is None and deposit is None and balance is None:
             # Attempt fallback from any numeric cells
-            amounts = [
-                self.clean_amount_string(cell)
-                for cell in row
-                if cell and self.clean_amount_string(cell) is not None
-            ]
-            amounts = [a for a in amounts if a is not None]
+            amounts: List[float] = []
+            for cell in row:
+                amounts.extend(amount_tokens(cell))
+
             if len(amounts) >= 3:
                 withdrawal, deposit, balance = amounts[0], amounts[1], amounts[-1]
             elif len(amounts) == 2:
@@ -1886,6 +2011,9 @@ class UniversalBankParser(BaseParser):
                             col_fill[ci] += 1
                 cols_with_data = sum(1 for f in col_fill if f >= len(sample) * 0.2)
                 if cols_with_data >= 3:
+                    if self._looks_like_blobbed_rows(all_spatial_rows):
+                        print("  ⚠️ Legacy spatial output appears blobbed; rejecting and continuing fallback.")
+                        return None
                     columns = spatial_header if spatial_header else [
                         f"Column_{i+1}" for i in range(num_cols)
                     ]
@@ -2142,8 +2270,9 @@ class UniversalBankParser(BaseParser):
             v_mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
             v_contours, _ = cv2.findContours(v_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             good_v = [c for c in v_contours if cv2.boundingRect(c)[3] >= min_v_line_height]
+            v_cluster_threshold = max(15, min(w // 80, 30))
             v_xs = self._cluster_values(
-                [cv2.boundingRect(c)[0] for c in good_v], threshold=60
+                [cv2.boundingRect(c)[0] for c in good_v], threshold=v_cluster_threshold
             )
 
             # Keep the result with the most horizontal lines (best contrast)
@@ -2152,6 +2281,32 @@ class UniversalBankParser(BaseParser):
                 best_v_xs = v_xs
 
         return best_h_ys, best_v_xs
+
+    @staticmethod
+    def _select_dense_row_band(row_ys: List[int]) -> List[int]:
+        """
+        Pick the densest horizontal-line run (transaction table band) from all
+        detected horizontal lines on the page.
+        """
+        if len(row_ys) < 6:
+            return row_ys
+
+        ys = sorted(set(row_ys))
+        runs: List[List[int]] = []
+        current = [ys[0]]
+        for y in ys[1:]:
+            # Statement rows are usually tightly packed; large jumps often
+            # separate header/account blocks from the transaction table.
+            if y - current[-1] <= 80:
+                current.append(y)
+            else:
+                runs.append(current)
+                current = [y]
+        runs.append(current)
+
+        best = max(runs, key=len) if runs else ys
+        # Avoid over-filtering on weak detections.
+        return best if len(best) >= 6 else ys
 
     @staticmethod
     def _remove_table_lines(gray_img):
@@ -2251,64 +2406,227 @@ class UniversalBankParser(BaseParser):
     ) -> List[List[str]]:
         """
         Extract a table from an image with visible grid lines.
-        Uses word positions mapped to the detected grid cells.
+        Uses row-band OCR + column anchoring to avoid full-page OCR block
+        collapse on scanned statements.
         """
         import cv2
         import numpy as np
         from PIL import Image as PILImage
 
         gray = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
+        img_h, img_w = gray.shape[:2]
+        col_xs = sorted(set(int(x) for x in col_xs if 0 <= int(x) < img_w))
+        if not col_xs:
+            return []
+        # Many statements have a rightmost balance column where the border can be
+        # faint/missed by line detection. Add image right edge as fallback boundary.
+        if (img_w - 1) - col_xs[-1] > 60:
+            col_xs = col_xs + [img_w - 1]
 
         # Remove table lines for cleaner OCR
         cleaned = self._remove_table_lines(gray)
-        cleaned_pil = PILImage.fromarray(cleaned)
-
-        # Get word positions using sparse text mode
-        words = self._get_ocr_words(cleaned_pil, psm=11, min_conf=10)
-        if not words:
-            # Retry with the original image
-            words = self._get_ocr_words(img_pil, psm=11, min_conf=10)
-        if not words:
-            return []
 
         num_rows = len(row_ys) - 1
         num_cols = len(col_xs) - 1
         if num_rows < 1 or num_cols < 1:
             return []
 
-        # Map each word to a grid cell by its center
-        cell_words: Dict[Tuple[int, int], List[Tuple[int, str]]] = {}
-        for w in words:
-            cx = w['left'] + w['width'] // 2
-            cy = w['top'] + w['height'] // 2
+        # Some statements expose only top/bottom horizontal borders while keeping
+        # strong vertical column lines. In that case, derive row boundaries from
+        # OCR line clustering inside the bordered table band.
+        if num_rows < 8:
+            return self._extract_bordered_table_with_ocr_row_clustering(
+                cleaned_gray=cleaned,
+                row_ys=row_ys,
+                col_xs=col_xs,
+            )
 
-            row_idx = None
-            for i in range(num_rows):
-                if row_ys[i] <= cy <= row_ys[i + 1]:
-                    row_idx = i
-                    break
-
-            col_idx = None
-            for i in range(num_cols):
-                if col_xs[i] <= cx <= col_xs[i + 1]:
-                    col_idx = i
-                    break
-
-            if row_idx is not None and col_idx is not None:
-                cell_words.setdefault((row_idx, col_idx), []).append(
-                    (w['left'], w['text'])
-                )
-
-        # Build table matrix
         matrix: List[List[str]] = []
         for r in range(num_rows):
+            y0 = max(0, row_ys[r] + 1)
+            y1 = min(img_h, row_ys[r + 1] - 1)
+            if y1 - y0 < 8:
+                continue
+
+            # OCR one row band at a time: much more stable than full-page word
+            # OCR for dense bordered statements.
+            row_crop = cleaned[y0:y1, :]
+            row_img = PILImage.fromarray(row_crop)
+            psm = 7 if (y1 - y0) < 28 else 6
+            row_words = self._get_ocr_words(row_img, psm=psm, min_conf=10)
+            if not row_words:
+                row_words = self._get_ocr_words(PILImage.fromarray(gray[y0:y1, :]), psm=psm, min_conf=10)
+
+            cells_words: Dict[int, List[Tuple[int, str]]] = {ci: [] for ci in range(num_cols)}
+            for w in row_words:
+                text = (w.get('text') or '').strip()
+                if not text:
+                    continue
+                cx = w['left'] + (w['width'] / 2.0)
+                for c in range(num_cols):
+                    if col_xs[c] <= cx <= col_xs[c + 1]:
+                        cells_words[c].append((w['left'], text))
+                        break
+
             row_cells: List[str] = []
             for c in range(num_cols):
-                w_list = cell_words.get((r, c), [])
-                # Sort words left-to-right within a cell
-                w_list.sort(key=lambda x: x[0])
-                row_cells.append(' '.join(t for _, t in w_list))
+                w_list = sorted(cells_words.get(c, []), key=lambda x: x[0])
+                row_cells.append(" ".join(t for _, t in w_list).strip())
+
+            # If row-band OCR is weak for a row, OCR each cell region for that row only.
+            populated = sum(1 for cell in row_cells if cell.strip())
+            if populated <= 1:
+                fallback_cells: List[str] = []
+                for c in range(num_cols):
+                    x0 = max(0, col_xs[c] + 2)
+                    x1 = min(img_w, col_xs[c + 1] - 2)
+                    if x1 - x0 < 6:
+                        fallback_cells.append("")
+                        continue
+                    cell_crop = cleaned[y0:y1, x0:x1]
+                    cell_img = PILImage.fromarray(cell_crop)
+                    cell_psm = 7 if (x1 - x0) < 140 else 6
+                    words = self._get_ocr_words(cell_img, psm=cell_psm, min_conf=10)
+                    if words:
+                        words = sorted(words, key=lambda w: (w["top"], w["left"]))
+                        text = " ".join((w.get("text") or "").strip() for w in words).strip()
+                    else:
+                        text = ""
+                    fallback_cells.append(text)
+                if sum(1 for cell in fallback_cells if cell.strip()) > populated:
+                    row_cells = fallback_cells
+
             matrix.append(row_cells)
+
+        return matrix
+
+    def _extract_bordered_table_with_ocr_row_clustering(
+        self,
+        cleaned_gray,
+        row_ys: List[int],
+        col_xs: List[int],
+    ) -> List[List[str]]:
+        """
+        Build table rows by clustering OCR words by Y-position within the
+        bordered table area, while assigning words to fixed vertical columns.
+        """
+        from PIL import Image as PILImage
+
+        img_h, img_w = cleaned_gray.shape[:2]
+        if len(col_xs) < 2:
+            return []
+
+        ys = sorted(set(row_ys))
+        table_top, table_bottom = 0, img_h
+        if len(ys) >= 2:
+            widest_gap = max(
+                ((ys[i + 1] - ys[i], ys[i], ys[i + 1]) for i in range(len(ys) - 1)),
+                key=lambda t: t[0],
+            )
+            gap_h, gap_top, gap_bottom = widest_gap
+            if gap_h >= max(120, int(img_h * 0.15)):
+                table_top, table_bottom = gap_top, gap_bottom
+            else:
+                table_top, table_bottom = ys[0], ys[-1]
+        table_top = max(0, table_top - 40)  # capture header row just above first data row
+        table_bottom = min(img_h, table_bottom + 5)
+
+        words = self._get_ocr_words(PILImage.fromarray(cleaned_gray), psm=11, min_conf=10)
+        if not words:
+            return []
+
+        col_min = max(0, min(col_xs) - 10)
+        col_max = min(img_w, max(col_xs) + 10)
+        table_words = []
+        for w in words:
+            cx = w["left"] + (w["width"] / 2.0)
+            cy = w["top"] + (w["height"] / 2.0)
+            if table_top <= cy <= table_bottom and col_min <= cx <= col_max:
+                table_words.append(w)
+
+        if not table_words:
+            return []
+
+        heights = sorted(w["height"] for w in table_words if w["height"] > 0)
+        median_h = heights[len(heights) // 2] if heights else 12
+        row_tolerance = max(8, int(median_h * 0.9))
+
+        sorted_words = sorted(table_words, key=lambda w: (w["top"], w["left"]))
+        grouped_rows: List[List[Dict[str, Any]]] = []
+        current_row: List[Dict[str, Any]] = []
+        current_y: Optional[float] = None
+
+        for w in sorted_words:
+            cy = w["top"] + (w["height"] / 2.0)
+            if current_y is None or abs(cy - current_y) <= row_tolerance:
+                current_row.append(w)
+                if current_y is None:
+                    current_y = cy
+                else:
+                    current_y = (current_y + cy) / 2.0
+            else:
+                grouped_rows.append(current_row)
+                current_row = [w]
+                current_y = cy
+        if current_row:
+            grouped_rows.append(current_row)
+
+        num_cols = len(col_xs) - 1
+        matrix: List[List[str]] = []
+        for row_words in grouped_rows:
+            cells: List[List[Tuple[int, str]]] = [[] for _ in range(num_cols)]
+            for w in sorted(row_words, key=lambda x: x["left"]):
+                text = (w.get("text") or "").strip()
+                if not text:
+                    continue
+                cx = w["left"] + (w["width"] / 2.0)
+                col_idx = None
+                for ci in range(num_cols):
+                    if col_xs[ci] <= cx <= col_xs[ci + 1]:
+                        col_idx = ci
+                        break
+                if col_idx is None:
+                    if cx < col_xs[0]:
+                        col_idx = 0
+                    elif cx > col_xs[-1]:
+                        col_idx = num_cols - 1
+                if col_idx is not None:
+                    cells[col_idx].append((w["left"], text))
+
+            row_cells: List[str] = []
+            for cell_words in cells:
+                cell_words.sort(key=lambda x: x[0])
+                row_cells.append(" ".join(text for _, text in cell_words).strip())
+            if any(c for c in row_cells):
+                matrix.append(row_cells)
+
+        if not matrix:
+            return matrix
+
+        # Drop non-table preamble rows and keep optional header row if present.
+        date_token_re = re.compile(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b')
+        amount_token_re = re.compile(r'\b\d{1,3}(?:,\d{2,3})*(?:\.\d{2})\b')
+        header_kws = (
+            "date", "txn", "value", "description", "narration", "particular",
+            "reference", "debit", "credit", "withdraw", "deposit", "balance",
+        )
+
+        start_idx = 0
+        for i, row in enumerate(matrix):
+            row_joined = " ".join(c.lower() for c in row if c).strip()
+            date_hits = sum(len(date_token_re.findall(c or "")) for c in row)
+            amt_hits = sum(len(amount_token_re.findall(c or "")) for c in row)
+            if date_hits >= 1 and amt_hits >= 1:
+                if i > 0:
+                    prev_joined = " ".join(c.lower() for c in matrix[i - 1] if c).strip()
+                    if any(kw in prev_joined for kw in header_kws):
+                        start_idx = i - 1
+                    else:
+                        start_idx = i
+                else:
+                    start_idx = i
+                break
+        matrix = matrix[start_idx:]
 
         return matrix
 
@@ -2450,6 +2768,7 @@ class UniversalBankParser(BaseParser):
 
         # Try bordered table first
         row_ys, col_xs = self._detect_table_grid(gray)
+        row_ys = self._select_dense_row_band(row_ys)
 
         min_rows_for_table = 3
         min_cols_for_table = 2
@@ -2475,16 +2794,20 @@ class UniversalBankParser(BaseParser):
             if matrix and len(matrix) >= 2:
                 # Filter out completely empty rows
                 matrix = [row for row in matrix if any(cell.strip() for cell in row)]
-                if matrix:
+                if matrix and not self._looks_like_blobbed_rows(matrix):
                     return matrix
+                if matrix:
+                    print("      ⚠️ Bordered grid output looks blobbed; trying borderless fallback...")
 
         # Fall back to borderless extraction
         print("      No grid lines; trying borderless spatial extraction...")
         matrix = self._extract_table_from_image_borderless(img_pil)
         if matrix and len(matrix) >= 2:
             matrix = [row for row in matrix if any(cell.strip() for cell in row)]
-            if matrix:
+            if matrix and not self._looks_like_blobbed_rows(matrix):
                 return matrix
+            if matrix:
+                print("      ⚠️ Borderless output looks blobbed; discarding page result.")
 
         return None
 
@@ -2518,6 +2841,47 @@ class UniversalBankParser(BaseParser):
             return first_row, rows[1:]
 
         return None, rows
+
+    def _looks_like_blobbed_rows(self, rows: List[List[str]]) -> bool:
+        """
+        Detect low-quality extraction where a row contains page-level text blobs
+        (e.g., many dates and amounts concatenated into a single cell).
+        """
+        if not rows:
+            return False
+
+        date_token_re = re.compile(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b')
+        amount_token_re = re.compile(r'\b\d{1,3}(?:,\d{2,3})*(?:\.\d{2})\b')
+
+        sample = rows[: min(80, len(rows))]
+        blob_like = 0
+        sparse_rows = 0
+
+        for row in sample:
+            non_empty = [c for c in row if c and c.strip()]
+            if len(non_empty) <= 1:
+                sparse_rows += 1
+
+            multi_date_cells = 0
+            multi_amt_cells = 0
+            long_cells = 0
+            for cell in non_empty:
+                txt = str(cell).strip()
+                if len(txt) > 140:
+                    long_cells += 1
+                if len(date_token_re.findall(txt)) >= 3:
+                    multi_date_cells += 1
+                if len(amount_token_re.findall(txt)) >= 4:
+                    multi_amt_cells += 1
+
+            if multi_date_cells >= 1 and (multi_amt_cells >= 1 or long_cells >= 1):
+                blob_like += 1
+
+        sample_len = max(1, len(sample))
+        blob_ratio = blob_like / sample_len
+        sparse_ratio = sparse_rows / sample_len
+
+        return blob_ratio >= 0.20 or (blob_ratio >= 0.10 and sparse_ratio >= 0.40)
 
     def _fallback_regex_parse(
         self, 

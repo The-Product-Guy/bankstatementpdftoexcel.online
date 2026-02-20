@@ -31,6 +31,8 @@ Last updated: 2026-02-19
 - [x] Route only low-confidence page segments to fallback scope (avoid full-document fallback when confidence is weak).
 - [ ] Add max-token and timeout guards per LLM request.
 - [x] Persist row-level confidence reasons for auditability.
+- [x] Add generic bordered-table extraction path (grid + OCR row clustering) for image PDFs.
+- [x] Add blob-output rejection gate so page-level concatenation does not pass as valid extraction.
 
 ## Phase 5 - Release Gates (Planned)
 - [ ] Define acceptance gates for true extraction accuracy by dataset.
@@ -51,3 +53,5 @@ Last updated: 2026-02-19
 - [x] Add row/cell confidence fields and low-confidence ratio summary to extraction output.
 - [x] Add beta banner and explicit redaction + retention messaging in feedback UI.
 - [x] Add feedback shared-PDF retention cleanup sweep (`FEEDBACK_RETENTION_DAYS`).
+- [x] Add right-edge bordered-column fallback to retain balance column when final vertical line is faint.
+- [x] Improve mixed-column parsing (date+description and debit/credit in merged amount cell).
