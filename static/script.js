@@ -291,6 +291,13 @@ function hideProgressModal() {
 
 // Reset progress steps
 function resetProgressSteps() {
+    // Reset progress bar to initial state
+    progressFill.style.width = '0%';
+    progressInfo.textContent = 'Starting conversion...';
+    if (progressBar) {
+        progressBar.setAttribute('aria-valuenow', '0');
+    }
+
     const steps = document.querySelectorAll('.progress-step');
     steps.forEach((step, index) => {
         step.classList.remove('active', 'completed');

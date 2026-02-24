@@ -12,6 +12,7 @@ while producing the same output format (raw_table dict with columns + rows).
 import os
 import gc
 import logging
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from collections import OrderedDict
 
@@ -159,8 +160,8 @@ class Img2TableExtractor:
             if not page_tables:
                 continue
 
-            # Pick the largest table on this page (most rows = most likely the transaction table)
-            best_table = max(page_tables, key=lambda t: len(t.content) if t.content else 0)
+            # Pick the best table: prefer transaction-like content over mere size
+            best_table = self._pick_best_table(page_tables, page_idx)
 
             if not best_table.content or len(best_table.content) == 0:
                 continue
@@ -240,6 +241,74 @@ class Img2TableExtractor:
             "raw_table": raw_table,
             "page_count": page_count,
         }
+
+    @staticmethod
+    def _score_table_transaction_content(table) -> int:
+        """
+        Score a table by how much it looks like transaction data.
+        Returns a count of rows containing both a date-like and an amount-like cell.
+        Tables with financial data (dates + amounts) score higher than
+        account-info blocks (just text).
+        """
+        date_re = re.compile(
+            r'\d{4}[/-]\d{2}[/-]\d{2}'
+            r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+        )
+        amount_re = re.compile(
+            r'\d{1,3}(?:[,\.]\d{2,3})+(?:\.\d{2})?'
+            r'|\d+\.\d{2}'
+        )
+
+        try:
+            df = table.df
+        except Exception:
+            return 0
+        if df is None or df.empty:
+            return 0
+
+        score = 0
+        for _, row in df.iterrows():
+            cells = [str(v) for v in row.tolist() if v is not None]
+            has_date = any(date_re.search(c) for c in cells)
+            has_amount = any(amount_re.search(c) for c in cells)
+            if has_date and has_amount:
+                score += 1
+        return score
+
+    def _pick_best_table(self, page_tables, page_idx: int):
+        """
+        Pick the best table from a page. Prefers tables with transaction-like
+        content (dates + amounts) over tables that are merely large (e.g.,
+        account-info blocks on page 1).
+        Falls back to largest table if no table has transaction content.
+        """
+        if len(page_tables) == 1:
+            return page_tables[0]
+
+        # Score each table by transaction content
+        scored = []
+        for t in page_tables:
+            row_count = len(t.content) if t.content else 0
+            tx_score = self._score_table_transaction_content(t)
+            scored.append((tx_score, row_count, t))
+
+        # Sort: highest transaction score first, then by row count as tiebreaker
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+        best_tx_score, best_row_count, best = scored[0]
+        if best_tx_score > 0:
+            logger.debug(
+                "Page %d: picked table with %d transaction rows (of %d total) over %d candidate tables",
+                page_idx, best_tx_score, best_row_count, len(page_tables),
+            )
+        else:
+            # No transaction-like content found; fall back to largest table
+            best = max(page_tables, key=lambda t: len(t.content) if t.content else 0)
+            logger.debug(
+                "Page %d: no transaction content detected; falling back to largest table (%d rows)",
+                page_idx, len(best.content) if best.content else 0,
+            )
+        return best
 
     @staticmethod
     def _row_fingerprint(row: List[str]) -> str:

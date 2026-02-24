@@ -1675,6 +1675,12 @@ class UniversalBankParser(BaseParser):
             if tx:
                 transactions.append(tx)
 
+        if not transactions:
+            logger.debug(
+                "Page %s: 0 transactions from %d data rows (header_idx=%s, col_map=%s)",
+                page_ref, len(data_rows), header_idx, col_map,
+            )
+
         return transactions
 
     def _find_header_row(self, rows: List[List[str]]) -> Optional[int]:
@@ -1813,7 +1819,7 @@ class UniversalBankParser(BaseParser):
         elif max(date_scores) > 0:
             mapping['date'] = int(date_scores.index(max(date_scores)))
 
-        # Use last numeric columns for amounts
+        # Identify amount columns (sorted by frequency, descending)
         amount_cols = sorted(
             range(col_count),
             key=lambda i: amount_scores[i],
@@ -1822,11 +1828,22 @@ class UniversalBankParser(BaseParser):
         amount_cols = [i for i in amount_cols if amount_scores[i] > 0]
 
         if amount_cols:
+            # Balance = most frequently filled amount column
+            # (balance is present on every transaction row)
             mapping['balance'] = amount_cols[0]
-            if len(amount_cols) > 1:
-                mapping['credit'] = amount_cols[1]
-            if len(amount_cols) > 2:
-                mapping['debit'] = amount_cols[2]
+            balance_col = amount_cols[0]
+
+            # For remaining amount columns, use POSITION (left-to-right), not frequency.
+            # Convention for Indian bank statements: Debit | Credit | Balance
+            # So: leftmost remaining = debit, rightmost remaining = credit
+            remaining = sorted(c for c in amount_cols[1:] if c != balance_col)
+
+            if len(remaining) == 1:
+                # Single non-balance amount column
+                mapping['credit'] = remaining[0]
+            elif len(remaining) >= 2:
+                mapping['debit'] = remaining[0]
+                mapping['credit'] = remaining[-1]
 
         if max(reference_scores) > 0:
             mapping['reference'] = int(reference_scores.index(max(reference_scores)))
