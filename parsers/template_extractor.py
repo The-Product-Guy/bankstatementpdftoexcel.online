@@ -14,9 +14,38 @@ Typical flow:
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Anthropic client singleton (mirrors get_openai_client in llm_table_extractor)
+# ---------------------------------------------------------------------------
+
+_anthropic_client = None
+
+
+def _get_anthropic_client():
+    """Get or create Anthropic client (lazy singleton)."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        try:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY environment variable not set. "
+                    "Set it with: export ANTHROPIC_API_KEY='your-key'"
+                )
+            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+        except ImportError:
+            raise ImportError("anthropic not installed. Install with: pip install anthropic")
+    return _anthropic_client
 
 
 # ---------------------------------------------------------------------------
@@ -175,14 +204,17 @@ class TemplateDetector:
         sample_rows: List[List[str]],
         bank_profile=None,
         first_page_text: str = "",
+        first_pages_text: str = "",
     ) -> Optional[DocumentTemplate]:
         """Try heuristic first, fall back to LLM."""
         tpl = self._try_heuristic(headers, sample_rows, bank_profile)
         if tpl and tpl.detection_confidence >= 0.6:
+            logger.debug("Heuristic template detection succeeded (confidence=%.2f)", tpl.detection_confidence)
             return tpl
 
         # LLM fallback
-        llm_tpl = self._detect_via_llm(headers, sample_rows)
+        logger.debug("Heuristic insufficient; trying LLM template detection")
+        llm_tpl = self._detect_via_llm(headers, sample_rows, page_text=first_pages_text)
         if llm_tpl:
             return llm_tpl
 
@@ -298,6 +330,9 @@ HEADERS: {headers}
 SAMPLE ROWS (first 3-5 data rows):
 {formatted_rows}
 
+FULL TEXT FROM FIRST PAGES OF THE DOCUMENT:
+{page_text}
+
 Return a JSON object:
 {{
   "columns": [
@@ -329,11 +364,12 @@ Return ONLY the JSON. No markdown fences, no explanation."""
         self,
         headers: List[str],
         sample_rows: List[List[str]],
+        page_text: str = "",
     ) -> Optional[DocumentTemplate]:
         try:
-            from .llm_table_extractor import get_openai_client
-            client = get_openai_client()
-        except Exception:
+            client = _get_anthropic_client()
+        except Exception as exc:
+            logger.warning("Anthropic client unavailable: %s", exc)
             return None
 
         formatted = "\n".join(
@@ -343,17 +379,24 @@ Return ONLY the JSON. No markdown fences, no explanation."""
         prompt = self._LLM_PROMPT.format(
             headers=" | ".join(headers),
             formatted_rows=formatted,
+            page_text=page_text[:4000] if page_text else "(not available)",
         )
 
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
+            logger.debug("Starting Claude Haiku template detection API call")
+            _t0 = time.monotonic()
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
                 max_tokens=600,
+                messages=[{"role": "user", "content": prompt}],
             )
-            raw = response.choices[0].message.content.strip()
-            tokens_used = getattr(response.usage, "total_tokens", 0) or 0
+            elapsed = time.monotonic() - _t0
+            raw = response.content[0].text.strip()
+            tokens_used = (response.usage.input_tokens + response.usage.output_tokens)
+            logger.debug(
+                "Claude Haiku API call completed in %.2fs (%d tokens)",
+                elapsed, tokens_used
+            )
 
             # Strip markdown fences if present
             if raw.startswith("```"):
@@ -361,7 +404,8 @@ Return ONLY the JSON. No markdown fences, no explanation."""
                 raw = re.sub(r"\s*```$", "", raw)
 
             data = json.loads(raw)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Claude Haiku template detection failed: %s", exc)
             return None
 
         return self._parse_llm_response(data, headers, tokens_used, sample_rows)

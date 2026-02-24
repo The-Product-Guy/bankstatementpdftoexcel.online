@@ -3,10 +3,13 @@
 Base Parser Class
 Common utilities for all bank statement parsers
 """
+import logging
 import os
 import re
 from datetime import datetime
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 
 
 class BaseParser(ABC):
@@ -134,10 +137,12 @@ class BaseParser(ABC):
     
     def log_parsing_stats(self, total_lines_processed, transactions_found):
         """Log parsing statistics"""
-        print(f"  📊 Parsing Statistics:")
-        print(f"    • Total lines processed: {total_lines_processed:,}")
-        print(f"    • Transactions found: {transactions_found:,}")
-        print(f"    • Success rate: {(transactions_found/total_lines_processed*100):.2f}%" if total_lines_processed > 0 else "    • Success rate: 0%")
+        logger.info("Parsing Statistics: lines_processed=%s, transactions_found=%s",
+                     f"{total_lines_processed:,}", f"{transactions_found:,}")
+        if total_lines_processed > 0:
+            logger.info("Success rate: %.2f%%", transactions_found / total_lines_processed * 100)
+        else:
+            logger.info("Success rate: 0%%")
     
     def emit_progress(self, current_page, total_pages, status="Processing", stage=None):
         """Emit progress update if callback is available"""

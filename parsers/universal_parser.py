@@ -6,9 +6,11 @@ Works with any bank statement format globally by combining:
 2. OpenAI Vision for intelligent table understanding
 3. Fallback to legacy parsers for known formats
 """
+import logging
 import os
 import re
 import gc
+import time
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass
 from PIL import Image
@@ -16,6 +18,8 @@ from datetime import datetime
 
 from .base_parser import BaseParser
 from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
+
+logger = logging.getLogger(__name__)
 
 
 class UnsupportedLanguageError(ValueError):
@@ -224,7 +228,7 @@ class UniversalBankParser(BaseParser):
                     use_table_structure=self.config.use_table_structure
                 )
             except ImportError:
-                print("  ⚠️ PaddleOCR not available, falling back to Tesseract")
+                logger.warning("PaddleOCR not available, falling back to Tesseract")
                 self._paddle_unavailable = True
         return self._paddle_processor
     
@@ -241,7 +245,7 @@ class UniversalBankParser(BaseParser):
                 from .llm_table_extractor import LLMTableExtractor
                 self._llm_extractor = LLMTableExtractor(model=self.config.llm_model)
             except Exception as e:
-                print(f"  ⚠️ LLM extractor not available: {e}")
+                logger.warning("LLM extractor not available: %s", e)
         return self._llm_extractor
     
     def parse(
@@ -263,7 +267,6 @@ class UniversalBankParser(BaseParser):
         Returns:
             List of transaction dictionaries
         """
-        import time
         start_time = time.time()
         
         self.validate_pdf_file(pdf_path)
@@ -276,22 +279,32 @@ class UniversalBankParser(BaseParser):
         self.source_filename = original_filename
         self._profile_announced = False
         
-        print(f"  🌐 Universal Parser processing: {original_filename}")
-        
+        logger.info("Universal Parser processing: %s", original_filename)
+
         # Detect PDF type
         pdf_type = self.detect_pdf_type(pdf_path)
-        print(f"  📄 Detected {pdf_type}-based PDF")
-        
+        logger.info("Detected %s-based PDF", pdf_type)
+
         # Get page count and validate against limits
         import pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
             total_pages = len(pdf.pages)
             first_page_text = ""
+            second_page_text = ""
             try:
                 if total_pages > 0:
                     first_page_text = (pdf.pages[0].extract_text() or "")
+                if total_pages > 1:
+                    second_page_text = (pdf.pages[1].extract_text() or "")
             except Exception:
-                first_page_text = ""
+                first_page_text = first_page_text or ""
+
+        # Build combined first-pages text for template detection
+        # (page 1 may be a cover page without table headers)
+        first_pages_text = first_page_text
+        if second_page_text:
+            first_pages_text = first_page_text + "\n\n--- Page 2 ---\n\n" + second_page_text
+        self._first_pages_text = first_pages_text
 
         self._maybe_detect_profile(first_page_text=first_page_text)
 
@@ -308,9 +321,9 @@ class UniversalBankParser(BaseParser):
             )
         
         if pages_to_process == total_pages:
-            print(f"  📑 Processing {pages_to_process} pages")
+            logger.info("Processing %d pages", pages_to_process)
         else:
-            print(f"  📑 Processing pages {start_page}-{end_page} ({pages_to_process} pages)")
+            logger.info("Processing pages %d-%d (%d pages)", start_page, end_page, pages_to_process)
         
         total_tokens = 0
         ocr_method = "paddleocr" if self.paddle_processor else "tesseract"
@@ -360,14 +373,15 @@ class UniversalBankParser(BaseParser):
         if self.quality_report and self.row_confidence_summary:
             self.quality_report.update(self.row_confidence_summary)
         
-        print(f"  🎉 Extracted {len(self.transactions)} transactions in {processing_time:.1f}s")
+        logger.info("Extracted %d transactions in %.1fs", len(self.transactions), processing_time)
         if self.quality_report:
-            print(
-                f"  📏 Quality score: {self.quality_report.get('accuracy_proxy_pct', 0.0):.1f}% "
-                f"(balance checks: {self.quality_report.get('balance_consistency_pct', 0.0):.1f}%)"
+            logger.info(
+                "Quality score: %.1f%% (balance checks: %.1f%%)",
+                self.quality_report.get('accuracy_proxy_pct', 0.0),
+                self.quality_report.get('balance_consistency_pct', 0.0),
             )
         if self.extraction_metadata.confidence != "good":
-            print(f"  ⚠️ Quality: {self.extraction_metadata.confidence} — {self.extraction_metadata.message}")
+            logger.warning("Quality: %s — %s", self.extraction_metadata.confidence, self.extraction_metadata.message)
         
         return self.transactions
 
@@ -414,7 +428,7 @@ class UniversalBankParser(BaseParser):
         self.active_profile = profile
         self.bank_name = profile.display_name
         if not self._profile_announced:
-            print(f"  🏷️ Bank profile matched: {profile.display_name}")
+            logger.info("Bank profile matched: %s", profile.display_name)
             self._profile_announced = True
 
     @staticmethod
@@ -705,7 +719,10 @@ class UniversalBankParser(BaseParser):
                     page_texts.append((actual_page_num, page_text))
 
                 try:
+                    logger.debug("Starting extract_tables for page %d", actual_page_num)
+                    _t0 = time.monotonic()
                     tables = page.extract_tables(self._table_settings())
+                    logger.debug("extract_tables page %d completed in %.2fs", actual_page_num, time.monotonic() - _t0)
                 except Exception:
                     tables = []
 
@@ -719,7 +736,7 @@ class UniversalBankParser(BaseParser):
                     )
         
         total_chars = sum(len(text) for _, text in page_texts)
-        print(f"  📄 Extracted {total_chars:,} characters from {len(page_texts)} pages")
+        logger.info("Extracted %s characters from %d pages", f"{total_chars:,}", len(page_texts))
         if page_texts:
             sample_text = "\n".join(text for _, text in page_texts[:3])
             self._enforce_english_only(sample_text, "text extraction sample")
@@ -730,15 +747,15 @@ class UniversalBankParser(BaseParser):
                 if self._transactions_quality_ok(table_transactions):
                     low_ratio = self._low_confidence_ratio(table_transactions)
                     if low_ratio <= self.config.low_conf_ratio_for_fallback:
-                        print(f"  📊 Table extraction found {len(table_transactions)} transactions; skipping LLM.")
+                        logger.info("Table extraction found %d transactions; skipping LLM.", len(table_transactions))
                         self.transactions.extend(table_transactions)
                         return 0
-                    print(
-                        f"  ⚠️ Table extraction low-confidence ratio {low_ratio:.1%} "
-                        f"exceeds threshold {self.config.low_conf_ratio_for_fallback:.1%}; "
-                        "trying targeted fallback path."
+                    logger.warning(
+                        "Table extraction low-confidence ratio %.1f%% exceeds threshold %.1f%%; "
+                        "trying targeted fallback path.",
+                        low_ratio * 100, self.config.low_conf_ratio_for_fallback * 100,
                     )
-                print("  ⚠️ Table extraction quality low, falling back to layout/LLM.")
+                logger.warning("Table extraction quality low, falling back to layout/LLM.")
 
         layout_transactions, raw_table = self._extract_layout_transactions(
             pdf_path,
@@ -749,13 +766,13 @@ class UniversalBankParser(BaseParser):
         if layout_transactions and self._transactions_quality_ok(layout_transactions):
             low_ratio = self._low_confidence_ratio(layout_transactions)
             if low_ratio <= self.config.low_conf_ratio_for_fallback or not self.llm_extractor:
-                print(f"  📐 Layout extraction found {len(layout_transactions)} transactions; skipping LLM.")
+                logger.info("Layout extraction found %d transactions; skipping LLM.", len(layout_transactions))
                 self.transactions.extend(layout_transactions)
                 self.raw_table = raw_table
                 return 0
-            print(
-                f"  ⚠️ Layout low-confidence ratio {low_ratio:.1%}; "
-                "escalating only low-confidence content to fallback."
+            logger.warning(
+                "Layout low-confidence ratio %.1f%%; escalating only low-confidence content to fallback.",
+                low_ratio * 100,
             )
             low_conf_pages = set()
             for tx in layout_transactions:
@@ -775,6 +792,9 @@ class UniversalBankParser(BaseParser):
 
         # --- Template-based extraction (1 LLM call max) ---
         if self.config.use_template:
+            # Build first_pages_text from extracted page texts
+            _fp_texts = [t for _, t in page_texts[:2]]
+            _first_pages_text = ("\n\n--- Page 2 ---\n\n".join(_fp_texts)) if _fp_texts else ""
             template_result = self._try_template_extraction(
                 page_texts=page_texts,
                 raw_table=raw_table if layout_transactions else None,
@@ -782,6 +802,7 @@ class UniversalBankParser(BaseParser):
                 pdf_path=pdf_path,
                 page_start=page_start,
                 page_end=page_end,
+                first_pages_text=_first_pages_text,
             )
             if template_result is not None:
                 template_tokens, template_txns = template_result
@@ -800,9 +821,9 @@ class UniversalBankParser(BaseParser):
             first_page_text = ""
         
         if first_page_text:
-            print("  🔍 Detecting column structure from first page...")
+            logger.info("Detecting column structure from first page...")
             column_mapping = self.llm_extractor.detect_columns(first_page_text)
-            print(f"  📊 Detected columns: {', '.join(column_mapping.columns)}")
+            logger.info("Detected columns: %s", ", ".join(column_mapping.columns))
         
         # Build chunks list
         fallback_page_texts = page_texts
@@ -810,7 +831,7 @@ class UniversalBankParser(BaseParser):
             scoped = [(p, t) for (p, t) in page_texts if p in low_conf_pages]
             if scoped:
                 fallback_page_texts = scoped
-                print(f"  🎯 Targeted fallback scope: {len(fallback_page_texts)} low-confidence pages")
+                logger.info("Targeted fallback scope: %d low-confidence pages", len(fallback_page_texts))
 
         chunks = self._build_chunks(
             page_texts=fallback_page_texts,
@@ -821,7 +842,7 @@ class UniversalBankParser(BaseParser):
         )
         num_chunks = len(chunks)
         
-        print(f"  📦 Processing {num_chunks} chunks in parallel ({chunk_mode} chunking)...")
+        logger.info("Processing %d chunks in parallel (%s chunking)...", num_chunks, chunk_mode)
         self.emit_progress(
             0, num_chunks,
             "LLM starting...",
@@ -846,22 +867,25 @@ class UniversalBankParser(BaseParser):
             
             for future in as_completed(futures):
                 completed += 1
+                chunk_idx = futures[future]
                 try:
-                    chunk_idx, page_range, result = future.result()
+                    chunk_idx, page_range, result = future.result(timeout=120)
                     results_by_idx[chunk_idx] = (page_range, result)
-                    
+
                     if result.success:
-                        print(f"    ✅ Chunk {chunk_idx + 1}/{num_chunks}: {len(result.transactions)} transactions ({result.tokens_used} tokens)")
+                        logger.info("Chunk %d/%d: %d transactions (%d tokens)", chunk_idx + 1, num_chunks, len(result.transactions), result.tokens_used)
                     else:
-                        print(f"    ⚠️ Chunk {chunk_idx + 1}/{num_chunks} failed: {result.error_message}")
-                    
+                        logger.warning("Chunk %d/%d failed: %s", chunk_idx + 1, num_chunks, result.error_message)
+
                     self.emit_progress(
                         completed, num_chunks,
                         f"LLM extracting chunk {completed}/{num_chunks}",
                         stage="llm_text"
                     )
+                except TimeoutError:
+                    logger.error("LLM chunk %d timed out after 120s", chunk_idx)
                 except Exception as e:
-                    print(f"    ❌ Chunk error: {e}")
+                    logger.error("Chunk error: %s", e)
         
         # Collect results in order
         for chunk_idx in range(num_chunks):
@@ -1317,6 +1341,7 @@ class UniversalBankParser(BaseParser):
         pdf_path: str,
         page_start: int = 1,
         page_end: Optional[int] = None,
+        first_pages_text: str = "",
     ) -> Optional[Tuple[int, List[Dict]]]:
         """
         Attempt template-based extraction:
@@ -1334,6 +1359,8 @@ class UniversalBankParser(BaseParser):
                 return None
             try:
                 import pdfplumber
+                logger.debug("Starting pdfplumber open for template extraction")
+                _t0 = time.monotonic()
                 with pdfplumber.open(pdf_path) as pdf:
                     start_pg = max(0, page_start - 1)
                     end_pg = page_end if page_end else len(pdf.pages)
@@ -1353,6 +1380,7 @@ class UniversalBankParser(BaseParser):
                         "columns": best_table[0] if best_table else [],
                         "rows": best_table[1:] if len(best_table) > 1 else [],
                     }
+                logger.debug("pdfplumber template extraction completed in %.2fs", time.monotonic() - _t0)
             except Exception:
                 return None
 
@@ -1405,15 +1433,16 @@ class UniversalBankParser(BaseParser):
             headers=headers,
             sample_rows=sample_rows,
             bank_profile=self.active_profile,
+            first_pages_text=first_pages_text,
         )
 
         if template is None:
             return None
 
         if template.detection_confidence < self.config.template_confidence_threshold:
-            print(
-                f"  ⚠️ Template confidence {template.detection_confidence:.2f} "
-                f"< threshold {self.config.template_confidence_threshold}; skipping template."
+            logger.warning(
+                "Template confidence %.2f < threshold %.2f; skipping template.",
+                template.detection_confidence, self.config.template_confidence_threshold,
             )
             return None
 
@@ -1421,11 +1450,10 @@ class UniversalBankParser(BaseParser):
         if "date" not in col_map:
             return None
 
-        print(
-            f"  🧩 Template detected ({template.detection_method}): "
-            f"confidence={template.detection_confidence:.2f}, "
-            f"cols={list(col_map.keys())}, "
-            f"tokens={template.llm_tokens_used}"
+        logger.info(
+            "Template detected (%s): confidence=%.2f, cols=%s, tokens=%d",
+            template.detection_method, template.detection_confidence,
+            list(col_map.keys()), template.llm_tokens_used,
         )
 
         # --- Apply template to all rows ---
@@ -1453,10 +1481,9 @@ class UniversalBankParser(BaseParser):
                 transactions.append(tx)
 
         if transactions:
-            print(
-                f"  ✅ Template extraction produced {len(transactions)} transactions "
-                f"from {len(data_rows)} rows ({template.detection_method}, "
-                f"{template.llm_tokens_used} tokens)"
+            logger.info(
+                "Template extraction produced %d transactions from %d rows (%s, %d tokens)",
+                len(transactions), len(data_rows), template.detection_method, template.llm_tokens_used,
             )
 
         return (template.llm_tokens_used, transactions)
@@ -2018,12 +2045,12 @@ class UniversalBankParser(BaseParser):
                             source_file=source_file,
                             page_ref="Image_Table"
                         )
-                        print(f"  📊 img2table extraction: {num_rows} rows, {num_cols} columns")
+                        logger.info("img2table extraction: %d rows, %d columns", num_rows, num_cols)
                         if derived:
-                            print(f"  🧩 Derived {derived} normalized transactions from img2table output")
+                            logger.info("Derived %d normalized transactions from img2table output", derived)
                         return 0
                     else:
-                        print(f"  ⚠️ img2table found only {num_cols} columns; trying fallbacks")
+                        logger.warning("img2table found only %d columns; trying fallbacks", num_cols)
 
             # Try template on img2table raw_table that had low column count
             if self.config.use_template and img2table_result:
@@ -2034,6 +2061,7 @@ class UniversalBankParser(BaseParser):
                         raw_table=raw_table,
                         source_file=source_file,
                         pdf_path=pdf_path,
+                        first_pages_text=getattr(self, "_first_pages_text", ""),
                     )
                     if template_result is not None:
                         _, template_txns = template_result
@@ -2041,11 +2069,11 @@ class UniversalBankParser(BaseParser):
                             self.transactions.extend(template_txns)
                             return 0
         else:
-            print("  ℹ️ img2table disabled via USE_IMG2TABLE=false; using spatial/OCR fallback pipeline")
+            logger.info("img2table disabled via USE_IMG2TABLE=false; using spatial/OCR fallback pipeline")
 
         # ===== Priority 2: Legacy spatial extraction fallback =====
         # Falls back to our custom OpenCV spatial extraction + per-page OCR
-        print("  🔄 img2table did not produce usable results; trying legacy spatial extraction...")
+        logger.info("img2table did not produce usable results; trying legacy spatial extraction...")
         legacy_result = self._try_legacy_spatial_extraction(
             pdf_path,
             source_file,
@@ -2058,7 +2086,7 @@ class UniversalBankParser(BaseParser):
 
         # ===== Priority 3: Full-text OCR + regex fallback =====
         # If both img2table and spatial failed, do a full OCR pass and try regex
-        print("  🔄 Spatial extraction failed; collecting OCR text for regex fallback...")
+        logger.info("Spatial extraction failed; collecting OCR text for regex fallback...")
         total_tokens = self._try_ocr_text_fallback(
             pdf_path,
             source_file,
@@ -2083,7 +2111,7 @@ class UniversalBankParser(BaseParser):
         """
         try:
             if self.config.use_paddleocr and not self.paddle_processor:
-                print("  ⚠️ Skipping img2table: PaddleOCR backend unavailable in runtime")
+                logger.warning("Skipping img2table: PaddleOCR backend unavailable in runtime")
                 return None
 
             from .img2table_extractor import Img2TableExtractor
@@ -2102,6 +2130,8 @@ class UniversalBankParser(BaseParser):
                 use_paddleocr=self.config.use_paddleocr,
             )
 
+            logger.debug("Starting img2table extract_tables_from_pdf")
+            _t0 = time.monotonic()
             result = extractor.extract_tables_from_pdf(
                 pdf_path=pdf_path,
                 pages=page_indexes,
@@ -2110,11 +2140,12 @@ class UniversalBankParser(BaseParser):
                 borderless_tables=True,
                 min_confidence=30,
             )
+            logger.debug("img2table extract_tables_from_pdf completed in %.2fs", time.monotonic() - _t0)
 
             table_count = len(result.get("tables", []))
             raw = result.get("raw_table")
             row_count = len(raw["rows"]) if raw and raw.get("rows") else 0
-            print(f"  📋 img2table found {table_count} tables, {row_count} rows total")
+            logger.info("img2table found %d tables, %d rows total", table_count, row_count)
 
             self.emit_progress(
                 selected_pages, selected_pages,
@@ -2125,10 +2156,10 @@ class UniversalBankParser(BaseParser):
             return result
 
         except ImportError:
-            print("  ⚠️ img2table not installed; skipping")
+            logger.warning("img2table not installed; skipping")
             return None
         except Exception as e:
-            print(f"  ⚠️ img2table extraction failed: {e}")
+            logger.error("img2table extraction failed: %s", e)
             return None
 
     def _try_legacy_spatial_extraction(
@@ -2160,12 +2191,15 @@ class UniversalBankParser(BaseParser):
                     stage="ocr"
                 )
 
+                logger.debug("Starting convert_from_path for spatial page %d", actual_page_num)
+                _t0 = time.monotonic()
                 images = convert_from_path(
                     pdf_path,
                     dpi=self.config.dpi,
                     first_page=actual_page_num,
                     last_page=actual_page_num
                 )
+                logger.debug("convert_from_path spatial page %d completed in %.2fs", actual_page_num, time.monotonic() - _t0)
                 if not images:
                     continue
 
@@ -2176,7 +2210,7 @@ class UniversalBankParser(BaseParser):
                         page_image, prev_col_xs=_prev_col_xs
                     )
                 except Exception as e:
-                    print(f"    ⚠️ Spatial extraction failed on page {actual_page_num}: {e}")
+                    logger.warning("Spatial extraction failed on page %d: %s", actual_page_num, e)
                     spatial_rows = None
 
                 if spatial_rows:
@@ -2210,7 +2244,7 @@ class UniversalBankParser(BaseParser):
                     gc.collect()
 
             except Exception as e:
-                print(f"    ❌ Legacy spatial error on page {actual_page_num}: {e}")
+                logger.error("Legacy spatial error on page %d: %s", actual_page_num, e)
                 continue
 
         # Check if spatial extraction produced usable results
@@ -2226,7 +2260,7 @@ class UniversalBankParser(BaseParser):
                 cols_with_data = sum(1 for f in col_fill if f >= len(sample) * 0.2)
                 if cols_with_data >= 3:
                     if self._looks_like_blobbed_rows(all_spatial_rows):
-                        print("  ⚠️ Legacy spatial output appears blobbed; rejecting and continuing fallback.")
+                        logger.warning("Legacy spatial output appears blobbed; rejecting and continuing fallback.")
                         return None
                     columns = spatial_header if spatial_header else [
                         f"Column_{i+1}" for i in range(num_cols)
@@ -2241,9 +2275,9 @@ class UniversalBankParser(BaseParser):
                         source_file=source_file,
                         page_ref="Spatial_Table"
                     )
-                    print(f"  📊 Legacy spatial: {len(all_spatial_rows)} rows, {num_cols} columns")
+                    logger.info("Legacy spatial: %d rows, %d columns", len(all_spatial_rows), num_cols)
                     if derived:
-                        print(f"  🧩 Derived {derived} normalized transactions from spatial table")
+                        logger.info("Derived %d normalized transactions from spatial table", derived)
                     return 0
 
         return None  # Signal failure
@@ -2278,12 +2312,15 @@ class UniversalBankParser(BaseParser):
                     stage="ocr"
                 )
 
+                logger.debug("Starting convert_from_path for OCR page %d", actual_page_num)
+                _t0 = time.monotonic()
                 images = convert_from_path(
                     pdf_path,
                     dpi=self.config.dpi,
                     first_page=actual_page_num,
                     last_page=actual_page_num
                 )
+                logger.debug("convert_from_path OCR page %d completed in %.2fs", actual_page_num, time.monotonic() - _t0)
                 if not images:
                     continue
 
@@ -2304,7 +2341,7 @@ class UniversalBankParser(BaseParser):
                     try:
                         page_text = self.paddle_processor.process_image_to_text(page_image)
                     except Exception as exc:
-                        print(f"  ⚠️ PaddleOCR failed: {exc}")
+                        logger.warning("PaddleOCR failed: %s", exc)
                         self.mark_paddle_unavailable()
                         try:
                             import pytesseract
@@ -2330,10 +2367,10 @@ class UniversalBankParser(BaseParser):
                     gc.collect()
 
             except Exception as e:
-                print(f"    ❌ OCR fallback error on page {actual_page_num}: {e}")
+                logger.error("OCR fallback error on page %d: %s", actual_page_num, e)
                 continue
 
-        print(f"  📄 OCR fallback extracted {total_ocr_chars:,} characters from {len(page_texts)} pages")
+        logger.info("OCR fallback extracted %s characters from %d pages", f"{total_ocr_chars:,}", len(page_texts))
         if page_texts:
             sample_text = "\n".join(text for _, text in page_texts[:3])
             self._enforce_english_only(sample_text, "OCR fallback sample")
@@ -2585,7 +2622,7 @@ class UniversalBankParser(BaseParser):
                     if words:
                         return words
             except Exception as e:
-                print(f"      PaddleOCR word detection failed, falling back to Tesseract: {e}")
+                logger.debug("PaddleOCR word detection failed, falling back to Tesseract: %s", e)
                 self.mark_paddle_unavailable()
 
         # Fallback to Tesseract
@@ -2612,7 +2649,7 @@ class UniversalBankParser(BaseParser):
                 })
             return words
         except Exception as e:
-            print(f"      Tesseract word detection also failed: {e}")
+            logger.debug("Tesseract word detection also failed: %s", e)
             return []
 
     def _extract_table_from_image_bordered(
@@ -3002,7 +3039,7 @@ class UniversalBankParser(BaseParser):
             len(row_ys) >= min_rows_for_table + 1
             and len(col_xs) >= min_cols_for_table + 1
         ):
-            print(f"      Grid detected: {len(row_ys)-1} rows x {len(col_xs)-1} cols")
+            logger.debug("Grid detected: %d rows x %d cols", len(row_ys)-1, len(col_xs)-1)
             self._last_col_xs = col_xs  # remember for next page
             matrix = self._extract_table_from_image_bordered(img_pil, row_ys, col_xs)
             if matrix and len(matrix) >= 2:
@@ -3011,17 +3048,17 @@ class UniversalBankParser(BaseParser):
                 if matrix and not self._looks_like_blobbed_rows(matrix):
                     return matrix
                 if matrix:
-                    print("      ⚠️ Bordered grid output looks blobbed; trying borderless fallback...")
+                    logger.debug("Bordered grid output looks blobbed; trying borderless fallback...")
 
         # Fall back to borderless extraction
-        print("      No grid lines; trying borderless spatial extraction...")
+        logger.debug("No grid lines; trying borderless spatial extraction...")
         matrix = self._extract_table_from_image_borderless(img_pil)
         if matrix and len(matrix) >= 2:
             matrix = [row for row in matrix if any(cell.strip() for cell in row)]
             if matrix and not self._looks_like_blobbed_rows(matrix):
                 return matrix
             if matrix:
-                print("      ⚠️ Borderless output looks blobbed; discarding page result.")
+                logger.debug("Borderless output looks blobbed; discarding page result.")
 
         return None
 
@@ -3109,7 +3146,7 @@ class UniversalBankParser(BaseParser):
         """
         import re
         
-        print("  📝 Using structured OCR parsing...")
+        logger.info("Using structured OCR parsing...")
         
         # Pre-process text to fix common OCR issues with number formats
         # Fix split amounts like "1,79, 866.60" -> "1,79,866.60"
@@ -3408,7 +3445,7 @@ class UniversalBankParser(BaseParser):
                 'rows': raw_rows
             }
         
-        print(f"  📊 Parsed {len(transactions)} transactions from OCR text")
+        logger.info("Parsed %d transactions from OCR text", len(transactions))
     
     def _clean_description(self, desc: str) -> str:
         """Clean up description text, removing OCR artifacts."""

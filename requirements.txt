@@ -37,6 +37,7 @@ img2table>=1.3.0
 # LLM Integration - OpenAI
 openai>=1.0.0
 httpx>=0.25.0
+anthropic>=0.39.0
 
 # Rate Limiting (for SaaS)
 flask-limiter>=3.5.0

@@ -4,12 +4,15 @@ LLM-Based Table Extraction using OpenAI
 Intelligently extracts structured transaction data from bank statements
 Uses CSV output format for reliability and dynamic column detection
 """
+import logging
 import os
 import csv
 import io
 import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 # Lazy imports for OpenAI
@@ -52,7 +55,7 @@ def get_openai_client():
                     "OPENAI_API_KEY environment variable not set. "
                     "Set it with: export OPENAI_API_KEY='your-key'"
                 )
-            _openai_client = OpenAI(api_key=api_key)
+            _openai_client = OpenAI(api_key=api_key, timeout=60.0)
         except ImportError:
             raise ImportError("OpenAI not installed. Install with: pip install openai")
     return _openai_client
