@@ -98,6 +98,31 @@ class TestParserConfidenceAndLanguage(unittest.TestCase):
         self.assertIsNone(tx["Deposit_Amount"])
         self.assertEqual(tx["Closing_Balance"], 72506.23)
 
+    def test_balance_recovery_for_shifted_columns(self):
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+        # OCR-shifted row pattern seen in bordered scans:
+        # col2 has "value-date + debit/credit", col3 has balance.
+        row = [
+            "21/04/18 IMPS-811110358391-PALANI",
+            "0000811110358391",
+            "21/04/18 6,000.00 0.00",
+            "72,506.23",
+            "",
+            "",
+            "",
+        ]
+        col_map = {"date": 0, "description": 0, "reference": 1, "debit": 4, "credit": 5, "balance": 6}
+        tx = parser._row_to_transaction(
+            row=row,
+            col_map=col_map,
+            source_file="sample.pdf",
+            page_ref="Spatial_Table",
+        )
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx["Date"], "21/04/18")
+        self.assertEqual(tx["Withdrawal_Amount"], 6000.0)
+        self.assertEqual(tx["Closing_Balance"], 72506.23)
+
 
 if __name__ == "__main__":
     unittest.main()

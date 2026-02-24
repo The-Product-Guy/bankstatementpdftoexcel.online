@@ -147,6 +147,8 @@ class ProcessingConfig:
     english_only_beta: bool = _env_bool('ENGLISH_ONLY_BETA', True)
     row_confidence_threshold: float = _env_float('ROW_CONFIDENCE_THRESHOLD', 0.65)
     low_conf_ratio_for_fallback: float = _env_float('LOW_CONF_RATIO_FOR_FALLBACK', 0.20)
+    use_template: bool = _env_bool('USE_TEMPLATE', True)
+    template_confidence_threshold: float = _env_float('TEMPLATE_CONFIDENCE_THRESHOLD', 0.6)
     execution_preset: str = "custom"
 
 
@@ -770,7 +772,23 @@ class UniversalBankParser(BaseParser):
             all_text = "\n\n".join(text for _, text in page_texts)
             self._fallback_regex_parse(all_text, source_file)
             return 0
-        
+
+        # --- Template-based extraction (1 LLM call max) ---
+        if self.config.use_template:
+            template_result = self._try_template_extraction(
+                page_texts=page_texts,
+                raw_table=raw_table if layout_transactions else None,
+                source_file=source_file,
+                pdf_path=pdf_path,
+                page_start=page_start,
+                page_end=page_end,
+            )
+            if template_result is not None:
+                template_tokens, template_txns = template_result
+                if template_txns and self._transactions_quality_ok(template_txns):
+                    self.transactions.extend(template_txns)
+                    return template_tokens
+
         # Detect columns from first page
         if not page_texts:
             return 0
@@ -1291,6 +1309,158 @@ class UniversalBankParser(BaseParser):
         low_count = sum(1 for score in scored if score < low_threshold)
         return low_count / max(len(scored), 1)
 
+    def _try_template_extraction(
+        self,
+        page_texts: Optional[List[Tuple[int, str]]],
+        raw_table: Optional[Dict[str, Any]],
+        source_file: str,
+        pdf_path: str,
+        page_start: int = 1,
+        page_end: Optional[int] = None,
+    ) -> Optional[Tuple[int, List[Dict]]]:
+        """
+        Attempt template-based extraction:
+        1. Build raw_table if not provided (from pdfplumber layout)
+        2. Detect template (heuristic first, then LLM)
+        3. Apply template to all rows using existing _row_to_transaction()
+        Returns (tokens_used, transactions) or None on failure.
+        """
+        from .template_extractor import TemplateDetector
+
+        # --- Obtain raw table data ---
+        if raw_table is None:
+            # Try to get table from pdfplumber on first page
+            if not page_texts:
+                return None
+            try:
+                import pdfplumber
+                with pdfplumber.open(pdf_path) as pdf:
+                    start_pg = max(0, page_start - 1)
+                    end_pg = page_end if page_end else len(pdf.pages)
+                    tables_found = []
+                    for pg_idx in range(start_pg, min(end_pg, len(pdf.pages))):
+                        page = pdf.pages[pg_idx]
+                        for tbl in (page.extract_tables() or []):
+                            if tbl and len(tbl) >= 2:
+                                tables_found.append(tbl)
+                        if tables_found:
+                            break  # Only need first page with tables
+                    if not tables_found:
+                        return None
+                    # Use the largest table from first page
+                    best_table = max(tables_found, key=lambda t: len(t))
+                    raw_table = {
+                        "columns": best_table[0] if best_table else [],
+                        "rows": best_table[1:] if len(best_table) > 1 else [],
+                    }
+            except Exception:
+                return None
+
+        rows = raw_table.get("rows") or []
+        columns = raw_table.get("columns") or []
+        if not rows:
+            return None
+
+        # Normalize all cells
+        all_rows = [
+            [str(cell).strip() if cell is not None else "" for cell in row]
+            for row in rows if row
+        ]
+        if columns:
+            header_row = [str(c).strip() if c is not None else "" for c in columns]
+        else:
+            header_row = []
+
+        # Pad to uniform width
+        full_table = ([header_row] + all_rows) if header_row else all_rows
+        if not full_table:
+            return None
+        max_cols = max(len(r) for r in full_table)
+        full_table = [r + [""] * (max_cols - len(r)) for r in full_table]
+
+        # Detect header row
+        header_idx = self._find_header_row(full_table)
+        if header_idx is not None:
+            headers = full_table[header_idx]
+            data_rows = full_table[header_idx + 1:]
+        elif header_row:
+            headers = full_table[0]
+            data_rows = full_table[1:]
+        else:
+            headers = []
+            data_rows = full_table
+
+        if not data_rows:
+            return None
+
+        sample_rows = data_rows[:5]
+
+        # If no clear headers, skip template (fall through to per-chunk LLM)
+        if not headers or not any(h.strip() for h in headers):
+            return None
+
+        # --- Detect template ---
+        detector = TemplateDetector()
+        template = detector.detect(
+            headers=headers,
+            sample_rows=sample_rows,
+            bank_profile=self.active_profile,
+        )
+
+        if template is None:
+            return None
+
+        if template.detection_confidence < self.config.template_confidence_threshold:
+            print(
+                f"  ⚠️ Template confidence {template.detection_confidence:.2f} "
+                f"< threshold {self.config.template_confidence_threshold}; skipping template."
+            )
+            return None
+
+        col_map = template.to_col_map()
+        if "date" not in col_map:
+            return None
+
+        print(
+            f"  🧩 Template detected ({template.detection_method}): "
+            f"confidence={template.detection_confidence:.2f}, "
+            f"cols={list(col_map.keys())}, "
+            f"tokens={template.llm_tokens_used}"
+        )
+
+        # --- Apply template to all rows ---
+        transactions: List[Dict[str, Any]] = []
+        for row in data_rows:
+            # Pad short rows
+            if len(row) < max_cols:
+                row = row + [""] * (max_cols - len(row))
+            if not any(cell.strip() for cell in row):
+                continue
+            # Skip repeated header rows
+            if template.header_fingerprint:
+                row_fp = " ".join(
+                    self._normalize_header_text(c) for c in row
+                )
+                if row_fp == template.header_fingerprint:
+                    continue
+            tx = self._row_to_transaction(
+                row=row,
+                col_map=col_map,
+                source_file=source_file,
+                page_ref="Template",
+            )
+            if tx:
+                transactions.append(tx)
+
+        if transactions:
+            print(
+                f"  ✅ Template extraction produced {len(transactions)} transactions "
+                f"from {len(data_rows)} rows ({template.detection_method}, "
+                f"{template.llm_tokens_used} tokens)"
+            )
+
+        return (template.llm_tokens_used, transactions)
+
     def _annotate_row_confidence(
         self,
         tx: Dict[str, Any],
@@ -1721,16 +1891,28 @@ class UniversalBankParser(BaseParser):
 
         # Common scanned-table pattern: debit and credit in a single merged cell
         # like "6,000.00 0.00". Parse this before generic fallbacks.
+        merged_amount_idx: Optional[int] = None
         if withdrawal is None and deposit is None:
-            merged_amount_col = get_cell('debit') or get_cell('credit') or get_cell('amount')
+            merged_amount_idx = col_map.get('debit')
+            if merged_amount_idx is None:
+                merged_amount_idx = col_map.get('credit')
+            if merged_amount_idx is None:
+                merged_amount_idx = col_map.get('amount')
+
+            merged_amount_col = ""
+            if merged_amount_idx is not None and merged_amount_idx < len(row):
+                merged_amount_col = str(row[merged_amount_idx] or "")
+
             if not merged_amount_col:
-                for cell in row:
+                for idx_cell, cell in enumerate(row):
                     raw_count = len(
                         re.findall(r'-?\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', str(cell or ""))
                     )
                     if raw_count >= 2:
-                        merged_amount_col = cell
+                        merged_amount_col = str(cell or "")
+                        merged_amount_idx = idx_cell
                         break
+
             pair = amount_tokens(merged_amount_col)
             if len(pair) >= 2:
                 a, b = pair[0], pair[1]
@@ -1746,6 +1928,22 @@ class UniversalBankParser(BaseParser):
                     deposit = pair[0]
                 else:
                     withdrawal = pair[0]
+
+            # In some scanned bordered tables, balance is shifted to the next column
+            # while the value-date + debit/credit pair is merged in one column.
+            if balance is None and merged_amount_idx is not None:
+                for idx_cell in range(merged_amount_idx + 1, len(row)):
+                    vals = amount_tokens(str(row[idx_cell] or ""))
+                    if vals:
+                        balance = vals[-1]
+                        break
+
+            if balance is None:
+                all_row_amounts: List[float] = []
+                for cell in row:
+                    all_row_amounts.extend(amount_tokens(cell))
+                if len(all_row_amounts) >= 3:
+                    balance = all_row_amounts[-1]
 
         if withdrawal is None and deposit is None and balance is None:
             # Attempt fallback from any numeric cells
@@ -1826,6 +2024,22 @@ class UniversalBankParser(BaseParser):
                         return 0
                     else:
                         print(f"  ⚠️ img2table found only {num_cols} columns; trying fallbacks")
+
+            # Try template on img2table raw_table that had low column count
+            if self.config.use_template and img2table_result:
+                raw_table = img2table_result.get("raw_table")
+                if raw_table and raw_table.get("rows"):
+                    template_result = self._try_template_extraction(
+                        page_texts=None,
+                        raw_table=raw_table,
+                        source_file=source_file,
+                        pdf_path=pdf_path,
+                    )
+                    if template_result is not None:
+                        _, template_txns = template_result
+                        if template_txns and self._transactions_quality_ok(template_txns):
+                            self.transactions.extend(template_txns)
+                            return 0
         else:
             print("  ℹ️ img2table disabled via USE_IMG2TABLE=false; using spatial/OCR fallback pipeline")
 
@@ -3301,7 +3515,8 @@ def create_universal_parser(
     max_pages: Optional[int] = None,
     use_table_structure: Optional[bool] = None,
     min_table_transactions: Optional[int] = None,
-    dpi: Optional[int] = None
+    dpi: Optional[int] = None,
+    use_template: Optional[bool] = None,
 ) -> UniversalBankParser:
     """
     Create a configured universal parser.
@@ -3364,5 +3579,7 @@ def create_universal_parser(
         config.min_table_transactions = min_table_transactions
     if dpi is not None:
         config.dpi = dpi
-    
+    if use_template is not None:
+        config.use_template = use_template
+
     return UniversalBankParser(progress_callback, config)
