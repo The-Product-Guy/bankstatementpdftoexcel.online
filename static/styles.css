@@ -154,6 +154,29 @@ h1, h2, h3 {
     border-color: #fff;
 }
 
+.nav-plan-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+.nav-plan-badge.plan-pro {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+}
+.nav-plan-badge.plan-enterprise {
+    background: linear-gradient(135deg, #f093fb, #f5576c);
+}
+
+.pricing-button.disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
 .nav-toggle {
     display: none;
     flex-direction: column;

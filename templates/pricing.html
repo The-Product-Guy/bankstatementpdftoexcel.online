@@ -74,7 +74,11 @@
                 </ul>
             </div>
             <div class="pricing-cta">
-                <a href="{{ url_for('home') }}#convert" class="pricing-button">Get Started Free</a>
+                {% if current_user_email and current_plan == 'free' %}
+                    <span class="pricing-button disabled">Current Plan</span>
+                {% else %}
+                    <a href="{{ url_for('home') }}#convert" class="pricing-button">Get Started Free</a>
+                {% endif %}
             </div>
         </div>
 
@@ -100,7 +104,16 @@
                 </ul>
             </div>
             <div class="pricing-cta">
-                <a href="{{ url_for('home') }}#convert" class="pricing-button featured">Start Pro Trial</a>
+                {% if current_user_email and current_plan == 'pro' %}
+                    <form method="POST" action="{{ url_for('billing_portal') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="pricing-button featured">Manage Subscription</button>
+                    </form>
+                {% elif current_user_email %}
+                    <button onclick="startCheckout('pro')" class="pricing-button featured">Subscribe to Pro</button>
+                {% else %}
+                    <a href="{{ url_for('signin') }}" class="pricing-button featured">Sign In to Subscribe</a>
+                {% endif %}
             </div>
         </div>
 
@@ -127,7 +140,16 @@
                 </ul>
             </div>
             <div class="pricing-cta">
-                <a href="{{ url_for('home') }}#convert" class="pricing-button">Contact Sales</a>
+                {% if current_user_email and current_plan == 'enterprise' %}
+                    <form method="POST" action="{{ url_for('billing_portal') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="pricing-button">Manage Subscription</button>
+                    </form>
+                {% elif current_user_email %}
+                    <button onclick="startCheckout('enterprise')" class="pricing-button">Subscribe to Enterprise</button>
+                {% else %}
+                    <a href="{{ url_for('signin') }}" class="pricing-button">Sign In to Subscribe</a>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -168,4 +190,33 @@
         <a href="{{ url_for('home') }}#convert" class="cta-button-large">Start Converting Now <i class="fas fa-arrow-right"></i></a>
     </div>
 </main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function startCheckout(planId) {
+    fetch('{{ url_for("checkout_create") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+            plan_id: planId,
+            csrf_token: '{{ csrf_token() }}'
+        })
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+        if (data.checkout_url) {
+            window.location.href = data.checkout_url;
+        } else {
+            alert(data.error || 'Unable to start checkout.');
+        }
+    })
+    .catch(function() {
+        alert('Something went wrong. Please try again.');
+    });
+}
+</script>
 {% endblock %}

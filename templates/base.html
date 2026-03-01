@@ -94,6 +94,8 @@
             </div>
             <div class="nav-actions">
                 {% if current_user_email %}
+                    {% set plan = session.get('plan_id', 'free') %}
+                    <span class="nav-plan-badge plan-{{ plan }}">{{ plan|capitalize }}</span>
                     <a href="/signout" class="nav-signin">Sign Out</a>
                 {% else %}
                     <a href="/signin" class="nav-signin">Sign In</a>

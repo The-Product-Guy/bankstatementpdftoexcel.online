@@ -42,7 +42,18 @@ ADMIN_EMAILS = {
     for email in os.environ.get('ADMIN_EMAILS', '').split(',')
     if email.strip()
 }
-app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
+
+import stripe
+stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
+
+PLAN_CONFIG = {
+    'free':       {'monthly_conversions': 5,    'max_upload_mb': 20,  'stripe_price_id': None},
+    'pro':        {'monthly_conversions': 50,   'max_upload_mb': 100, 'stripe_price_id': os.environ.get('STRIPE_PRO_PRICE_ID')},
+    'enterprise': {'monthly_conversions': None, 'max_upload_mb': 500, 'stripe_price_id': os.environ.get('STRIPE_ENTERPRISE_PRICE_ID')},
+}
+
+# Allow up to Enterprise max; per-plan size check happens in route logic
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
@@ -167,7 +178,13 @@ def send_magic_link_email(email: str, link: str) -> None:
         raise RuntimeError('SES_FROM_EMAIL is not configured')
 
     region = os.environ.get('SES_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
-    ses_client = client('ses', region_name=region)
+    ses_kwargs = {'region_name': region}
+    ses_key = os.environ.get('SES_ACCESS_KEY_ID')
+    ses_secret = os.environ.get('SES_SECRET_ACCESS_KEY')
+    if ses_key and ses_secret:
+        ses_kwargs['aws_access_key_id'] = ses_key
+        ses_kwargs['aws_secret_access_key'] = ses_secret
+    ses_client = client('ses', **ses_kwargs)
 
     subject = "Your magic sign-in link"
     body_text = f"Click the link to sign in:\n\n{link}\n\nIf you didn't request this, you can ignore this email."
@@ -193,32 +210,57 @@ def send_magic_link_email(email: str, link: str) -> None:
         }
     )
 
-def get_usage_counter(db, user_id, guest_id):
+def get_usage_counter(db, user_id, guest_id, scope='lifetime'):
     return db.query(UsageCounter).filter_by(
         user_id=user_id,
         guest_id=guest_id,
-        scope='lifetime'
+        scope=scope
     ).first()
+
+def sync_session_plan():
+    """Refresh plan_status and plan_id from DB into Flask session."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return
+    try:
+        with get_db_session() as db:
+            user = db.query(User).filter_by(id=user_id).first()
+            if user:
+                session['plan_id'] = user.plan_id or 'free'
+                session['plan_status'] = user.plan_status or 'free'
+    except Exception as e:
+        print(f"⚠️ sync_session_plan failed: {e}")
 
 def check_conversion_quota(user_id, guest_id):
     if DISABLE_QUOTAS or not os.environ.get('SES_FROM_EMAIL'):
         return True, None
     try:
+        monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
         with get_db_session() as db:
             if user_id:
                 user = db.query(User).filter_by(id=user_id).first()
-                if user and user.plan_status == 'active':
+                plan_id = (user.plan_id if user else None) or 'free'
+                plan_status = (user.plan_status if user else None) or 'free'
+                plan = PLAN_CONFIG.get(plan_id, PLAN_CONFIG['free'])
+                monthly_limit = plan['monthly_conversions']
+
+                # Enterprise (unlimited) or active/past_due paid plan
+                if plan_status in ('active', 'past_due') and monthly_limit is None:
                     return True, None
 
-                counter = get_usage_counter(db, user_id=user_id, guest_id=None)
-                used = counter.conversions_count if counter else 0
-                if used >= USER_CONVERSION_LIMIT:
-                    return False, {
-                        'error': 'You have reached your lifetime conversion limit. Please upgrade to continue.',
-                        'error_code': 'USER_LIMIT_EXCEEDED'
-                    }
+                # Check monthly usage for active/past_due paid plans and free users
+                if plan_status in ('active', 'past_due', 'free'):
+                    counter = get_usage_counter(db, user_id=user_id, guest_id=None, scope=monthly_scope)
+                    used = counter.conversions_count if counter else 0
+                    limit = monthly_limit if monthly_limit is not None else PLAN_CONFIG['free']['monthly_conversions']
+                    if used >= limit:
+                        return False, {
+                            'error': f'You have reached your {limit} conversions this month. Please upgrade to continue.',
+                            'error_code': 'USER_LIMIT_EXCEEDED'
+                        }
             else:
-                counter = get_usage_counter(db, user_id=None, guest_id=guest_id)
+                # Guest users: keep 1 lifetime limit
+                counter = get_usage_counter(db, user_id=None, guest_id=guest_id, scope='lifetime')
                 used = counter.conversions_count if counter else 0
                 if used >= GUEST_CONVERSION_LIMIT:
                     return False, {
@@ -373,7 +415,13 @@ def blogs():
 @app.route('/pricing')
 def pricing():
     """Pricing page"""
-    return render_template('pricing.html')
+    sync_session_plan()
+    return render_template(
+        'pricing.html',
+        current_plan=session.get('plan_id', 'free'),
+        plan_status=session.get('plan_status', 'free'),
+        stripe_publishable_key=os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+    )
 
 @app.route('/signin')
 def signin():
@@ -778,6 +826,204 @@ def submit_feedback():
     except Exception as e:
         print(f"⚠️ Feedback submission error: {e}")
         return jsonify({'status': 'error', 'error': 'Failed to submit feedback.'}), 500
+
+
+# ── Stripe Checkout & Billing ──────────────────────────────────────────
+
+@app.route('/checkout/create', methods=['POST'])
+def checkout_create():
+    """Create a Stripe Checkout Session and return the redirect URL."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Sign in required.'}), 401
+
+    csrf_token = request.form.get('csrf_token') or (request.get_json(silent=True) or {}).get('csrf_token')
+    if not csrf_token or csrf_token != session.get('csrf_token'):
+        return jsonify({'error': 'Invalid request token.'}), 400
+
+    plan_id = request.form.get('plan_id') or (request.get_json(silent=True) or {}).get('plan_id')
+    plan = PLAN_CONFIG.get(plan_id)
+    if not plan or not plan.get('stripe_price_id'):
+        return jsonify({'error': 'Invalid plan.'}), 400
+
+    try:
+        with get_db_session() as db:
+            user = db.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found.'}), 404
+
+            # Lazily create Stripe Customer
+            if not user.stripe_customer_id:
+                customer = stripe.Customer.create(email=user.email)
+                user.stripe_customer_id = customer.id
+                db.flush()
+
+            customer_id = user.stripe_customer_id
+
+        checkout_session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode='subscription',
+            line_items=[{'price': plan['stripe_price_id'], 'quantity': 1}],
+            success_url=url_for('checkout_success', _external=True) + '?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url=url_for('pricing', _external=True),
+            metadata={'user_id': user_id, 'plan_id': plan_id},
+        )
+        return jsonify({'checkout_url': checkout_session.url})
+
+    except Exception as e:
+        print(f"⚠️ Checkout create failed: {e}")
+        return jsonify({'error': 'Unable to create checkout session.'}), 500
+
+
+@app.route('/checkout/success')
+def checkout_success():
+    """Post-checkout landing page. Subscription is activated by webhook, not here."""
+    flash('Your subscription is being activated. This usually takes a few seconds.', 'success')
+    return redirect(url_for('home'))
+
+
+@app.route('/stripe/webhook', methods=['POST'])
+def stripe_webhook():
+    """Receive Stripe webhook events. Signature-verified (no CSRF)."""
+    payload = request.get_data()
+    sig_header = request.headers.get('Stripe-Signature')
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+
+    if not webhook_secret:
+        print("⚠️ STRIPE_WEBHOOK_SECRET not configured")
+        return '', 400
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except (ValueError, stripe.error.SignatureVerificationError):
+        return '', 400
+
+    event_type = event['type']
+    data_object = event['data']['object']
+
+    handlers = {
+        'checkout.session.completed': _handle_checkout_completed,
+        'customer.subscription.updated': _handle_subscription_updated,
+        'customer.subscription.deleted': _handle_subscription_deleted,
+        'invoice.payment_failed': _handle_payment_failed,
+    }
+
+    handler = handlers.get(event_type)
+    if handler:
+        try:
+            handler(data_object)
+        except Exception as e:
+            print(f"⚠️ Webhook handler error for {event_type}: {e}")
+
+    return '', 200
+
+
+def _handle_checkout_completed(session_obj):
+    """checkout.session.completed — activate subscription."""
+    user_id = (session_obj.get('metadata') or {}).get('user_id')
+    plan_id = (session_obj.get('metadata') or {}).get('plan_id')
+    subscription_id = session_obj.get('subscription')
+    customer_id = session_obj.get('customer')
+
+    if not user_id:
+        # Fallback: find user by Stripe customer ID
+        if customer_id:
+            with get_db_session() as db:
+                user = db.query(User).filter_by(stripe_customer_id=customer_id).first()
+                if user:
+                    user_id = user.id
+
+    if not user_id:
+        print(f"⚠️ checkout.session.completed: no user_id found")
+        return
+
+    with get_db_session() as db:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user:
+            user.plan_id = plan_id or 'pro'
+            user.plan_status = 'active'
+            user.stripe_subscription_id = subscription_id
+            if customer_id and not user.stripe_customer_id:
+                user.stripe_customer_id = customer_id
+
+
+def _handle_subscription_updated(subscription):
+    """customer.subscription.updated — sync plan status."""
+    customer_id = subscription.get('customer')
+    stripe_status = subscription.get('status')
+
+    status_map = {
+        'active': 'active',
+        'trialing': 'active',
+        'past_due': 'past_due',
+        'canceled': 'free',
+        'unpaid': 'free',
+        'incomplete': 'free',
+        'incomplete_expired': 'free',
+    }
+    new_status = status_map.get(stripe_status, 'free')
+
+    with get_db_session() as db:
+        user = db.query(User).filter_by(stripe_customer_id=customer_id).first()
+        if user:
+            user.plan_status = new_status
+            if new_status == 'free':
+                user.plan_id = 'free'
+
+
+def _handle_subscription_deleted(subscription):
+    """customer.subscription.deleted — reset to free plan."""
+    customer_id = subscription.get('customer')
+
+    with get_db_session() as db:
+        user = db.query(User).filter_by(stripe_customer_id=customer_id).first()
+        if user:
+            user.plan_id = 'free'
+            user.plan_status = 'free'
+            user.stripe_subscription_id = None
+
+
+def _handle_payment_failed(invoice):
+    """invoice.payment_failed — mark as past_due (grace period)."""
+    customer_id = invoice.get('customer')
+
+    with get_db_session() as db:
+        user = db.query(User).filter_by(stripe_customer_id=customer_id).first()
+        if user and user.plan_status == 'active':
+            user.plan_status = 'past_due'
+
+
+@app.route('/billing/portal', methods=['POST'])
+def billing_portal():
+    """Create a Stripe Customer Portal session and redirect."""
+    user_id = session.get('user_id')
+    if not user_id:
+        flash('Please sign in first.', 'error')
+        return redirect(url_for('signin'))
+
+    csrf_token = request.form.get('csrf_token')
+    if not csrf_token or csrf_token != session.get('csrf_token'):
+        flash('Invalid request token. Please refresh and try again.', 'error')
+        return redirect(url_for('pricing'))
+
+    try:
+        with get_db_session() as db:
+            user = db.query(User).filter_by(id=user_id).first()
+            if not user or not user.stripe_customer_id:
+                flash('No active subscription found.', 'error')
+                return redirect(url_for('pricing'))
+            customer_id = user.stripe_customer_id
+
+        portal_session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=url_for('pricing', _external=True),
+        )
+        return redirect(portal_session.url)
+
+    except Exception as e:
+        print(f"⚠️ Billing portal failed: {e}")
+        flash('Unable to open billing portal.', 'error')
+        return redirect(url_for('pricing'))
 
 
 @app.route('/health')

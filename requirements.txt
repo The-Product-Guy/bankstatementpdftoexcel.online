@@ -39,6 +39,9 @@ openai>=1.0.0
 httpx>=0.25.0
 anthropic>=0.39.0
 
+# Payments
+stripe>=7.0.0
+
 # Rate Limiting (for SaaS)
 flask-limiter>=3.5.0
 redis>=5.0.0

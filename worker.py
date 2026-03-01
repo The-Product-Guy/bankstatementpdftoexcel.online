@@ -101,34 +101,37 @@ def _increment_usage(job_id):
             if not job:
                 return
 
-            if job.user_id:
-                counter = db.query(UsageCounter).filter_by(
-                    user_id=job.user_id,
-                    guest_id=None,
-                    scope='lifetime'
-                ).first()
-            else:
-                counter = db.query(UsageCounter).filter_by(
-                    user_id=None,
-                    guest_id=job.guest_id,
-                    scope='lifetime'
-                ).first()
+            monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
 
-            if not counter:
-                counter = UsageCounter(
-                    user_id=job.user_id,
-                    guest_id=job.guest_id,
-                    scope='lifetime',
-                    conversions_count=0,
-                    pages_total=0,
-                    bytes_total=0
-                )
-                db.add(counter)
+            for scope in ('lifetime', monthly_scope):
+                if job.user_id:
+                    counter = db.query(UsageCounter).filter_by(
+                        user_id=job.user_id,
+                        guest_id=None,
+                        scope=scope
+                    ).first()
+                else:
+                    counter = db.query(UsageCounter).filter_by(
+                        user_id=None,
+                        guest_id=job.guest_id,
+                        scope=scope
+                    ).first()
 
-            counter.conversions_count += 1
-            counter.pages_total += job.page_count or 0
-            counter.bytes_total += job.file_size_bytes or 0
-            counter.updated_at = datetime.utcnow()
+                if not counter:
+                    counter = UsageCounter(
+                        user_id=job.user_id,
+                        guest_id=job.guest_id,
+                        scope=scope,
+                        conversions_count=0,
+                        pages_total=0,
+                        bytes_total=0
+                    )
+                    db.add(counter)
+
+                counter.conversions_count += 1
+                counter.pages_total += job.page_count or 0
+                counter.bytes_total += job.file_size_bytes or 0
+                counter.updated_at = datetime.utcnow()
     except Exception as e:
         logger.warning(f"DB usage update failed for {job_id}: {e}")
 
