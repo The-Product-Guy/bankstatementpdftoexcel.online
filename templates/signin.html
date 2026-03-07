@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Sign In | StatementFlow{% endblock %}
+{% block title %}Sign In | Statement Converter{% endblock %}
 
 {% block content %}
 <main class="main-content">
@@ -9,7 +9,6 @@
     <div class="flash-messages">
         {% for category, message in messages %}
         <div class="alert alert-{{ category }}" role="alert">
-            <i class="fas fa-{% if category == 'error' %}exclamation-triangle{% elif category == 'warning' %}exclamation-circle{% else %}check-circle{% endif %}"></i>
             {{ message }}
             <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
         </div>
@@ -26,9 +25,9 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label for="email" class="form-label">Work email</label>
                 <input id="email" name="email" type="email" required class="signin-input" placeholder="you@company.com">
-                <button type="submit" class="btn-primary signin-btn">Send magic link</button>
+                <button type="submit" class="btn-primary signin-btn">Send sign-in link</button>
             </form>
-            <p class="signin-note">We’ll email you a secure, one-time sign-in link.</p>
+            <p class="signin-note">We'll email you a one-time sign-in link. No password needed.</p>
         </div>
     </section>
 </main>

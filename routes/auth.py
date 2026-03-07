@@ -31,13 +31,13 @@ def send_magic_link_email(email: str, link: str) -> None:
     resend.Emails.send({
         "from": sender,
         "to": [email],
-        "subject": "Your sign-in link for StatementFlow",
+        "subject": "Your sign-in link for Statement Converter",
         "text": (
-            f"Sign in to StatementFlow\n\n"
+            f"Sign in to Statement Converter\n\n"
             f"Click the link below to sign in:\n{link}\n\n"
             f"This link expires in {expiry_minutes} minutes.\n"
             f"If you didn't request this, you can safely ignore this email.\n\n"
-            f"- StatementFlow"
+            f"- Statement Converter"
         ),
         "html": f"""
 <!DOCTYPE html>
@@ -48,8 +48,8 @@ def send_magic_link_email(email: str, link: str) -> None:
     <tr><td align="center">
       <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
         <tr>
-          <td style="background:linear-gradient(135deg,#667eea,#764ba2);padding:32px 40px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;letter-spacing:-0.3px;">StatementFlow</h1>
+          <td style="background:linear-gradient(135deg,#000a63,#046bca);padding:32px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;letter-spacing:-0.3px;">Statement Converter</h1>
           </td>
         </tr>
         <tr>
@@ -59,7 +59,7 @@ def send_magic_link_email(email: str, link: str) -> None:
             </p>
             <table width="100%" cellpadding="0" cellspacing="0">
               <tr><td align="center" style="padding:8px 0 28px;">
-                <a href="{link}" style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,#667eea,#764ba2);color:#ffffff;text-decoration:none;border-radius:8px;font-size:16px;font-weight:600;letter-spacing:0.3px;">
+                <a href="{link}" style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,#000a63,#046bca);color:#ffffff;text-decoration:none;border-radius:8px;font-size:16px;font-weight:600;letter-spacing:0.3px;">
                   Sign in
                 </a>
               </td></tr>
@@ -70,14 +70,14 @@ def send_magic_link_email(email: str, link: str) -> None:
             <p style="margin:0 0 8px;color:#666;font-size:13px;line-height:1.5;">
               If the button doesn't work, copy and paste this URL into your browser:
             </p>
-            <p style="margin:0 0 20px;word-break:break-all;color:#667eea;font-size:12px;">{link}</p>
+            <p style="margin:0 0 20px;word-break:break-all;color:#046bca;font-size:12px;">{link}</p>
           </td>
         </tr>
         <tr>
           <td style="padding:20px 40px 28px;border-top:1px solid #eee;">
             <p style="margin:0;color:#999;font-size:12px;line-height:1.6;">
               If you didn't request this email, you can safely ignore it.
-              <br>StatementFlow &mdash; PDF to Excel Converter
+              <br>Statement Converter by Ambion Softwares
             </p>
           </td>
         </tr>
@@ -189,7 +189,7 @@ def auth_verify():
             session['plan_id'] = user.plan_id
 
         flash('Signed in successfully.', 'success')
-        return redirect(url_for('pages.home'))
+        return redirect(url_for('converter.dashboard'))
     except Exception:
         flash('Unable to verify sign-in link. Please try again.', 'error')
         return redirect(url_for('auth.signin'))

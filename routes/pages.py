@@ -16,24 +16,14 @@ pages_bp = Blueprint('pages', __name__)
 
 @pages_bp.route('/')
 def home():
-    """Home page with upload functionality."""
+    """Marketing landing page."""
     from app import (
-        BETA_MODE, ENGLISH_ONLY_BETA, FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
-        SUPPORTED_BANKS, UPLOAD_FOLDER,
         cleanup_expired_s3_results, cleanup_feedback_shared_pdfs, cleanup_old_files,
     )
     cleanup_old_files()
     cleanup_feedback_shared_pdfs()
     cleanup_expired_s3_results()
-    return render_template(
-        'home.html',
-        banks=SUPPORTED_BANKS,
-        max_upload_mb=MAX_UPLOAD_MB,
-        max_pages=MAX_PAGES,
-        beta_mode=BETA_MODE,
-        english_only_beta=ENGLISH_ONLY_BETA,
-        feedback_retention_days=FEEDBACK_RETENTION_DAYS
-    )
+    return render_template('home.html')
 
 
 @pages_bp.route('/index')

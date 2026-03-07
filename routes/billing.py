@@ -48,8 +48,8 @@ def _send_plan_change_email(email: str, plan_id: str, action: str) -> None:
     <tr><td align="center">
       <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
         <tr>
-          <td style="background:linear-gradient(135deg,#667eea,#764ba2);padding:28px 40px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:600;">StatementFlow</h1>
+          <td style="background:linear-gradient(135deg,#000a63,#046bca);padding:28px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:600;">Statement Converter</h1>
           </td>
         </tr>
         <tr>
@@ -60,7 +60,7 @@ def _send_plan_change_email(email: str, plan_id: str, action: str) -> None:
         </tr>
         <tr>
           <td style="padding:16px 40px 24px;border-top:1px solid #eee;">
-            <p style="margin:0;color:#999;font-size:12px;">StatementFlow &mdash; PDF to Excel Converter</p>
+            <p style="margin:0;color:#999;font-size:12px;">Statement Converter by Ambion Softwares</p>
           </td>
         </tr>
       </table>

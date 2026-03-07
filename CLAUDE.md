@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A web app that converts bank statement PDFs (text-based and scanned) into Excel files. Supports 20+ Indian banks with universal fallback. Deployed on Railway with Stripe billing.
+**Statement Converter** by **Ambion Softwares** — a web app that converts bank statement PDFs (text-based and scanned) into Excel files. Supports 20+ Indian banks with universal fallback. Deployed on Railway with Stripe billing.
 
 ## Development Commands
 
@@ -67,7 +67,7 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
 - `app.py`: Flask app setup, shared config/utilities, context processors, middleware. Routes split into Blueprints:
   - `routes/auth.py`: signin, magic link, verify, signout, account
   - `routes/billing.py`: Stripe checkout, webhooks, billing portal
-  - `routes/converter.py`: PDF upload, status polling, download, feedback
+  - `routes/converter.py`: `/dashboard` (auth-gated converter UI), PDF upload, status polling, download, feedback
   - `routes/pages.py`: public pages, SEO (sitemap/robots), health checks, admin
 - `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs parser, builds Excel (2 sheets: transactions + summary), uploads result
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
@@ -86,6 +86,9 @@ Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_K
 
 ## Conventions
 
+- Branding: "Statement Converter" by "Ambion Softwares". Logo at `static/ambion-logo.svg` (navy-to-blue gradient)
+- Frontend uses Inter font (Google Fonts), inline SVG icons (no Font Awesome), light professional theme
+- Conversion is auth-gated: homepage is marketing-only, converter lives at `/dashboard` (requires login)
 - Auth is magic-link email via Resend SDK (no passwords)
 - Plans: free (5 conversions/month), pro (50), enterprise (unlimited) — managed via Stripe subscriptions
 - Worker communicates progress to web via Redis keys; web pushes to browser via SocketIO

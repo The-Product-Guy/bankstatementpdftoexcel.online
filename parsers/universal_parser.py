@@ -625,7 +625,7 @@ class UniversalBankParser(BaseParser):
             if meta.document_hint == "non_tabular":
                 meta.message = (
                     "This PDF does not appear to contain tabular data (like a bank statement). "
-                    "StatementFlow works best with bank statements and financial reports."
+                    "Statement Converter works best with bank statements and financial reports."
                 )
             else:
                 meta.message = (

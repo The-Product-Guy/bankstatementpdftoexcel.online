@@ -1,47 +1,59 @@
 {% extends "base.html" %}
 
-{% block title %}Admin | StatementFlow{% endblock %}
+{% block title %}Admin | Statement Converter{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
 
 {% block content %}
 <main class="main-content">
-    <section class="admin-section">
-        <div class="admin-card">
-            <h1>Admin Dashboard</h1>
-            <div class="admin-stats">
-                <div>
-                    <span class="stat-label">Users</span>
-                    <span class="stat-value">{{ stats.users }}</span>
-                </div>
-                <div>
-                    <span class="stat-label">Jobs</span>
-                    <span class="stat-value">{{ stats.jobs }}</span>
-                </div>
-                <div>
-                    <span class="stat-label">Completed</span>
-                    <span class="stat-value">{{ stats.completed }}</span>
-                </div>
-            </div>
-        </div>
+    <header class="header">
+        <h1>Admin Dashboard</h1>
+    </header>
 
-        <div class="admin-card">
+    <div class="admin-stats">
+        <div class="stat-card">
+            <h3>{{ stats.users }}</h3>
+            <p>Users</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.jobs }}</h3>
+            <p>Total Jobs</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.completed }}</h3>
+            <p>Completed</p>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
             <h2>Recent Jobs</h2>
-            <div class="admin-table">
-                <div class="admin-row admin-header">
-                    <span>Job ID</span>
-                    <span>Status</span>
-                    <span>Pages</span>
-                    <span>Created</span>
-                </div>
-                {% for job in recent_jobs %}
-                <div class="admin-row">
-                    <span>{{ job.id }}</span>
-                    <span>{{ job.status }}</span>
-                    <span>{{ job.page_count or '-' }}</span>
-                    <span>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</span>
-                </div>
-                {% endfor %}
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Status</th>
+                            <th>Pages</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in recent_jobs %}
+                        <tr>
+                            <td style="font-family:monospace;font-size:12px;">{{ job.id[:12] }}...</td>
+                            <td>
+                                <span class="job-status job-status-{{ job.status or 'unknown' }}">{{ job.status or '-' }}</span>
+                            </td>
+                            <td>{{ job.page_count or '-' }}</td>
+                            <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
-    </section>
+    </div>
 </main>
 {% endblock %}

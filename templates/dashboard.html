@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Statement Converter{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<main class="main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-messages">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }}" role="alert">
+            {{ message }}
+            <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+{% if beta_mode %}
+    <div class="flash-messages">
+        <div class="alert alert-warning" role="status">
+            <strong>Beta:</strong> Statement Converter is in active testing.
+            {% if english_only_beta %}
+                English statements are currently supported.
+            {% endif %}
+            If conversion fails, you can opt in below to share the PDF for analysis.
+        </div>
+    </div>
+{% endif %}
+
+    <div class="dashboard-header">
+        <h1>Convert a Statement</h1>
+        <p>Upload a bank statement PDF and download a formatted Excel file.</p>
+    </div>
+
+    <div class="converter-card" id="convert">
+        <div class="converter-header">
+            <h2>Upload your PDF</h2>
+            <p>Drag and drop or click to browse</p>
+        </div>
+        <form id="uploadForm" action="{{ url_for('converter.convert') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="bank" value="universal">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="file-upload-area" id="fileUploadArea">
+                <input
+                    type="file"
+                    id="pdf_file"
+                    name="pdf_file"
+                    accept="application/pdf,.pdf"
+                    required
+                    class="file-input"
+                    aria-describedby="uploadHelp"
+                    data-max-size="{{ max_upload_mb }}"
+                    data-max-pages="{{ max_pages }}"
+                >
+                <div class="file-upload-content">
+                    <div class="upload-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V8m0 0l-3 3m3-3l3 3"/><path d="M20 16.7A5 5 0 0018 7h-1.26A8 8 0 104 15.25"/></svg>
+                    </div>
+                    <p class="upload-text">
+                        <strong>Drop your PDF here</strong> or click to browse
+                    </p>
+                    <p class="upload-subtext" id="uploadHelp">Max file size: {{ max_upload_mb }}MB &middot; Max pages: {{ max_pages }}</p>
+                </div>
+            </div>
+
+            <div class="file-info" id="fileInfo" style="display: none;">
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5L9 1z"/><path d="M9 1v4h4"/></svg>
+                <span class="file-name" id="fileName"></span>
+                <span class="file-size" id="fileSize"></span>
+                <button type="button" class="remove-file-btn" id="removeFile">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+                </button>
+            </div>
+
+            <div class="quality-selector" id="qualitySelector" style="display: none;">
+                <label class="quality-label">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h12M2 8h12M2 4h12"/></svg>
+                    OCR Quality
+                </label>
+                <div class="quality-options">
+                    <label class="quality-option selected" data-quality="standard">
+                        <input type="radio" name="quality" value="standard" checked>
+                        <span class="quality-radio"></span>
+                        <div class="quality-info">
+                            <span class="quality-name">Standard</span>
+                            <span class="quality-desc">Fast, works for most statements</span>
+                        </div>
+                    </label>
+                    <label class="quality-option" data-quality="high">
+                        <input type="radio" name="quality" value="high">
+                        <span class="quality-radio"></span>
+                        <div class="quality-info">
+                            <span class="quality-name">High Quality</span>
+                            <span class="quality-desc">Slower, better for faded or poor scans</span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <button type="submit" class="convert-btn" id="convertBtn" disabled>
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5L9 1z"/><path d="M9 1v4h4"/><path d="M5 9h6M5 11.5h4"/></svg>
+                <span class="btn-text">Convert to Excel</span>
+                <div class="loading-spinner" style="display: none;">
+                    <svg class="spinner" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="9" r="7" stroke-opacity="0.25"/><path d="M16 9a7 7 0 00-7-7"/></svg>
+                    Processing...
+                </div>
+            </button>
+        </form>
+        <p class="converter-note">Supports all major global banks. No data is stored.</p>
+        {% if english_only_beta %}
+        <p class="converter-note subtle">Current beta scope: English statement layouts.</p>
+        {% endif %}
+        <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
+    </div>
+</main>
+
+<!-- Progress Modal -->
+<div id="progressModal" class="progress-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="progressTitle" aria-describedby="progressDesc" aria-hidden="true" tabindex="-1">
+    <div class="progress-content">
+        <div class="progress-header">
+            <h3 id="progressTitle">Processing Your PDF</h3>
+            <p id="progressDesc">Extracting transaction data...</p>
+        </div>
+
+        <div class="progress-body">
+            <div class="progress-step" id="step1">
+                <div class="step-icon">
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5L9 1z"/><path d="M9 1v4h4"/></svg>
+                </div>
+                <span class="step-text">Loading PDF document...</span>
+                <div class="step-status">
+                    <svg class="spinner" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6" stroke-opacity="0.25"/><path d="M14 8a6 6 0 00-6-6"/></svg>
+                </div>
+            </div>
+
+            <div class="progress-step" id="step2" style="opacity: 0.5;">
+                <div class="step-icon">
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M1 8h3M12 8h3"/></svg>
+                </div>
+                <span class="step-text">Processing pages with OCR...</span>
+                <div class="step-status">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4l2.5 1.5"/></svg>
+                </div>
+            </div>
+
+            <div class="progress-step" id="step3" style="opacity: 0.5;">
+                <div class="step-icon">
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M6 6v8"/></svg>
+                </div>
+                <span class="step-text">Extracting transaction data...</span>
+                <div class="step-status">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4l2.5 1.5"/></svg>
+                </div>
+            </div>
+
+            <div class="progress-step" id="step4" style="opacity: 0.5;">
+                <div class="step-icon">
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5L9 1z"/><path d="M9 1v4h4"/><path d="M5 9h6M5 11.5h4"/></svg>
+                </div>
+                <span class="step-text">Generating Excel file...</span>
+                <div class="step-status">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4l2.5 1.5"/></svg>
+                </div>
+            </div>
+        </div>
+
+        <div class="progress-detail">
+            <div class="progress-bar" id="progressBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <p class="progress-info" id="progressInfo" role="status" aria-live="polite">Starting conversion...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Result Banner -->
+<div id="resultBanner" class="result-banner" style="display: none;" role="alert">
+    <div class="result-content">
+        <div class="result-icon" id="resultIcon"></div>
+        <div class="result-body">
+            <h3 id="resultTitle">Conversion Complete</h3>
+            <p id="resultMessage">Your file has been downloaded.</p>
+            <div class="result-meta" id="resultMeta"></div>
+        </div>
+        <div class="result-actions" id="resultActions"></div>
+        <button type="button" class="result-close" id="resultClose">&times;</button>
+    </div>
+</div>
+
+<!-- Feedback Modal -->
+<div id="feedbackModal" class="feedback-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" aria-hidden="true" tabindex="-1">
+    <div class="feedback-content">
+        <h3 id="feedbackTitle">Help Us Improve</h3>
+        <p class="feedback-desc">Your feedback helps us support more bank statement formats.</p>
+
+        <form id="feedbackForm">
+            <input type="hidden" name="job_id" id="feedbackJobId">
+            <input type="hidden" name="quality_used" id="feedbackQuality">
+            <input type="hidden" name="extraction_rows" id="feedbackRows">
+            <input type="hidden" name="extraction_cols" id="feedbackCols">
+
+            <div class="feedback-field">
+                <label>What went wrong?</label>
+                <select name="feedback_type" id="feedbackType">
+                    <option value="empty_result">No data was extracted</option>
+                    <option value="incorrect_data">Data is incorrect or garbled</option>
+                    <option value="formatting">Table structure is wrong</option>
+                    <option value="other">Other issue</option>
+                </select>
+            </div>
+
+            <div class="feedback-field">
+                <label>Additional details <span class="optional">(optional)</span></label>
+                <textarea name="message" id="feedbackMessage" rows="3" maxlength="2000" placeholder="Describe what you expected vs what you got..."></textarea>
+            </div>
+
+            <div class="feedback-field feedback-consent">
+                <label class="consent-label">
+                    <input type="checkbox" name="share_pdf" id="feedbackSharePdf" value="1">
+                    <span>Share my PDF with the team for analysis</span>
+                </label>
+                <p class="consent-note">
+                    Please redact sensitive content before sharing.
+                    Shared PDFs are used only for extraction improvements and deleted after {{ feedback_retention_days }} days.
+                </p>
+            </div>
+
+            <div class="feedback-actions">
+                <button type="button" class="btn-secondary" id="feedbackClose">Cancel</button>
+                <button type="submit" class="btn-primary" id="feedbackSubmitBtn">Submit Feedback</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="limitModal" class="limit-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="limitTitle" aria-describedby="limitMessage" aria-hidden="true" tabindex="-1">
+    <div class="limit-content">
+        <h3 id="limitTitle">File limit reached</h3>
+        <p id="limitMessage">Your file exceeds the allowed limit.</p>
+        <div class="limit-actions">
+            <a class="btn-primary" href="https://smallpdfsplit.online/" target="_blank" rel="noopener">Split your PDF</a>
+            <button type="button" class="btn-secondary" id="limitClose">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+{% endblock %}

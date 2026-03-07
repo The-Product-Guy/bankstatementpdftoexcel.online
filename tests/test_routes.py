@@ -31,7 +31,7 @@ class TestPublicRoutes:
     def test_home(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert b"StatementFlow" in resp.data
+        assert b"Statement Converter" in resp.data
 
     def test_pricing(self, client):
         resp = client.get("/pricing")
@@ -46,7 +46,7 @@ class TestPublicRoutes:
     def test_signin(self, client):
         resp = client.get("/signin")
         assert resp.status_code == 200
-        assert b"magic link" in resp.data.lower()
+        assert b"sign-in link" in resp.data.lower()
 
     def test_privacy(self, client):
         resp = client.get("/privacy")
@@ -138,6 +138,10 @@ class TestProtectedRoutes:
     def test_admin_requires_admin(self, client):
         resp = client.get("/admin")
         assert resp.status_code == 404
+
+    def test_dashboard_requires_login(self, client):
+        resp = client.get("/dashboard")
+        assert resp.status_code == 302  # redirect to signin
 
     def test_convert_requires_file(self, client):
         with client.session_transaction() as sess:

@@ -1,28 +1,28 @@
 {% extends "base.html" %}
 
-{% block title %}PDF to Excel Converter - Convert Bank Statements Online | Free Tool{% endblock %}
+{% block title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block meta_description %}Convert bank statement PDFs to Excel format instantly. Supports all major banks. Free, secure, and fast conversion tool with OCR technology.{% endblock %}
+{% block meta_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back. Free to start.{% endblock %}
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
 {% block canonical_url %}{{ url_for('pages.home', _external=True) }}{% endblock %}
 
-{% block og_title %}PDF to Excel Converter - Convert Bank Statements Online | Free Tool{% endblock %}
+{% block og_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block og_description %}Convert bank statement PDFs to Excel format instantly. Supports all major banks. Free, secure, and fast conversion tool with OCR technology.{% endblock %}
+{% block og_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back.{% endblock %}
 
-{% block twitter_title %}PDF to Excel Converter - Convert Bank Statements Online | Free Tool{% endblock %}
+{% block twitter_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block twitter_description %}Convert bank statement PDFs to Excel format instantly. Supports all major banks. Free, secure, and fast conversion tool with OCR technology.{% endblock %}
+{% block twitter_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back.{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "WebApplication",
-  "name": "StatementFlow",
-  "description": "Convert bank statement PDFs to Excel format instantly. Supports all major banks.",
+  "name": "Statement Converter",
+  "description": "Convert bank statement PDFs to Excel format. Works with any bank.",
   "url": "{{ url_for('pages.home', _external=True) }}",
   "applicationCategory": "UtilityApplication",
   "operatingSystem": "Web",
@@ -43,24 +43,21 @@
 {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "name": "StatementFlow",
+  "name": "Ambion Softwares",
   "url": "{{ url_for('pages.home', _external=True) }}",
-  "logo": "{{ url_for('static', filename='og-image.png', _external=True) }}",
-  "description": "Professional bank statement PDF to Excel conversion service"
+  "logo": "{{ url_for('static', filename='ambion-logo.svg', _external=True) }}",
+  "description": "Bank statement PDF to Excel conversion service"
 }
 </script>
 {% endblock %}
 
 {% block content %}
 <main class="main-content">
-    <!-- Flash Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
     <div class="flash-messages">
         {% for category, message in messages %}
         <div class="alert alert-{{ category }}" role="alert">
-            <i
-                class="fas fa-{% if category == 'error' %}exclamation-triangle{% elif category == 'warning' %}exclamation-circle{% else %}check-circle{% endif %}"></i>
             {{ message }}
             <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
         </div>
@@ -69,322 +66,157 @@
     {% endif %}
     {% endwith %}
 
-{% if beta_mode %}
-    <div class="flash-messages">
-        <div class="alert alert-warning" role="status">
-            <i class="fas fa-flask"></i>
-            <strong>Beta:</strong> StatementFlow is in active testing.
-            {% if english_only_beta %}
-                English statements are currently supported.
-            {% endif %}
-            If conversion fails, you can opt in below to share the PDF for analysis.
-        </div>
-    </div>
-{% endif %}
-
 <section class="hero">
     <div class="hero-content">
-        <span class="hero-tag">For auditors, accountants, and bookkeepers</span>
-        <h1>Transform Multi-Page Bank Statements into Clean, Analysis-Ready Excel Sheets.</h1>
+        <span class="hero-tag">For accountants, auditors, and bookkeepers</span>
+        <h1>Turn multi-page bank statements into clean Excel files.</h1>
         <p class="hero-subhead">
-            Stop manually fixing broken spreadsheets. Our smart engine extracts every transaction accurately,
-            automatically removing repetitive page headers for a single, seamless table. 100% Secure: Files are
-            deleted instantly after processing.
+            Upload your PDF, get a formatted spreadsheet back. Our engine reads every transaction,
+            strips out repeated page headers, and gives you one continuous table ready for pivot tables and analysis.
         </p>
-        <p class="hero-note">Best for bank statements and table-based PDFs. Non-tabular documents may return an empty file.</p>
+        <p class="hero-note">Works best with bank statements and tabular PDFs. Non-tabular documents may return an empty file.</p>
 
-        <div class="converter-card" id="convert">
-            <div class="converter-header">
-                <h2>Drop your Bank Statement PDF here</h2>
-                <p>or browse to upload in seconds</p>
-            </div>
-            <form id="uploadForm" action="{{ url_for('converter.convert') }}" method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="bank" value="universal">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                <div class="file-upload-area" id="fileUploadArea">
-                    <input
-                        type="file"
-                        id="pdf_file"
-                        name="pdf_file"
-                        accept="application/pdf,.pdf"
-                        required
-                        class="file-input"
-                        aria-describedby="uploadHelp"
-                        data-max-size="{{ max_upload_mb }}"
-                        data-max-pages="{{ max_pages }}"
-                    >
-                    <div class="file-upload-content">
-                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                        <p class="upload-text">
-                            <strong>Drop your Bank Statement PDF here</strong> or Browse
-                        </p>
-                        <p class="upload-subtext" id="uploadHelp">Maximum file size: {{ max_upload_mb }}MB · Maximum pages: {{ max_pages }}</p>
-                    </div>
-                </div>
-
-                <div class="file-info" id="fileInfo" style="display: none;">
-                    <i class="fas fa-file-pdf"></i>
-                    <span class="file-name" id="fileName"></span>
-                    <span class="file-size" id="fileSize"></span>
-                    <button type="button" class="remove-file-btn" id="removeFile">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-
-                <div class="quality-selector" id="qualitySelector" style="display: none;">
-                    <label class="quality-label">
-                        <i class="fas fa-sliders-h"></i> OCR Quality
-                    </label>
-                    <div class="quality-options">
-                        <label class="quality-option selected" data-quality="standard">
-                            <input type="radio" name="quality" value="standard" checked>
-                            <span class="quality-radio"></span>
-                            <div class="quality-info">
-                                <span class="quality-name">Standard</span>
-                                <span class="quality-desc">Fast &middot; Best for most statements</span>
-                            </div>
-                        </label>
-                        <label class="quality-option" data-quality="high">
-                            <input type="radio" name="quality" value="high">
-                            <span class="quality-radio"></span>
-                            <div class="quality-info">
-                                <span class="quality-name">High Quality</span>
-                                <span class="quality-desc">Slower &middot; For faded or poor scans</span>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                <button type="submit" class="convert-btn" id="convertBtn" disabled>
-                    <i class="fas fa-file-excel"></i>
-                    <span class="btn-text">Convert to Excel</span>
-                    <div class="loading-spinner" style="display: none;">
-                        <i class="fas fa-spinner fa-spin"></i> Processing...
-                    </div>
-                </button>
-            </form>
-            <p class="converter-note">Supports all major global banks. No data is stored.</p>
-            {% if english_only_beta %}
-            <p class="converter-note subtle">Current beta scope: English statement layouts.</p>
+        <div class="hero-actions">
+            {% if current_user_email %}
+                <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">
+                    Go to Dashboard
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+                </a>
+            {% else %}
+                <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large">
+                    Get Started Free
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+                </a>
             {% endif %}
-            <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
+            <a href="#how-it-works" class="btn-secondary btn-large">See How It Works</a>
         </div>
     </div>
 
     <div class="hero-visual">
         <div class="visual-frame">
-            <img src="{{ url_for('static', filename='og-image.png') }}" alt="PDF to Excel conversion visual" />
+            <img src="{{ url_for('static', filename='og-image.png') }}" alt="PDF to Excel conversion" />
         </div>
-        <div class="data-lines"></div>
     </div>
 </section>
 
 <section class="trust-row">
     <div class="trust-item">
-        <i class="fas fa-shield-alt"></i>
+        <div class="trust-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2l6 3v4c0 4-2.5 7-6 9-3.5-2-6-5-6-9V5l6-3z"/></svg>
+        </div>
         <div>
-            <p class="trust-title">Enterprise-grade privacy</p>
-            <p class="trust-desc">Zero retention, automatic file deletion</p>
+            <p class="trust-title">Files deleted after conversion</p>
+            <p class="trust-desc">Zero retention. Your data is never stored.</p>
         </div>
     </div>
     <div class="trust-item">
-        <i class="fas fa-chart-line"></i>
+        <div class="trust-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="10" width="3" height="7" rx="0.5"/><rect x="8.5" y="6" width="3" height="11" rx="0.5"/><rect x="14" y="3" width="3" height="14" rx="0.5"/></svg>
+        </div>
         <div>
-            <p class="trust-title">Structured extraction</p>
+            <p class="trust-title">Structured output</p>
             <p class="trust-desc">Ready for pivot tables and audits</p>
         </div>
     </div>
     <div class="trust-item">
-        <i class="fas fa-globe"></i>
+        <div class="trust-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M2 10h16M10 2c2.5 3 2.5 12 0 16M10 2c-2.5 3-2.5 12 0 16"/></svg>
+        </div>
         <div>
-            <p class="trust-title">Global compatibility</p>
+            <p class="trust-title">Any bank, any country</p>
             <p class="trust-desc">Handles multi-currency layouts</p>
         </div>
     </div>
 </section>
 
-<section class="feature-section" id="how-it-works">
+<section class="steps-section" id="how-it-works">
     <div class="section-header">
-        <h2>Built for Finance Professionals, Not Just Generic Documents.</h2>
+        <h2>How It Works</h2>
+        <p>Three steps from PDF to spreadsheet. No manual data entry.</p>
     </div>
-    <div class="feature-grid">
-        <div class="feature-card">
-            <div class="feature-icon">
-                <img src="{{ url_for('static', filename='icon-header-merge.png') }}" alt="Header merge icon" />
-            </div>
-            <h3>Intelligent Header Merge</h3>
-            <p>
-                We know bank PDFs repeat headers on every page. Our AI identifies and removes them, delivering one
-                continuous transaction table ready for immediate pivot tables and calculations.
-            </p>
+    <div class="steps-grid">
+        <div class="step-card">
+            <div class="step-number">1</div>
+            <h3>Upload your PDF</h3>
+            <p>Sign in and drop your bank statement on the dashboard. We accept text-based and scanned PDFs up to 500 MB.</p>
         </div>
-        <div class="feature-card">
-            <div class="feature-icon">
-                <img src="{{ url_for('static', filename='icon-global.png') }}" alt="Global currency icon" />
-            </div>
-            <h3>Works with Any Bank, Anywhere</h3>
-            <p>
-                From local credit unions to international banking giants, our engine handles diverse layouts,
-                languages, and currency formats with precision.
-            </p>
+        <div class="step-card">
+            <div class="step-number">2</div>
+            <h3>We extract the data</h3>
+            <p>Our engine detects the bank format, reads every transaction, and removes repeated page headers automatically.</p>
         </div>
-        <div class="feature-card">
-            <div class="feature-icon">
-                <img src="{{ url_for('static', filename='icon-precision.png') }}" alt="Precision icon" />
-            </div>
-            <h3>Zero Data Loss</h3>
-            <p>
-                We capture every row and column exactly as-is. No missed transactions, no merged cells where they
-                shouldn't be.
-            </p>
+        <div class="step-card">
+            <div class="step-number">3</div>
+            <h3>Download your Excel</h3>
+            <p>Get a clean spreadsheet with two sheets: the raw statement and a normalized transaction table for easy analysis.</p>
         </div>
-    </div>
-</section>
-
-<section class="security-section">
-    <div class="security-content">
-        <h2>Your Financial Data Never Sleeps on Our Servers.</h2>
-        <p>
-            We operate on a strict Zero-Retention Policy. The moment your file is converted and downloaded, both the
-            source PDF and the output Excel file are permanently wiped from our volatile memory. We don't see your
-            data; we just process it.
-        </p>
-    </div>
-    <div class="security-visual">
-        <img src="{{ url_for('static', filename='icon-security.png') }}" alt="Security lock icon" />
-    </div>
-</section>
-
-<section class="cta-section">
-    <h2>Start Converting Smarter Today.</h2>
-    <p>Simple pricing for freelancers and enterprise teams. Try it for free.</p>
-    <div class="cta-actions">
-        <a href="#convert" class="btn-primary">Convert a File Now</a>
-        <a href="{{ url_for('pages.pricing') }}" class="btn-secondary">View Pricing Plans</a>
     </div>
 </section>
 </main>
 
-<!-- Progress Modal -->
-<div id="progressModal" class="progress-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="progressTitle" aria-describedby="progressDesc" aria-hidden="true" tabindex="-1">
-    <div class="progress-content">
-        <div class="progress-header">
-            <h3 id="progressTitle"><i class="fas fa-cogs"></i> Processing Your PDF</h3>
-            <p id="progressDesc">Please wait while we extract your transaction data...</p>
+<section class="feature-section">
+    <div class="section-header">
+        <h2>Built for Financial Documents</h2>
+        <p>Not a generic PDF tool. Designed specifically for bank statements.</p>
+    </div>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <div class="feature-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="16" height="16" rx="2"/><path d="M3 8h16M8 8v11"/></svg>
+            </div>
+            <h3>Smart header removal</h3>
+            <p>Bank PDFs repeat headers on every page. We detect and strip them so you get one continuous table, not 20 fragmented ones.</p>
         </div>
-
-        <div class="progress-body">
-            <div class="progress-step" id="step1">
-                <i class="fas fa-file-pdf step-icon"></i>
-                <span class="step-text">Loading PDF document...</span>
-                <div class="step-status"><i class="fas fa-spinner fa-spin"></i></div>
+        <div class="feature-card">
+            <div class="feature-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8.5"/><path d="M3.5 11h17M11 2.5c3 3.5 3 13.5 0 17M11 2.5c-3 3.5-3 13.5 0 17"/></svg>
             </div>
-
-            <div class="progress-step" id="step2" style="opacity: 0.5;">
-                <i class="fas fa-eye step-icon"></i>
-                <span class="step-text">Processing pages with OCR...</span>
-                <div class="step-status"><i class="fas fa-clock"></i></div>
-            </div>
-
-            <div class="progress-step" id="step3" style="opacity: 0.5;">
-                <i class="fas fa-table step-icon"></i>
-                <span class="step-text">Extracting transaction data...</span>
-                <div class="step-status"><i class="fas fa-clock"></i></div>
-            </div>
-
-            <div class="progress-step" id="step4" style="opacity: 0.5;">
-                <i class="fas fa-file-excel step-icon"></i>
-                <span class="step-text">Generating Excel file...</span>
-                <div class="step-status"><i class="fas fa-clock"></i></div>
-            </div>
+            <h3>Works with any bank</h3>
+            <p>20+ bank profiles built in, with universal fallback for everything else. From local credit unions to international banks.</p>
         </div>
-
-        <div class="progress-detail">
-            <div class="progress-bar" id="progressBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+        <div class="feature-card">
+            <div class="feature-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2.5L3.5 6.5v5c0 4.5 3 8 7.5 10 4.5-2 7.5-5.5 7.5-10v-5L11 2.5z"/><path d="M8 11.5l2.5 2.5 4-4"/></svg>
             </div>
-            <p class="progress-info" id="progressInfo" role="status" aria-live="polite">Starting conversion...</p>
+            <h3>Your data stays private</h3>
+            <p>Files are deleted right after conversion. We don't keep your bank statements. Processing happens in isolated containers.</p>
         </div>
     </div>
-</div>
+</section>
 
-<!-- Result Banner (shown after conversion completes) -->
-<div id="resultBanner" class="result-banner" style="display: none;" role="alert">
-    <div class="result-content">
-        <div class="result-icon" id="resultIcon">
-            <i class="fas fa-check-circle"></i>
-        </div>
-        <div class="result-body">
-            <h3 id="resultTitle">Conversion Complete</h3>
-            <p id="resultMessage">Your file has been downloaded.</p>
-            <div class="result-meta" id="resultMeta"></div>
-        </div>
-        <div class="result-actions" id="resultActions">
-            <!-- Populated dynamically -->
-        </div>
-        <button type="button" class="result-close" id="resultClose">&times;</button>
+<main class="main-content">
+<section class="security-section">
+    <div class="security-content">
+        <h2>Your financial data is never stored on our servers.</h2>
+        <p>
+            We delete your PDF the moment conversion finishes. The Excel output is available for download for a short window,
+            then it's permanently removed too. We don't read, analyze, or keep any of your transaction data.
+        </p>
+        <p>
+            All transfers happen over HTTPS. Each conversion runs in its own isolated process with no shared state between users.
+        </p>
     </div>
-</div>
-
-<!-- Feedback Modal -->
-<div id="feedbackModal" class="feedback-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" aria-hidden="true" tabindex="-1">
-    <div class="feedback-content">
-        <h3 id="feedbackTitle"><i class="fas fa-comment-dots"></i> Help Us Improve</h3>
-        <p class="feedback-desc">Your feedback helps us support more bank statement formats.</p>
-
-        <form id="feedbackForm">
-            <input type="hidden" name="job_id" id="feedbackJobId">
-            <input type="hidden" name="quality_used" id="feedbackQuality">
-            <input type="hidden" name="extraction_rows" id="feedbackRows">
-            <input type="hidden" name="extraction_cols" id="feedbackCols">
-
-            <div class="feedback-field">
-                <label>What went wrong?</label>
-                <select name="feedback_type" id="feedbackType">
-                    <option value="empty_result">No data was extracted</option>
-                    <option value="incorrect_data">Data is incorrect or garbled</option>
-                    <option value="formatting">Table structure is wrong</option>
-                    <option value="other">Other issue</option>
-                </select>
-            </div>
-
-            <div class="feedback-field">
-                <label>Additional details <span class="optional">(optional)</span></label>
-                <textarea name="message" id="feedbackMessage" rows="3" maxlength="2000" placeholder="Describe what you expected vs what you got..."></textarea>
-            </div>
-
-            <div class="feedback-field feedback-consent">
-                <label class="consent-label">
-                    <input type="checkbox" name="share_pdf" id="feedbackSharePdf" value="1">
-                    <span>Share my PDF with the StatementFlow team for analysis</span>
-                </label>
-                <p class="consent-note">
-                    Please redact sensitive content before sharing.
-                    Shared PDFs are used only for extraction improvements and deleted after {{ feedback_retention_days }} days.
-                </p>
-            </div>
-
-            <div class="feedback-actions">
-                <button type="submit" class="btn-primary" id="feedbackSubmitBtn">Submit Feedback</button>
-                <button type="button" class="btn-secondary" id="feedbackClose">Cancel</button>
-            </div>
-        </form>
+    <div class="security-visual">
+        <svg width="180" height="180" viewBox="0 0 180 180" fill="none">
+            <circle cx="90" cy="90" r="80" stroke="#e2e4e9" stroke-width="2"/>
+            <circle cx="90" cy="90" r="60" stroke="#e2e4e9" stroke-width="1.5"/>
+            <path d="M90 40l30 15v20c0 22-12 38-30 48-18-10-30-26-30-48V55l30-15z" stroke="#046bca" stroke-width="2" fill="#f0f6ff"/>
+            <path d="M80 92l7 7 14-14" stroke="#046bca" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
     </div>
-</div>
+</section>
 
-<div id="limitModal" class="limit-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="limitTitle" aria-describedby="limitMessage" aria-hidden="true" tabindex="-1">
-    <div class="limit-content">
-        <h3 id="limitTitle">File limit reached</h3>
-        <p id="limitMessage">Your file exceeds the allowed limit.</p>
-        <div class="limit-actions">
-            <a class="btn-primary" href="https://smallpdfsplit.online/" target="_blank" rel="noopener">Split your PDF</a>
-            <button type="button" class="btn-secondary" id="limitClose">Close</button>
-        </div>
+<section class="cta-section">
+    <h2>Ready to convert your first statement?</h2>
+    <p>Sign up for free. 5 conversions per month, no credit card needed.</p>
+    <div class="cta-actions">
+        {% if current_user_email %}
+            <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">Go to Dashboard</a>
+        {% else %}
+            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large">Get Started Free</a>
+        {% endif %}
+        <a href="{{ url_for('pages.pricing') }}" class="btn-secondary btn-large">View Pricing</a>
     </div>
-</div>
-{% endblock %}
-
-{% block scripts %}
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+</section>
+</main>
 {% endblock %}

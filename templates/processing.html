@@ -1,133 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Processing - PDF to Excel Converter{% endblock %}
+{% block title %}Processing - Statement Converter{% endblock %}
 {% block robots %}noindex, nofollow{% endblock %}
-
-{% block extra_head %}
-<style>
-    .processing-container {
-        max-width: 600px;
-        margin: 60px auto;
-        padding: 40px;
-        background: white;
-        border-radius: 16px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-        text-align: center;
-    }
-
-    .processing-icon {
-        font-size: 64px;
-        color: #667eea;
-        margin-bottom: 20px;
-        animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.7; transform: scale(1.05); }
-    }
-
-    .processing-title {
-        font-size: 24px;
-        color: #333;
-        margin-bottom: 10px;
-    }
-
-    .processing-subtitle {
-        color: #666;
-        margin-bottom: 30px;
-    }
-
-    .progress-bar-container {
-        background: #e9ecef;
-        border-radius: 10px;
-        height: 20px;
-        overflow: hidden;
-        margin-bottom: 15px;
-    }
-
-    .progress-bar-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #667eea, #764ba2);
-        border-radius: 10px;
-        transition: width 0.3s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 12px;
-        font-weight: bold;
-    }
-
-    .status-text {
-        color: #666;
-        font-size: 14px;
-    }
-
-    .download-section {
-        display: none;
-        padding: 20px;
-    }
-
-    .download-section.show {
-        display: block;
-    }
-
-    .success-icon {
-        font-size: 64px;
-        color: #28a745;
-        margin-bottom: 20px;
-    }
-
-    .download-btn {
-        display: inline-block;
-        padding: 15px 40px;
-        background: linear-gradient(135deg, #28a745, #20c997);
-        color: white;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: bold;
-        margin: 10px;
-        transition: transform 0.2s;
-    }
-
-    .download-btn:hover {
-        transform: translateY(-2px);
-    }
-
-    .back-btn {
-        display: inline-block;
-        padding: 12px 30px;
-        background: #6c757d;
-        color: white;
-        text-decoration: none;
-        border-radius: 8px;
-        margin: 10px;
-    }
-
-    .error-section {
-        display: none;
-        padding: 20px;
-    }
-
-    .error-section.show {
-        display: block;
-    }
-
-    .error-icon {
-        font-size: 64px;
-        color: #dc3545;
-        margin-bottom: 20px;
-    }
-</style>
-{% endblock %}
 
 {% block content %}
 <div class="processing-container">
     <!-- Processing State -->
     <div id="processing-state">
         <div class="processing-icon">
-            <i class="fas fa-cogs fa-spin"></i>
+            <svg class="spinner" width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#046bca" stroke-width="3"><circle cx="24" cy="24" r="20" stroke-opacity="0.2"/><path d="M44 24a20 20 0 00-20-20"/></svg>
         </div>
         <h2 class="processing-title">Processing Your Document</h2>
         <p class="processing-subtitle">{{ filename }}</p>
@@ -141,30 +22,33 @@
     <!-- Success State -->
     <div class="download-section" id="download-section">
         <div class="success-icon">
-            <i class="fas fa-check-circle"></i>
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#16a34a" stroke-width="2.5"><circle cx="24" cy="24" r="20"/><path d="M15 25l6 6 12-12"/></svg>
         </div>
-        <h2 class="processing-title">Extraction Complete!</h2>
+        <h2 class="processing-title">Extraction Complete</h2>
         <p class="processing-subtitle">Your Excel file is ready for download</p>
 
         <a id="download-link" href="#" class="download-btn">
-            <i class="fas fa-file-excel"></i> Download Excel
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v9m0 0l-3-3m3 3l3-3M3 13h10"/></svg>
+            Download Excel
         </a>
         <br>
-        <a href="{{ url_for('pages.home') }}" class="back-btn">
-            <i class="fas fa-arrow-left"></i> Process Another File
+        <a href="{{ url_for('converter.dashboard') }}" class="back-btn">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 8H3M7 4l-4 4 4 4"/></svg>
+            Process Another File
         </a>
     </div>
 
     <!-- Error State -->
     <div class="error-section" id="error-section">
         <div class="error-icon">
-            <i class="fas fa-exclamation-triangle"></i>
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#dc2626" stroke-width="2.5"><circle cx="24" cy="24" r="20"/><path d="M17 17l14 14M31 17l-14 14"/></svg>
         </div>
         <h2 class="processing-title">Processing Error</h2>
         <p class="processing-subtitle" id="error-message">An error occurred during processing.</p>
 
-        <a href="{{ url_for('pages.home') }}" class="back-btn">
-            <i class="fas fa-arrow-left"></i> Try Again
+        <a href="{{ url_for('converter.dashboard') }}" class="back-btn">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 8H3M7 4l-4 4 4 4"/></svg>
+            Try Again
         </a>
     </div>
 </div>

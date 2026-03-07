@@ -1,3 +1,15 @@
+// SVG icon constants (replacing Font Awesome)
+const ICONS = {
+    spinner: '<svg class="spinner" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6" stroke-opacity="0.25"/><path d="M14 8a6 6 0 00-6-6"/></svg>',
+    check: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.5 3.5 6.5-7"/></svg>',
+    clock: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4l2.5 1.5"/></svg>',
+    checkCircle: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M6.5 10.5l2.5 2.5 5-5"/></svg>',
+    warning: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2L1.5 17h17L10 2zM10 7v4M10 14v.5"/></svg>',
+    error: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M7 7l6 6M13 7l-6 6"/></svg>',
+    info: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M10 9v4M10 6.5v.5"/></svg>',
+    retry: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8a6 6 0 0111.5-2.5M14 2v3.5h-3.5"/><path d="M14 8a6 6 0 01-11.5 2.5M2 14v-3.5h3.5"/></svg>',
+};
+
 // DOM Elements
 const fileInput = document.getElementById('pdf_file');
 const fileUploadArea = document.getElementById('fileUploadArea');
@@ -128,7 +140,6 @@ function handleFileDrop(e) {
         const file = files[0];
         if (validateFile(file)) {
             displayFileInfo(file);
-            // Set the file to the input element
             const dt = new DataTransfer();
             dt.items.add(file);
             fileInput.files = dt.files;
@@ -152,19 +163,17 @@ function handleFileSelect(e) {
 
 // Validate file
 function validateFile(file) {
-    const fileName = (file.name || '').toLowerCase();
+    const name = (file.name || '').toLowerCase();
     const isPdfType = file.type === 'application/pdf' ||
         file.type === 'application/x-pdf' ||
         file.type === 'application/octet-stream' ||
-        fileName.endsWith('.pdf');
+        name.endsWith('.pdf');
 
-    // Check file type
     if (!isPdfType) {
         showAlert('Please select a PDF file.', 'error');
         return false;
     }
 
-    // Check file size (100MB limit)
     const maxSizeMb = parseInt(fileInput.dataset.maxSize || '100', 10);
     const maxSize = maxSizeMb * 1024 * 1024;
     if (file.size > maxSize) {
@@ -176,9 +185,7 @@ function validateFile(file) {
 }
 
 function showLimitModal(type, limitValue, pageCount) {
-    if (!limitModal) {
-        return;
-    }
+    if (!limitModal) return;
 
     if (type === 'FILE_TOO_LARGE') {
         limitTitle.textContent = 'File too large';
@@ -198,9 +205,7 @@ function showLimitModal(type, limitValue, pageCount) {
 }
 
 function hideLimitModal() {
-    if (!limitModal) {
-        return;
-    }
+    if (!limitModal) return;
     limitModal.style.display = 'none';
     limitModal.setAttribute('aria-hidden', 'true');
 }
@@ -210,7 +215,6 @@ function displayFileInfo(file) {
     fileName.textContent = file.name;
     fileSize.textContent = formatFileSize(file.size);
 
-    // Hide upload area, show file info and quality selector
     fileUploadArea.style.display = 'none';
     fileInfo.style.display = 'flex';
     if (qualitySelector) {
@@ -225,7 +229,6 @@ function clearFileSelection() {
     fileInfo.style.display = 'none';
     if (qualitySelector) {
         qualitySelector.style.display = 'none';
-        // Reset quality to standard
         const standardOption = qualitySelector.querySelector('[data-quality="standard"]');
         const highOption = qualitySelector.querySelector('[data-quality="high"]');
         if (standardOption && highOption) {
@@ -240,25 +243,20 @@ function clearFileSelection() {
 // Format file size
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
-
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Check form validity and enable/disable convert button
+// Check form validity
 function checkFormValidity() {
-    const fileSelected = fileInput.files.length > 0;
-
-    convertBtn.disabled = !fileSelected;
+    convertBtn.disabled = fileInput.files.length === 0;
 }
 
 // Handle form submission
 function handleFormSubmit(e) {
     e.preventDefault();
-    // Show loading state on button
     const btnText = convertBtn.querySelector('.btn-text');
     const loadingSpinner = convertBtn.querySelector('.loading-spinner');
 
@@ -291,7 +289,6 @@ function hideProgressModal() {
 
 // Reset progress steps
 function resetProgressSteps() {
-    // Reset progress bar to initial state
     progressFill.style.width = '0%';
     progressInfo.textContent = 'Starting conversion...';
     if (progressBar) {
@@ -308,12 +305,11 @@ function resetProgressSteps() {
             step.style.opacity = '0.5';
         }
 
-        // Reset status icons
-        const statusIcon = step.querySelector('.step-status i');
+        const statusEl = step.querySelector('.step-status');
         if (index === 0) {
-            statusIcon.className = 'fas fa-spinner fa-spin';
+            statusEl.innerHTML = ICONS.spinner;
         } else {
-            statusIcon.className = 'fas fa-clock';
+            statusEl.innerHTML = ICONS.clock;
         }
     });
 }
@@ -325,42 +321,35 @@ function updateProgress(data) {
     const status = data.status || 'Processing...';
     const percentage = data.percent ?? data.percentage ?? 0;
 
-    // Update progress bar
     progressFill.style.width = percentage + '%';
     if (progressBar) {
         progressBar.setAttribute('aria-valuenow', `${percentage}`);
     }
 
-    // Update progress info text
     if (currentPage > 0 && totalPages > 0) {
         progressInfo.textContent = `${status} - Page ${currentPage} of ${totalPages} (${percentage}%)`;
     } else {
         progressInfo.textContent = status;
     }
 
-    // Update step indicators based on progress
     const steps = document.querySelectorAll('.progress-step');
 
     if (percentage <= 25) {
-        // Step 1: Loading PDF
         updateStepStatus(steps[0], 'active');
         updateStepStatus(steps[1], 'pending');
         updateStepStatus(steps[2], 'pending');
         updateStepStatus(steps[3], 'pending');
     } else if (percentage <= 75) {
-        // Step 2: Processing pages
         updateStepStatus(steps[0], 'completed');
         updateStepStatus(steps[1], 'active');
         updateStepStatus(steps[2], 'pending');
         updateStepStatus(steps[3], 'pending');
     } else if (percentage < 100) {
-        // Step 3: Extracting data
         updateStepStatus(steps[0], 'completed');
         updateStepStatus(steps[1], 'completed');
         updateStepStatus(steps[2], 'active');
         updateStepStatus(steps[3], 'pending');
     } else {
-        // Step 4: Generating Excel
         updateStepStatus(steps[0], 'completed');
         updateStepStatus(steps[1], 'completed');
         updateStepStatus(steps[2], 'completed');
@@ -370,26 +359,26 @@ function updateProgress(data) {
 
 // Update individual step status
 function updateStepStatus(step, status) {
-    const statusIcon = step.querySelector('.step-status i');
+    const statusEl = step.querySelector('.step-status');
 
     step.classList.remove('active', 'completed');
     step.style.opacity = status === 'pending' ? '0.5' : '1';
 
     if (status === 'active') {
         step.classList.add('active');
-        statusIcon.className = 'fas fa-spinner fa-spin';
+        statusEl.innerHTML = ICONS.spinner;
     } else if (status === 'completed') {
         step.classList.add('completed');
-        statusIcon.className = 'fas fa-check';
+        statusEl.innerHTML = ICONS.check;
     } else {
-        statusIcon.className = 'fas fa-clock';
+        statusEl.innerHTML = ICONS.clock;
     }
 }
 
 let activeJobId = null;
 let downloadTriggered = false;
 let completionPolls = 0;
-let lastJobData = null; // Store last job result metadata for feedback
+let lastJobData = null;
 
 function startStatusPolling(jobId) {
     activeJobId = jobId;
@@ -400,9 +389,7 @@ function startStatusPolling(jobId) {
 }
 
 function pollJobStatus() {
-    if (!activeJobId) {
-        return;
-    }
+    if (!activeJobId) return;
 
     fetch(`/status/${activeJobId}`)
         .then(response => response.json())
@@ -429,10 +416,8 @@ function pollJobStatus() {
                 return;
             }
 
-            // Handle "completed but no data" case
             if (status.startsWith('Completed') && !data.download_url) {
                 completionPolls += 1;
-                // Check if it's a "no data" completion with metadata
                 const confidence = data.confidence || '';
                 if (confidence === 'empty' || confidence === 'low' || completionPolls >= 5) {
                     const jobId = activeJobId;
@@ -479,20 +464,17 @@ function showResultBanner(data, jobId) {
     const qualityMsg = data.quality_message || '';
     const docHint = data.document_hint || 'statement';
 
-    // Clear previous state
     banner.className = 'result-banner';
     actions.innerHTML = '';
     meta.textContent = '';
 
     if (confidence === 'good' && rows > 0) {
-        // Success
         banner.classList.add('success');
-        icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+        icon.innerHTML = ICONS.checkCircle;
         title.textContent = 'Conversion Complete';
         message.textContent = 'Your file has been downloaded successfully.';
         meta.textContent = `${rows} rows \u00d7 ${cols} columns extracted`;
 
-        // Still offer feedback in case data isn't perfect
         const fbBtn = document.createElement('button');
         fbBtn.className = 'btn-feedback';
         fbBtn.textContent = 'Report an issue';
@@ -500,9 +482,8 @@ function showResultBanner(data, jobId) {
         actions.appendChild(fbBtn);
 
     } else if (confidence === 'low') {
-        // Low confidence - offer retry + feedback
         banner.classList.add('warning');
-        icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+        icon.innerHTML = ICONS.warning;
         title.textContent = 'Partial Extraction';
         message.textContent = qualityMsg || 'Some data may be missing or incomplete.';
         meta.textContent = `${rows} rows extracted \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
@@ -510,7 +491,7 @@ function showResultBanner(data, jobId) {
         if (qualityUsed === 'standard') {
             const retryBtn = document.createElement('button');
             retryBtn.className = 'btn-retry';
-            retryBtn.innerHTML = '<i class="fas fa-redo"></i> Retry in High Quality';
+            retryBtn.innerHTML = ICONS.retry + ' Retry in High Quality';
             retryBtn.onclick = () => retryWithHighQuality();
             actions.appendChild(retryBtn);
         }
@@ -522,9 +503,8 @@ function showResultBanner(data, jobId) {
         actions.appendChild(fbBtn);
 
     } else {
-        // Empty / non-tabular
         banner.classList.add('error');
-        icon.innerHTML = '<i class="fas fa-times-circle"></i>';
+        icon.innerHTML = ICONS.error;
 
         if (docHint === 'non_tabular') {
             title.textContent = 'Not a Bank Statement';
@@ -537,7 +517,7 @@ function showResultBanner(data, jobId) {
         if (qualityUsed === 'standard' && docHint !== 'non_tabular') {
             const retryBtn = document.createElement('button');
             retryBtn.className = 'btn-retry';
-            retryBtn.innerHTML = '<i class="fas fa-redo"></i> Retry in High Quality';
+            retryBtn.innerHTML = ICONS.retry + ' Retry in High Quality';
             retryBtn.onclick = () => retryWithHighQuality();
             actions.appendChild(retryBtn);
         }
@@ -551,18 +531,15 @@ function showResultBanner(data, jobId) {
 
     banner.style.display = 'block';
 
-    // Auto-hide success banners after 15 seconds
     if (confidence === 'good') {
         setTimeout(() => { banner.style.display = 'none'; }, 15000);
     }
 }
 
 function retryWithHighQuality() {
-    // Hide result banner
     const banner = document.getElementById('resultBanner');
     if (banner) banner.style.display = 'none';
 
-    // Switch quality selector to 'high'
     if (qualitySelector) {
         const highOption = qualitySelector.querySelector('[data-quality="high"]');
         const standardOption = qualitySelector.querySelector('[data-quality="standard"]');
@@ -573,7 +550,6 @@ function retryWithHighQuality() {
         }
     }
 
-    // If file is still selected, auto-submit; otherwise just show the selector
     if (fileInput.files.length > 0) {
         showProgressModal();
         submitFormWithProgress();
@@ -593,7 +569,6 @@ function openFeedbackModal(jobId, data) {
     document.getElementById('feedbackRows').value = data.extraction_rows || 0;
     document.getElementById('feedbackCols').value = data.extraction_cols || 0;
 
-    // Pre-select feedback type based on confidence
     const typeSelect = document.getElementById('feedbackType');
     const confidence = data.confidence || '';
     if (confidence === 'empty') {
@@ -635,7 +610,7 @@ async function submitFeedback(e) {
         closeFeedbackModal();
 
         if (result.status === 'ok') {
-            showAlert('Thank you for your feedback! We\'ll use it to improve.', 'success');
+            showAlert('Thank you for your feedback!', 'success');
         } else {
             showAlert(result.error || 'Failed to submit feedback.', 'error');
         }
@@ -672,7 +647,6 @@ async function submitFormWithProgress() {
                     showAlert('Unexpected response from server. Please try again.', 'error');
                 }
             } else if (contentType && contentType.includes('application/vnd.openxmlformats')) {
-                // It's an Excel file - trigger download
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -683,13 +657,11 @@ async function submitFormWithProgress() {
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
 
-                // Show success message
                 setTimeout(() => {
                     hideProgressModal();
-                    showAlert('✅ Conversion completed successfully! File has been downloaded.', 'success');
+                    showAlert('Conversion complete. File has been downloaded.', 'success');
                 }, 3000);
             } else {
-                // Handle HTML response (error page)
                 const text = await response.text();
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(text, 'text/html');
@@ -699,7 +671,7 @@ async function submitFormWithProgress() {
 
                 if (alerts.length > 0) {
                     alerts.forEach(alert => {
-                        const message = alert.textContent.replace('×', '').trim();
+                        const message = alert.textContent.replace('\u00d7', '').trim();
                         showAlert(message, alert.className.includes('error') ? 'error' : 'warning');
                     });
                 } else {
@@ -732,19 +704,15 @@ async function submitFormWithProgress() {
     } catch (error) {
         console.error('Form submission error:', error);
         hideProgressModal();
-        showAlert(`❌ ${error.message || 'An error occurred during conversion. Please try again.'}`, 'error');
+        showAlert(error.message || 'An error occurred during conversion. Please try again.', 'error');
     }
 }
 
 // Reset form to initial state
 function resetForm() {
-    // Reset form fields
     uploadForm.reset();
-
-    // Clear file selection
     clearFileSelection();
 
-    // Reset convert button
     const btnText = convertBtn.querySelector('.btn-text');
     const loadingSpinner = convertBtn.querySelector('.loading-spinner');
 
@@ -754,49 +722,39 @@ function resetForm() {
     }
 
     convertBtn.disabled = true;
-
-    // Check form validity
     checkFormValidity();
 }
 
 // Show alert message
 function showAlert(message, type = 'error') {
-    // Remove existing alerts
     const existingAlerts = document.querySelectorAll('.alert');
     existingAlerts.forEach(alert => alert.remove());
 
-    // Create new alert
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type}`;
     alertDiv.setAttribute('role', 'alert');
 
-    const icon = type === 'error' ? 'exclamation-triangle' :
-        type === 'warning' ? 'exclamation-circle' :
-            type === 'success' ? 'check-circle' : 'info-circle';
+    let iconSvg;
+    if (type === 'error') iconSvg = ICONS.warning;
+    else if (type === 'warning') iconSvg = ICONS.info;
+    else if (type === 'success') iconSvg = ICONS.checkCircle;
+    else iconSvg = ICONS.info;
 
     alertDiv.innerHTML = `
-        <i class="fas fa-${icon}"></i>
+        ${iconSvg}
         ${message}
         <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
     `;
 
-    // Insert alert at top of main content
     const mainContent = document.querySelector('.main-content');
     mainContent.insertBefore(alertDiv, mainContent.firstChild);
 
-    // Auto-remove after appropriate time
     const autoRemoveTime = type === 'success' ? 7000 : 5000;
     setTimeout(() => {
         if (alertDiv.parentNode) {
             alertDiv.remove();
         }
     }, autoRemoveTime);
-}
-
-// File upload progress (if needed for larger files)
-function showUploadProgress() {
-    // This could be implemented with fetch API for real-time progress
-    // For now, we use the simple form submission
 }
 
 // Utility function to check if browser supports drag and drop

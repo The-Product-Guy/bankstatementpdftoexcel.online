@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Account | StatementFlow{% endblock %}
+{% block title %}Account | Statement Converter{% endblock %}
 {% block robots %}noindex, nofollow{% endblock %}
 
 {% block content %}
@@ -10,7 +10,6 @@
     <div class="flash-messages">
         {% for category, message in messages %}
         <div class="alert alert-{{ category }}" role="alert">
-            <i class="fas fa-{% if category == 'error' %}exclamation-triangle{% elif category == 'warning' %}exclamation-circle{% else %}check-circle{% endif %}"></i>
             {{ message }}
             <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
         </div>
@@ -20,7 +19,7 @@
     {% endwith %}
 
     <header class="header">
-        <h1><i class="fas fa-user-circle"></i> Account</h1>
+        <h1>Account</h1>
         <p class="subtitle">{{ current_user_email }}</p>
     </header>
 
@@ -28,7 +27,7 @@
         <!-- Plan Card -->
         <div class="account-card">
             <div class="account-card-header">
-                <h2><i class="fas fa-layer-group"></i> Your Plan</h2>
+                <h2>Your Plan</h2>
                 <span class="nav-plan-badge plan-{{ plan_id }}">{{ plan_id|capitalize }}</span>
             </div>
             <div class="account-card-body">
@@ -69,7 +68,7 @@
         <!-- Usage Card -->
         <div class="account-card">
             <div class="account-card-header">
-                <h2><i class="fas fa-chart-bar"></i> This Month's Usage</h2>
+                <h2>This Month</h2>
             </div>
             <div class="account-card-body">
                 <div class="usage-bar-container">
@@ -98,7 +97,7 @@
     <!-- Recent Conversions -->
     <div class="account-card account-card-full">
         <div class="account-card-header">
-            <h2><i class="fas fa-history"></i> Recent Conversions</h2>
+            <h2>Recent Conversions</h2>
         </div>
         <div class="account-card-body">
             {% if recent_jobs %}
@@ -120,13 +119,13 @@
                             <td>
                                 <span class="job-status job-status-{{ job.status or 'unknown' }}">
                                     {% if job.status and job.status.startswith('completed') %}
-                                        <i class="fas fa-check-circle"></i> Done
+                                        Done
                                     {% elif job.status == 'processing' %}
-                                        <i class="fas fa-spinner fa-spin"></i> Processing
+                                        Processing
                                     {% elif job.status == 'queued' %}
-                                        <i class="fas fa-clock"></i> Queued
+                                        Queued
                                     {% elif job.status and job.status.startswith('error') %}
-                                        <i class="fas fa-times-circle"></i> Error
+                                        Error
                                     {% else %}
                                         {{ job.status or '-' }}
                                     {% endif %}
@@ -141,7 +140,7 @@
                 </table>
             </div>
             {% else %}
-                <p class="empty-state">No conversions yet. <a href="{{ url_for('pages.home') }}#convert">Convert your first PDF</a>.</p>
+                <p class="empty-state">No conversions yet. <a href="{{ url_for('converter.dashboard') }}">Convert your first PDF</a>.</p>
             {% endif %}
         </div>
     </div>

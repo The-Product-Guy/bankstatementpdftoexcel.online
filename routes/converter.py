@@ -15,6 +15,27 @@ logger = logging.getLogger(__name__)
 converter_bp = Blueprint('converter', __name__)
 
 
+@converter_bp.route('/dashboard')
+def dashboard():
+    """Auth-gated converter page."""
+    from app import (
+        BETA_MODE, ENGLISH_ONLY_BETA, FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
+    )
+
+    if not session.get('user_id'):
+        flash('Please sign in to access the dashboard.', 'error')
+        return redirect(url_for('auth.signin'))
+
+    return render_template(
+        'dashboard.html',
+        max_upload_mb=MAX_UPLOAD_MB,
+        max_pages=MAX_PAGES,
+        beta_mode=BETA_MODE,
+        english_only_beta=ENGLISH_ONLY_BETA,
+        feedback_retention_days=FEEDBACK_RETENTION_DAYS,
+    )
+
+
 @converter_bp.route('/convert', methods=['POST'])
 def convert():
     """Handle PDF conversion."""
@@ -24,6 +45,12 @@ def convert():
     )
 
     try:
+        if not session.get('user_id'):
+            if is_ajax_request():
+                return jsonify({'status': 'error', 'error': 'Please sign in to convert files.'}), 401
+            flash('Please sign in to convert files.', 'error')
+            return redirect(url_for('auth.signin'))
+
         user_id, guest_id = get_identity()
 
         allowed, quota_error = check_conversion_quota(user_id, guest_id)
@@ -31,14 +58,14 @@ def convert():
             if is_ajax_request():
                 return jsonify({'status': 'error', **quota_error}), 403
             flash(quota_error.get('error', 'Conversion limit reached.'), 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         if rate_limited(f"rate:convert:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_CONVERT', '15')), 3600):
             message = 'Too many conversion requests. Please try again later.'
             if is_ajax_request():
                 return jsonify({'status': 'error', 'error': message}), 429
             flash(message, 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         csrf_token = request.form.get('csrf_token')
         if not csrf_token or csrf_token != session.get('csrf_token'):
@@ -46,22 +73,22 @@ def convert():
             if is_ajax_request():
                 return jsonify({'status': 'error', 'error': message}), 400
             flash(message, 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         if 'pdf_file' not in request.files:
             flash('Please upload a PDF file.', 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         bank_code = request.form.get('bank', 'universal')
         pdf_file = request.files['pdf_file']
 
         if pdf_file.filename == '':
             flash('No file selected.', 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         if not is_pdf_file(pdf_file):
             flash('Please upload a PDF file.', 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         job_id = str(uuid.uuid4())
         filename = secure_filename(pdf_file.filename)
@@ -83,7 +110,7 @@ def convert():
             if is_ajax_request():
                 return jsonify({'status': 'error', 'error': message}), 400
             flash(message, 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         if page_count and page_count > MAX_PAGES:
             if os.path.exists(filepath):
@@ -98,7 +125,7 @@ def convert():
                     'page_count': page_count
                 }), 413
             flash(message, 'error')
-            return redirect(url_for('pages.home'))
+            return redirect(url_for('converter.dashboard'))
 
         storage = get_storage_config()
         object_key = None
@@ -164,7 +191,7 @@ def convert():
                 os.remove(filepath)
         except Exception:
             pass
-        return redirect(url_for('pages.home'))
+        return redirect(url_for('converter.dashboard'))
 
 
 @converter_bp.route('/status/<job_id>')
@@ -218,7 +245,7 @@ def download_result(job_id, filename):
 
     if not os.path.exists(filepath):
         flash('File not found. It may have expired.', 'error')
-        return redirect(url_for('pages.home'))
+        return redirect(url_for('converter.dashboard'))
 
     return send_file(filepath, as_attachment=True, download_name=filename)
 
