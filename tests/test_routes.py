@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+Tests for Flask routes.
+Run with: python -m pytest tests/test_routes.py -v
+"""
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Set required env vars before importing app
+os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("DISABLE_QUOTAS", "true")
+
+
+@pytest.fixture
+def client():
+    from app import app
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        yield c
+
+
+class TestPublicRoutes:
+    """Test unauthenticated public pages."""
+
+    def test_home(self, client):
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert b"StatementFlow" in resp.data
+
+    def test_pricing(self, client):
+        resp = client.get("/pricing")
+        assert resp.status_code == 200
+        assert b"Pricing" in resp.data
+
+    def test_blogs(self, client):
+        resp = client.get("/blogs")
+        assert resp.status_code == 200
+        assert b"Blog" in resp.data
+
+    def test_signin(self, client):
+        resp = client.get("/signin")
+        assert resp.status_code == 200
+        assert b"magic link" in resp.data.lower()
+
+    def test_privacy(self, client):
+        resp = client.get("/privacy")
+        assert resp.status_code == 200
+        assert b"Privacy Policy" in resp.data
+
+    def test_terms(self, client):
+        resp = client.get("/terms")
+        assert resp.status_code == 200
+        assert b"Terms of Service" in resp.data
+
+    def test_health(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.data == b"OK"
+
+    def test_health_detailed(self, client):
+        resp = client.get("/health/detailed")
+        data = resp.get_json()
+        assert data["service"] == "pdf-excel-converter"
+        assert "checks" in data
+        assert data["checks"]["flask"] == "OK"
+
+    def test_sitemap(self, client):
+        resp = client.get("/sitemap.xml")
+        assert resp.status_code == 200
+        assert b"<urlset" in resp.data
+        assert b"/privacy" in resp.data
+        assert b"/terms" in resp.data
+
+    def test_robots(self, client):
+        resp = client.get("/robots.txt")
+        assert resp.status_code == 200
+        assert b"Sitemap:" in resp.data
+
+    def test_index_redirects(self, client):
+        resp = client.get("/index")
+        assert resp.status_code == 302
+
+
+class TestAuthRoutes:
+    """Test auth flow without actually sending emails."""
+
+    def test_auth_start_missing_email(self, client):
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post("/auth/start", data={
+            "email": "",
+            "csrf_token": "test-token",
+        })
+        assert resp.status_code == 302  # redirect back to signin
+
+    def test_auth_start_bad_csrf(self, client):
+        resp = client.post("/auth/start", data={
+            "email": "test@example.com",
+            "csrf_token": "wrong",
+        })
+        assert resp.status_code == 302
+
+    @patch("app.send_magic_link_email")
+    def test_auth_start_sends_email(self, mock_send, client):
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post("/auth/start", data={
+            "email": "user@example.com",
+            "csrf_token": "test-token",
+        })
+        assert resp.status_code == 302
+        mock_send.assert_called_once()
+        args = mock_send.call_args
+        assert args[0][0] == "user@example.com"
+
+    def test_auth_verify_missing_token(self, client):
+        resp = client.get("/auth/verify")
+        assert resp.status_code == 302
+
+    def test_signout(self, client):
+        resp = client.get("/signout")
+        assert resp.status_code == 302
+
+
+class TestProtectedRoutes:
+    """Test routes that require auth."""
+
+    def test_account_requires_login(self, client):
+        resp = client.get("/account")
+        assert resp.status_code == 302  # redirect to signin
+
+    def test_admin_requires_admin(self, client):
+        resp = client.get("/admin")
+        assert resp.status_code == 404
+
+    def test_convert_requires_file(self, client):
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post("/convert", data={
+            "csrf_token": "test-token",
+        })
+        # Should fail gracefully (no file uploaded)
+        assert resp.status_code in (302, 400, 500)
+
+
+class TestStripeWebhook:
+    """Test Stripe webhook endpoint."""
+
+    def test_webhook_missing_secret(self, client):
+        with patch.dict(os.environ, {"STRIPE_WEBHOOK_SECRET": ""}):
+            resp = client.post("/stripe/webhook", data=b"test")
+            assert resp.status_code == 400
+
+    def test_webhook_bad_signature(self, client):
+        with patch.dict(os.environ, {"STRIPE_WEBHOOK_SECRET": "whsec_test"}):
+            resp = client.post("/stripe/webhook", data=b"test", headers={
+                "Stripe-Signature": "bad"
+            })
+            assert resp.status_code == 400

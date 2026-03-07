@@ -61,8 +61,8 @@ uploads/*
 
 # Development
 SUCCESS.py
-test_*.py
-debug_*.py
+/test_*.py
+/debug_*.py
 
 # Output files
 output/

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Terms of Service | StatementFlow{% endblock %}
+
+{% block meta_description %}Terms of Service for StatementFlow PDF to Excel Converter.{% endblock %}
+
+{% block content %}
+<main class="main-content legal-page">
+    <h1>Terms of Service</h1>
+    <p class="legal-updated">Last updated: March 2026</p>
+
+    <section>
+        <h2>1. Service Description</h2>
+        <p>StatementFlow converts bank statement PDF files into Excel format. The service uses automated text extraction, OCR, and AI-assisted parsing. Results may not be 100% accurate and should be verified before use in accounting, auditing, or legal contexts.</p>
+    </section>
+
+    <section>
+        <h2>2. Acceptable Use</h2>
+        <ul>
+            <li>You may only upload documents you are authorized to access.</li>
+            <li>You may not use the service for illegal purposes or to process documents belonging to others without consent.</li>
+            <li>You may not attempt to reverse-engineer, overload, or abuse the service.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>3. Accounts & Plans</h2>
+        <ul>
+            <li>Free accounts receive a limited number of conversions per month.</li>
+            <li>Paid plans (Pro, Enterprise) are billed monthly via Stripe. You may cancel anytime from the billing portal.</li>
+            <li>We reserve the right to modify plan limits with reasonable notice.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>4. Accuracy Disclaimer</h2>
+        <p>StatementFlow provides extracted data on a best-effort basis. We do not guarantee 100% accuracy of extracted transactions, amounts, or balances. You are responsible for verifying the output before relying on it for financial decisions.</p>
+    </section>
+
+    <section>
+        <h2>5. File Handling</h2>
+        <p>Uploaded files are processed and deleted immediately. We do not retain copies of your bank statements. Converted files are available for a limited time for download and are then permanently deleted.</p>
+    </section>
+
+    <section>
+        <h2>6. Limitation of Liability</h2>
+        <p>StatementFlow is provided "as is" without warranties of any kind. We are not liable for any damages arising from inaccurate extraction, service downtime, or data loss.</p>
+    </section>
+
+    <section>
+        <h2>7. Changes to Terms</h2>
+        <p>We may update these terms from time to time. Continued use of the service constitutes acceptance of the updated terms.</p>
+    </section>
+</main>
+{% endblock %}

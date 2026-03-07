@@ -96,6 +96,7 @@
                 {% if current_user_email %}
                     {% set plan = session.get('plan_id', 'free') %}
                     <span class="nav-plan-badge plan-{{ plan }}">{{ plan|capitalize }}</span>
+                    <a href="{{ url_for('account') }}" class="nav-signin">Account</a>
                     <a href="/signout" class="nav-signin">Sign Out</a>
                 {% else %}
                     <a href="/signin" class="nav-signin">Sign In</a>
@@ -141,14 +142,13 @@
             <div class="footer-section">
                 <h4>Legal</h4>
                 <ul>
-                    <li><a href="{{ url_for('blogs') }}">Privacy</a></li>
-                    <li><a href="{{ url_for('blogs') }}">Terms of Service</a></li>
-                    <li><a href="{{ url_for('blogs') }}">Privacy Policy</a></li>
+                    <li><a href="{{ url_for('privacy') }}">Privacy Policy</a></li>
+                    <li><a href="{{ url_for('terms') }}">Terms of Service</a></li>
                 </ul>
             </div>
         </div>
         <div class="footer-bottom">
-            <p>&copy; 2025 PDF to Excel Converter. All rights reserved.</p>
+            <p>&copy; {{ now().year }} PDF to Excel Converter. All rights reserved.</p>
             <p><i class="fas fa-shield-alt"></i> Your files are processed securely and automatically deleted after conversion.</p>
         </div>
     </footer>
@@ -163,15 +163,41 @@
             const navToggle = document.getElementById('navToggle');
             const navMenu = document.getElementById('navMenu');
             const navContainer = document.getElementById('navContainer');
-            
-            if (navToggle && navMenu && navContainer) {
-                navToggle.addEventListener('click', function() {
-                    navMenu.classList.toggle('active');
-                    navContainer.classList.toggle('nav-open');
-                    navToggle.classList.toggle('active');
-                    navToggle.setAttribute('aria-expanded', navMenu.classList.contains('active'));
-                });
+
+            if (!navToggle || !navMenu || !navContainer) return;
+
+            function closeNav() {
+                navMenu.classList.remove('active');
+                navContainer.classList.remove('nav-open');
+                navToggle.classList.remove('active');
+                navToggle.setAttribute('aria-expanded', 'false');
             }
+
+            navToggle.addEventListener('click', function() {
+                const isOpen = navMenu.classList.toggle('active');
+                navContainer.classList.toggle('nav-open');
+                navToggle.classList.toggle('active');
+                navToggle.setAttribute('aria-expanded', isOpen);
+                if (isOpen) {
+                    const firstLink = navMenu.querySelector('a');
+                    if (firstLink) firstLink.focus();
+                }
+            });
+
+            // Close on Escape
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && navMenu.classList.contains('active')) {
+                    closeNav();
+                    navToggle.focus();
+                }
+            });
+
+            // Close when clicking outside nav
+            document.addEventListener('click', function(e) {
+                if (navMenu.classList.contains('active') && !navContainer.contains(e.target)) {
+                    closeNav();
+                }
+            });
         });
     </script>
 </body>

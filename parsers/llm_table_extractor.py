@@ -108,8 +108,12 @@ class LLMTableExtractor:
         'gpt-4-turbo': {'context': 128000, 'cost_per_1k_input': 0.01, 'cost_per_1k_output': 0.03},
     }
     
+    # Configurable safety limits
+    MAX_OUTPUT_TOKENS = int(os.environ.get('LLM_MAX_OUTPUT_TOKENS', '4096'))
+    REQUEST_TIMEOUT = float(os.environ.get('LLM_REQUEST_TIMEOUT', '60'))
+
     def __init__(
-        self, 
+        self,
         model: str = "gpt-4o-mini",
         max_retries: int = 2,
         temperature: float = 0.1
@@ -241,7 +245,8 @@ class LLMTableExtractor:
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=self.temperature,
-                    max_tokens=8192  # CSV is more compact, 8K should be plenty
+                    max_tokens=self.MAX_OUTPUT_TOKENS,
+                    timeout=self.REQUEST_TIMEOUT,
                 )
                 
                 raw_response = response.choices[0].message.content

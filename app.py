@@ -7,6 +7,7 @@ Universal parser for bank statement PDFs
 from dotenv import load_dotenv
 load_dotenv()
 
+import logging
 import os
 import tempfile
 import uuid
@@ -14,6 +15,8 @@ import gc
 from datetime import datetime, timedelta
 import hashlib
 import secrets
+
+logger = logging.getLogger(__name__)
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for, session
 from werkzeug.exceptions import RequestEntityTooLarge
 from flask_socketio import SocketIO, emit
@@ -87,7 +90,7 @@ if not os.path.exists(UPLOAD_FOLDER):
 try:
     init_db()
 except Exception as e:
-    print(f"⚠️ Database initialization failed: {e}")
+    logger.warning(f"Database initialization failed: {e}")
 
 # Supported banks and their parsers
 SUPPORTED_BANKS = {
@@ -154,7 +157,8 @@ def inject_csrf_token():
 @app.context_processor
 def inject_user_context():
     return {
-        'current_user_email': session.get('user_email')
+        'current_user_email': session.get('user_email'),
+        'now': datetime.utcnow,
     }
 
 def get_guest_id() -> str:
@@ -171,44 +175,79 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 def send_magic_link_email(email: str, link: str) -> None:
-    from boto3 import client
+    import resend
 
-    sender = os.environ.get('SES_FROM_EMAIL')
-    if not sender:
-        raise RuntimeError('SES_FROM_EMAIL is not configured')
+    api_key = os.environ.get('RESEND_API_KEY')
+    if not api_key:
+        raise RuntimeError('RESEND_API_KEY is not configured')
 
-    region = os.environ.get('SES_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
-    ses_kwargs = {'region_name': region}
-    ses_key = os.environ.get('SES_ACCESS_KEY_ID')
-    ses_secret = os.environ.get('SES_SECRET_ACCESS_KEY')
-    if ses_key and ses_secret:
-        ses_kwargs['aws_access_key_id'] = ses_key
-        ses_kwargs['aws_secret_access_key'] = ses_secret
-    ses_client = client('ses', **ses_kwargs)
+    resend.api_key = api_key
+    sender = os.environ.get('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+    expiry_minutes = MAGIC_LINK_EXP_MINUTES
 
-    subject = "Your magic sign-in link"
-    body_text = f"Click the link to sign in:\n\n{link}\n\nIf you didn't request this, you can ignore this email."
-    body_html = f"""
-    <html>
-      <body style="font-family: Arial, sans-serif; color: #111;">
-        <p>Click the link below to sign in:</p>
-        <p><a href="{link}">Sign in to StatementFlow</a></p>
-        <p style="color:#555;font-size:12px;">If you didn't request this, you can ignore this email.</p>
-      </body>
-    </html>
-    """
-
-    ses_client.send_email(
-        Source=sender,
-        Destination={'ToAddresses': [email]},
-        Message={
-            'Subject': {'Data': subject},
-            'Body': {
-                'Text': {'Data': body_text},
-                'Html': {'Data': body_html}
-            }
-        }
-    )
+    resend.Emails.send({
+        "from": sender,
+        "to": [email],
+        "subject": "Your sign-in link for StatementFlow",
+        "text": (
+            f"Sign in to StatementFlow\n\n"
+            f"Click the link below to sign in:\n{link}\n\n"
+            f"This link expires in {expiry_minutes} minutes.\n"
+            f"If you didn't request this, you can safely ignore this email.\n\n"
+            f"- StatementFlow"
+        ),
+        "html": f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#667eea,#764ba2);padding:32px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;letter-spacing:-0.3px;">StatementFlow</h1>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px 20px;">
+            <p style="margin:0 0 20px;color:#333;font-size:16px;line-height:1.5;">
+              Click the button below to sign in to your account:
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td align="center" style="padding:8px 0 28px;">
+                <a href="{link}" style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,#667eea,#764ba2);color:#ffffff;text-decoration:none;border-radius:8px;font-size:16px;font-weight:600;letter-spacing:0.3px;">
+                  Sign in
+                </a>
+              </td></tr>
+            </table>
+            <p style="margin:0 0 8px;color:#666;font-size:13px;line-height:1.5;">
+              This link expires in <strong>{expiry_minutes} minutes</strong> and can only be used once.
+            </p>
+            <p style="margin:0 0 8px;color:#666;font-size:13px;line-height:1.5;">
+              If the button doesn't work, copy and paste this URL into your browser:
+            </p>
+            <p style="margin:0 0 20px;word-break:break-all;color:#667eea;font-size:12px;">{link}</p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="padding:20px 40px 28px;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;line-height:1.6;">
+              If you didn't request this email, you can safely ignore it.
+              <br>StatementFlow &mdash; PDF to Excel Converter
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+""",
+    })
 
 def get_usage_counter(db, user_id, guest_id, scope='lifetime'):
     return db.query(UsageCounter).filter_by(
@@ -229,10 +268,10 @@ def sync_session_plan():
                 session['plan_id'] = user.plan_id or 'free'
                 session['plan_status'] = user.plan_status or 'free'
     except Exception as e:
-        print(f"⚠️ sync_session_plan failed: {e}")
+        logger.warning(f"sync_session_plan failed: {e}")
 
 def check_conversion_quota(user_id, guest_id):
-    if DISABLE_QUOTAS or not os.environ.get('SES_FROM_EMAIL'):
+    if DISABLE_QUOTAS or not os.environ.get('RESEND_API_KEY'):
         return True, None
     try:
         monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
@@ -269,7 +308,7 @@ def check_conversion_quota(user_id, guest_id):
                         'requires_login': True
                     }
     except Exception as e:
-        print(f"⚠️ Quota check failed: {e}")
+        logger.warning(f"Quota check failed: {e}")
     return True, None
 
 def is_admin_user():
@@ -339,15 +378,62 @@ def cleanup_feedback_shared_pdfs(force: bool = False):
                     try:
                         delete_file(storage, key)
                     except Exception as exc:
-                        print(f"⚠️ Feedback retention delete failed for {key}: {exc}")
+                        logger.warning(f"Feedback retention delete failed for {key}: {exc}")
                         continue
                 item.pdf_storage_key = None
                 if item.status == "new":
                     item.status = "expired"
     except Exception as exc:
-        print(f"⚠️ Feedback retention sweep failed: {exc}")
+        logger.warning(f"Feedback retention sweep failed: {exc}")
     finally:
         _last_feedback_retention_sweep = now
+
+_last_s3_cleanup_sweep = None
+S3_RESULT_RETENTION_HOURS = int(os.environ.get('S3_RESULT_RETENTION_HOURS', '24'))
+
+def cleanup_expired_s3_results(force: bool = False):
+    """Delete S3 result files for jobs older than the retention window."""
+    global _last_s3_cleanup_sweep
+
+    if S3_RESULT_RETENTION_HOURS <= 0:
+        return
+
+    now = datetime.utcnow()
+    # Run at most once per hour
+    if (
+        not force
+        and _last_s3_cleanup_sweep
+        and now - _last_s3_cleanup_sweep < timedelta(hours=1)
+    ):
+        return
+
+    storage = get_storage_config()
+    if not storage:
+        _last_s3_cleanup_sweep = now
+        return
+
+    cutoff = now - timedelta(hours=S3_RESULT_RETENTION_HOURS)
+    try:
+        with get_db_session() as db:
+            stale_jobs = (
+                db.query(Job)
+                .filter(Job.storage_key.isnot(None))
+                .filter(Job.finished_at < cutoff)
+                .limit(100)
+                .all()
+            )
+            for job in stale_jobs:
+                try:
+                    delete_file(storage, job.storage_key)
+                except Exception as exc:
+                    logger.warning(f"S3 cleanup failed for {job.storage_key}: {exc}")
+                    continue
+                job.storage_key = None
+    except Exception as exc:
+        logger.warning(f"S3 cleanup sweep failed: {exc}")
+    finally:
+        _last_s3_cleanup_sweep = now
+
 
 def progress_callback(progress_data):
     """Callback function to emit progress updates via WebSocket"""
@@ -392,6 +478,7 @@ def home():
     """Home page with upload functionality"""
     cleanup_old_files()
     cleanup_feedback_shared_pdfs()
+    cleanup_expired_s3_results()
     return render_template(
         'home.html',
         banks=SUPPORTED_BANKS,
@@ -422,6 +509,14 @@ def pricing():
         plan_status=session.get('plan_status', 'free'),
         stripe_publishable_key=os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
     )
+
+@app.route('/privacy')
+def privacy():
+    return render_template('privacy.html', feedback_retention_days=FEEDBACK_RETENTION_DAYS)
+
+@app.route('/terms')
+def terms():
+    return render_template('terms.html')
 
 @app.route('/signin')
 def signin():
@@ -523,6 +618,52 @@ def auth_verify():
         flash('Unable to verify sign-in link. Please try again.', 'error')
         return redirect(url_for('signin'))
 
+@app.route('/account')
+def account():
+    """Account dashboard — plan, usage, and recent conversions."""
+    user_id = session.get('user_id')
+    if not user_id:
+        flash('Please sign in to view your account.', 'error')
+        return redirect(url_for('signin'))
+
+    sync_session_plan()
+    plan_id = session.get('plan_id', 'free')
+    plan_status = session.get('plan_status', 'free')
+    plan = PLAN_CONFIG.get(plan_id, PLAN_CONFIG['free'])
+    monthly_limit = plan['monthly_conversions']
+
+    monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
+    used_this_month = 0
+    recent_jobs = []
+
+    try:
+        with get_db_session() as db:
+            counter = get_usage_counter(db, user_id=user_id, guest_id=None, scope=monthly_scope)
+            used_this_month = counter.conversions_count if counter else 0
+            recent_jobs = (
+                db.query(Job)
+                .filter_by(user_id=user_id)
+                .order_by(Job.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            # Detach from session so template can read attributes after session closes
+            for job in recent_jobs:
+                db.expunge(job)
+    except Exception as e:
+        flash(f'Unable to load account data.', 'error')
+
+    return render_template(
+        'account.html',
+        plan_id=plan_id,
+        plan_status=plan_status,
+        monthly_limit=monthly_limit,
+        used_this_month=used_this_month,
+        max_upload_mb=plan['max_upload_mb'],
+        recent_jobs=recent_jobs,
+        stripe_publishable_key=os.environ.get('STRIPE_PUBLISHABLE_KEY', ''),
+    )
+
 @app.route('/signout')
 def signout():
     guest_id = session.get('guest_id')
@@ -550,7 +691,7 @@ def admin_dashboard():
             stats['completed'] = db.query(Job).filter(Job.status.like('completed%')).count()
             recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(20).all()
     except Exception as e:
-        print(f"⚠️ Admin dashboard query failed: {e}")
+        logger.warning(f"Admin dashboard query failed: {e}")
 
     return render_template('admin.html', stats=stats, recent_jobs=recent_jobs)
 
@@ -667,7 +808,7 @@ def convert():
                 )
                 db.add(job)
         except Exception as e:
-            print(f"⚠️ Failed to record job: {e}")
+            logger.warning(f"Failed to record job: {e}")
         
         # Get optional API key and quality mode
         api_key = request.form.get('api_key')
@@ -824,7 +965,7 @@ def submit_feedback():
         return jsonify({'status': 'ok', 'message': 'Thank you for your feedback!'}), 200
 
     except Exception as e:
-        print(f"⚠️ Feedback submission error: {e}")
+        logger.warning(f"Feedback submission error: {e}")
         return jsonify({'status': 'error', 'error': 'Failed to submit feedback.'}), 500
 
 
@@ -871,7 +1012,7 @@ def checkout_create():
         return jsonify({'checkout_url': checkout_session.url})
 
     except Exception as e:
-        print(f"⚠️ Checkout create failed: {e}")
+        logger.warning(f"Checkout create failed: {e}")
         return jsonify({'error': 'Unable to create checkout session.'}), 500
 
 
@@ -890,7 +1031,7 @@ def stripe_webhook():
     webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
 
     if not webhook_secret:
-        print("⚠️ STRIPE_WEBHOOK_SECRET not configured")
+        logger.warning("STRIPE_WEBHOOK_SECRET not configured")
         return '', 400
 
     try:
@@ -913,7 +1054,7 @@ def stripe_webhook():
         try:
             handler(data_object)
         except Exception as e:
-            print(f"⚠️ Webhook handler error for {event_type}: {e}")
+            logger.warning(f"Webhook handler error for {event_type}: {e}")
 
     return '', 200
 
@@ -934,7 +1075,7 @@ def _handle_checkout_completed(session_obj):
                     user_id = user.id
 
     if not user_id:
-        print(f"⚠️ checkout.session.completed: no user_id found")
+        logger.warning(f"checkout.session.completed: no user_id found")
         return
 
     with get_db_session() as db:
@@ -945,6 +1086,68 @@ def _handle_checkout_completed(session_obj):
             user.stripe_subscription_id = subscription_id
             if customer_id and not user.stripe_customer_id:
                 user.stripe_customer_id = customer_id
+            _send_plan_change_email(user.email, plan_id or 'pro', 'activated')
+
+
+def _send_plan_change_email(email: str, plan_id: str, action: str) -> None:
+    """Best-effort notification when a subscription changes."""
+    try:
+        import resend
+        api_key = os.environ.get('RESEND_API_KEY')
+        if not api_key:
+            return
+        resend.api_key = api_key
+        sender = os.environ.get('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+
+        subjects = {
+            'activated': f'Your {plan_id.capitalize()} plan is active',
+            'canceled': 'Your subscription has been canceled',
+        }
+        bodies = {
+            'activated': f'Your <strong>{plan_id.capitalize()}</strong> plan is now active. Enjoy your upgraded limits!',
+            'canceled': 'Your subscription has been canceled and your account has been moved to the Free plan. You can re-subscribe anytime from the Pricing page.',
+        }
+        subject = subjects.get(action, f'Subscription update: {action}')
+        body = bodies.get(action, f'Your subscription status has changed to: {action}.')
+
+        resend.Emails.send({
+            "from": sender,
+            "to": [email],
+            "subject": subject,
+            "text": body.replace('<strong>', '').replace('</strong>', ''),
+            "html": f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#667eea,#764ba2);padding:28px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:600;">StatementFlow</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 40px;">
+            <p style="margin:0 0 16px;color:#333;font-size:16px;line-height:1.5;">{body}</p>
+            <p style="margin:0;color:#666;font-size:13px;">If you have questions, reply to this email.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 40px 24px;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">StatementFlow &mdash; PDF to Excel Converter</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+""",
+        })
+    except Exception as e:
+        logger.warning(f"Plan change email failed for {email}: {e}")
 
 
 def _handle_subscription_updated(subscription):
@@ -981,6 +1184,7 @@ def _handle_subscription_deleted(subscription):
             user.plan_id = 'free'
             user.plan_status = 'free'
             user.stripe_subscription_id = None
+            _send_plan_change_email(user.email, 'free', 'canceled')
 
 
 def _handle_payment_failed(invoice):
@@ -1021,7 +1225,7 @@ def billing_portal():
         return redirect(portal_session.url)
 
     except Exception as e:
-        print(f"⚠️ Billing portal failed: {e}")
+        logger.warning(f"Billing portal failed: {e}")
         flash('Unable to open billing portal.', 'error')
         return redirect(url_for('pricing'))
 
@@ -1050,33 +1254,44 @@ def health_check():
 def detailed_health():
     """Detailed health check with more info"""
     try:
-        # Test basic functionality
-        response_data = {
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'service': 'pdf-excel-converter',
-            'version': '1.0.0',
-            'checks': {
-                'flask': 'OK',
-                'uploads_dir': 'OK' if os.path.exists(UPLOAD_FOLDER) else 'MISSING',
-                'parsers': 'OK'
-            }
+        checks = {
+            'flask': 'OK',
+            'uploads_dir': 'OK' if os.path.exists(UPLOAD_FOLDER) else 'MISSING',
+            'parsers': 'OK',
+            'redis': 'OK',
         }
-        
+
         # Test parsers import
         try:
             UniversalBankParser()
-            response_data['checks']['parsers'] = 'OK'
         except Exception:
-            response_data['checks']['parsers'] = 'ERROR'
-            
-        return jsonify(response_data), 200
-        
+            checks['parsers'] = 'ERROR'
+
+        # Test Redis connectivity
+        try:
+            import redis as _redis
+            r = _redis.StrictRedis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+            r.ping()
+        except Exception:
+            checks['redis'] = 'ERROR'
+
+        all_ok = all(v == 'OK' for v in checks.values())
+
+        response_data = {
+            'status': 'healthy' if all_ok else 'degraded',
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'pdf-excel-converter',
+            'version': os.environ.get('APP_VERSION', 'dev'),
+            'checks': checks,
+        }
+
+        return jsonify(response_data), 200 if all_ok else 503
+
     except Exception as e:
         return jsonify({
             'status': 'error',
             'error': str(e),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.utcnow().isoformat()
         }), 500
 
 
@@ -1086,25 +1301,38 @@ def sitemap():
     from flask import Response
     base_url = request.url_root.rstrip('/')
     
+    today = datetime.utcnow().strftime('%Y-%m-%d')
     sitemap_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
         <loc>{base_url}/</loc>
-        <lastmod>2025-01-27</lastmod>
+        <lastmod>{today}</lastmod>
         <changefreq>weekly</changefreq>
         <priority>1.0</priority>
     </url>
     <url>
         <loc>{base_url}/blogs</loc>
-        <lastmod>2025-01-27</lastmod>
+        <lastmod>{today}</lastmod>
         <changefreq>weekly</changefreq>
         <priority>0.8</priority>
     </url>
     <url>
         <loc>{base_url}/pricing</loc>
-        <lastmod>2025-01-27</lastmod>
+        <lastmod>{today}</lastmod>
         <changefreq>monthly</changefreq>
         <priority>0.9</priority>
+    </url>
+    <url>
+        <loc>{base_url}/privacy</loc>
+        <lastmod>{today}</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.3</priority>
+    </url>
+    <url>
+        <loc>{base_url}/terms</loc>
+        <lastmod>{today}</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.3</priority>
     </url>
 </urlset>"""
     
@@ -1120,6 +1348,8 @@ def robots():
 Allow: /
 Allow: /blogs
 Allow: /pricing
+Allow: /privacy
+Allow: /terms
 Disallow: /uploads/
 Disallow: /processed/
 Disallow: /status/

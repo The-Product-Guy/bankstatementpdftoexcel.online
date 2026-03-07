@@ -4,10 +4,24 @@
 
 {% block content %}
 <main class="main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-messages">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }}" role="alert">
+            <i class="fas fa-{% if category == 'error' %}exclamation-triangle{% elif category == 'warning' %}exclamation-circle{% else %}check-circle{% endif %}"></i>
+            {{ message }}
+            <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
     <section class="signin-section">
         <div class="signin-card">
             <h1>Sign in</h1>
-            <p>Get 5 lifetime conversions when you sign up.</p>
+            <p>Get 5 free conversions per month when you sign up.</p>
             <form method="POST" action="{{ url_for('auth_start') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label for="email" class="form-label">Work email</label>

@@ -42,7 +42,10 @@ def _get_anthropic_client():
                     "ANTHROPIC_API_KEY environment variable not set. "
                     "Set it with: export ANTHROPIC_API_KEY='your-key'"
                 )
-            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+            _anthropic_client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=float(os.environ.get('LLM_REQUEST_TIMEOUT', '60')),
+            )
         except ImportError:
             raise ImportError("anthropic not installed. Install with: pip install anthropic")
     return _anthropic_client
