@@ -22,7 +22,7 @@
         <div class="signin-card">
             <h1>Sign in</h1>
             <p>Get 5 free conversions per month when you sign up.</p>
-            <form method="POST" action="{{ url_for('auth_start') }}">
+            <form method="POST" action="{{ url_for('auth.auth_start') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label for="email" class="form-label">Work email</label>
                 <input id="email" name="email" type="email" required class="signin-input" placeholder="you@company.com">

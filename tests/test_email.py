@@ -20,7 +20,7 @@ class TestMagicLinkEmail:
 
     @patch.dict(os.environ, {"RESEND_API_KEY": "", "RESEND_FROM_EMAIL": ""})
     def test_missing_api_key_raises(self):
-        from app import send_magic_link_email
+        from routes.auth import send_magic_link_email
         with pytest.raises(RuntimeError, match="RESEND_API_KEY"):
             send_magic_link_email("user@example.com", "https://example.com/verify?token=abc")
 
@@ -31,11 +31,10 @@ class TestMagicLinkEmail:
     def test_send_calls_resend(self):
         mock_resend = MagicMock()
         with patch.dict("sys.modules", {"resend": mock_resend}):
-            # Re-import to pick up the mocked resend module
             import importlib
-            import app as app_module
-            importlib.reload(app_module)
-            app_module.send_magic_link_email("user@example.com", "https://example.com/verify?token=abc")
+            import routes.auth as auth_module
+            importlib.reload(auth_module)
+            auth_module.send_magic_link_email("user@example.com", "https://example.com/verify?token=abc")
 
             mock_resend.Emails.send.assert_called_once()
             call_args = mock_resend.Emails.send.call_args[0][0]
@@ -51,8 +50,7 @@ class TestPlanChangeEmail:
 
     @patch.dict(os.environ, {"RESEND_API_KEY": ""})
     def test_no_key_silently_returns(self):
-        from app import _send_plan_change_email
-        # Should not raise
+        from routes.billing import _send_plan_change_email
         _send_plan_change_email("user@example.com", "pro", "activated")
 
     @patch.dict(os.environ, {
@@ -62,7 +60,7 @@ class TestPlanChangeEmail:
     def test_activation_email(self):
         mock_resend = MagicMock()
         with patch.dict("sys.modules", {"resend": mock_resend}):
-            from app import _send_plan_change_email
+            from routes.billing import _send_plan_change_email
             _send_plan_change_email("user@example.com", "pro", "activated")
 
             mock_resend.Emails.send.assert_called_once()
@@ -77,7 +75,7 @@ class TestPlanChangeEmail:
     def test_cancellation_email(self):
         mock_resend = MagicMock()
         with patch.dict("sys.modules", {"resend": mock_resend}):
-            from app import _send_plan_change_email
+            from routes.billing import _send_plan_change_email
             _send_plan_change_email("user@example.com", "free", "canceled")
 
             call_args = mock_resend.Emails.send.call_args[0][0]

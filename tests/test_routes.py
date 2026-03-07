@@ -106,7 +106,7 @@ class TestAuthRoutes:
         })
         assert resp.status_code == 302
 
-    @patch("app.send_magic_link_email")
+    @patch("routes.auth.send_magic_link_email")
     def test_auth_start_sends_email(self, mock_send, client):
         with client.session_transaction() as sess:
             sess["csrf_token"] = "test-token"

@@ -6,7 +6,7 @@
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
-{% block canonical_url %}{{ url_for('home', _external=True) }}{% endblock %}
+{% block canonical_url %}{{ url_for('pages.home', _external=True) }}{% endblock %}
 
 {% block og_title %}PDF to Excel Converter - Convert Bank Statements Online | Free Tool{% endblock %}
 
@@ -23,7 +23,7 @@
   "@type": "WebApplication",
   "name": "StatementFlow",
   "description": "Convert bank statement PDFs to Excel format instantly. Supports all major banks.",
-  "url": "{{ url_for('home', _external=True) }}",
+  "url": "{{ url_for('pages.home', _external=True) }}",
   "applicationCategory": "UtilityApplication",
   "operatingSystem": "Web",
   "offers": {
@@ -44,7 +44,7 @@
   "@context": "https://schema.org",
   "@type": "Organization",
   "name": "StatementFlow",
-  "url": "{{ url_for('home', _external=True) }}",
+  "url": "{{ url_for('pages.home', _external=True) }}",
   "logo": "{{ url_for('static', filename='og-image.png', _external=True) }}",
   "description": "Professional bank statement PDF to Excel conversion service"
 }
@@ -98,7 +98,7 @@
                 <h2>Drop your Bank Statement PDF here</h2>
                 <p>or browse to upload in seconds</p>
             </div>
-            <form id="uploadForm" action="{{ url_for('convert') }}" method="POST" enctype="multipart/form-data">
+            <form id="uploadForm" action="{{ url_for('converter.convert') }}" method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="bank" value="universal">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -261,7 +261,7 @@
     <p>Simple pricing for freelancers and enterprise teams. Try it for free.</p>
     <div class="cta-actions">
         <a href="#convert" class="btn-primary">Convert a File Now</a>
-        <a href="{{ url_for('pricing') }}" class="btn-secondary">View Pricing Plans</a>
+        <a href="{{ url_for('pages.pricing') }}" class="btn-secondary">View Pricing Plans</a>
     </div>
 </section>
 </main>

@@ -55,9 +55,9 @@
                 </div>
                 <div class="plan-actions">
                     {% if plan_id == 'free' %}
-                        <a href="{{ url_for('pricing') }}" class="btn-primary">Upgrade Plan</a>
+                        <a href="{{ url_for('pages.pricing') }}" class="btn-primary">Upgrade Plan</a>
                     {% else %}
-                        <form method="POST" action="{{ url_for('billing_portal') }}" style="display:inline;">
+                        <form method="POST" action="{{ url_for('billing.billing_portal') }}" style="display:inline;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-secondary">Manage Billing</button>
                         </form>
@@ -86,7 +86,7 @@
                         <p class="usage-text">{{ used_this_month }} / {{ monthly_limit }} conversions used</p>
                         {% if pct >= 90 and plan_id == 'free' %}
                             <p class="usage-upgrade-hint">
-                                <a href="{{ url_for('pricing') }}">Upgrade to Pro</a> for 50 conversions/month.
+                                <a href="{{ url_for('pages.pricing') }}">Upgrade to Pro</a> for 50 conversions/month.
                             </p>
                         {% endif %}
                     {% endif %}
@@ -141,7 +141,7 @@
                 </table>
             </div>
             {% else %}
-                <p class="empty-state">No conversions yet. <a href="{{ url_for('home') }}#convert">Convert your first PDF</a>.</p>
+                <p class="empty-state">No conversions yet. <a href="{{ url_for('pages.home') }}#convert">Convert your first PDF</a>.</p>
             {% endif %}
         </div>
     </div>

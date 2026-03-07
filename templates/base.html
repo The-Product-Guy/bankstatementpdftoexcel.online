@@ -82,21 +82,21 @@
     <nav class="main-nav">
         <div class="nav-container" id="navContainer">
             <div class="nav-brand">
-                <a href="{{ url_for('home') }}">
+                <a href="{{ url_for('pages.home') }}">
                     <i class="fas fa-layer-group"></i>
                     <span>StatementFlow</span>
                 </a>
             </div>
             <div class="nav-links" id="navMenu">
-                <a href="{{ url_for('home') }}#how-it-works">How it Works</a>
-                <a href="{{ url_for('pricing') }}" {% if request.endpoint == 'pricing' %}class="active"{% endif %}>Pricing</a>
-                <a href="{{ url_for('blogs') }}" {% if request.endpoint == 'blogs' %}class="active"{% endif %}>Blog</a>
+                <a href="{{ url_for('pages.home') }}#how-it-works">How it Works</a>
+                <a href="{{ url_for('pages.pricing') }}" {% if request.endpoint == 'pages.pricing' %}class="active"{% endif %}>Pricing</a>
+                <a href="{{ url_for('pages.blogs') }}" {% if request.endpoint == 'pages.blogs' %}class="active"{% endif %}>Blog</a>
             </div>
             <div class="nav-actions">
                 {% if current_user_email %}
                     {% set plan = session.get('plan_id', 'free') %}
                     <span class="nav-plan-badge plan-{{ plan }}">{{ plan|capitalize }}</span>
-                    <a href="{{ url_for('account') }}" class="nav-signin">Account</a>
+                    <a href="{{ url_for('auth.account') }}" class="nav-signin">Account</a>
                     <a href="/signout" class="nav-signin">Sign Out</a>
                 {% else %}
                     <a href="/signin" class="nav-signin">Sign In</a>
@@ -125,25 +125,25 @@
             <div class="footer-section">
                 <h4>Quick Links</h4>
                 <ul>
-                    <li><a href="{{ url_for('home') }}">Home</a></li>
-                    <li><a href="{{ url_for('blogs') }}">Blogs</a></li>
-                    <li><a href="{{ url_for('pricing') }}">Pricing</a></li>
-                    <li><a href="{{ url_for('home') }}#convert">Convert PDF</a></li>
+                    <li><a href="{{ url_for('pages.home') }}">Home</a></li>
+                    <li><a href="{{ url_for('pages.blogs') }}">Blogs</a></li>
+                    <li><a href="{{ url_for('pages.pricing') }}">Pricing</a></li>
+                    <li><a href="{{ url_for('pages.home') }}#convert">Convert PDF</a></li>
                 </ul>
             </div>
             <div class="footer-section">
                 <h4>Support</h4>
                 <ul>
-                    <li><a href="{{ url_for('blogs') }}">Help Center</a></li>
-                    <li><a href="{{ url_for('blogs') }}">Tutorials</a></li>
-                    <li><a href="{{ url_for('blogs') }}">FAQs</a></li>
+                    <li><a href="{{ url_for('pages.blogs') }}">Help Center</a></li>
+                    <li><a href="{{ url_for('pages.blogs') }}">Tutorials</a></li>
+                    <li><a href="{{ url_for('pages.blogs') }}">FAQs</a></li>
                 </ul>
             </div>
             <div class="footer-section">
                 <h4>Legal</h4>
                 <ul>
-                    <li><a href="{{ url_for('privacy') }}">Privacy Policy</a></li>
-                    <li><a href="{{ url_for('terms') }}">Terms of Service</a></li>
+                    <li><a href="{{ url_for('pages.privacy') }}">Privacy Policy</a></li>
+                    <li><a href="{{ url_for('pages.terms') }}">Terms of Service</a></li>
                 </ul>
             </div>
         </div>

@@ -23,16 +23,12 @@ App runs at http://localhost:5001.
 
 ### Tests
 ```bash
-python -m pytest tests/test_parsers.py -v          # Unit tests (image preprocessor, parsers)
+python -m pytest tests/ -v                          # Full test suite (83 tests)
+python -m pytest tests/test_routes.py -v            # Route tests
+python -m pytest tests/test_email.py -v             # Email tests
+python -m pytest tests/test_parsers.py -v           # Parser unit tests
 python -m pytest tests/test_parsers.py::TestImagePreprocessor::test_pil_to_cv2_rgb -v  # Single test
 python test_universal.py                            # Integration test with a sample PDF
-```
-
-### Other test/check scripts in `tests/`
-Files named `*_checks.py` are standalone verification scripts (not pytest), run directly:
-```bash
-python tests/bank_profiles_checks.py
-python tests/template_extraction_checks.py
 ```
 
 ### Benchmarking
@@ -68,7 +64,11 @@ The extraction pipeline in `universal_parser.py` follows this strategy cascade:
 For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks processed independently then merged.
 
 ### Key Modules
-- `app.py`: All Flask routes (auth, convert, billing, admin, health), SocketIO setup, Stripe integration
+- `app.py`: Flask app setup, shared config/utilities, context processors, middleware. Routes split into Blueprints:
+  - `routes/auth.py`: signin, magic link, verify, signout, account
+  - `routes/billing.py`: Stripe checkout, webhooks, billing portal
+  - `routes/converter.py`: PDF upload, status polling, download, feedback
+  - `routes/pages.py`: public pages, SEO (sitemap/robots), health checks, admin
 - `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs parser, builds Excel (2 sheets: transactions + summary), uploads result
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
 - `db.py`: Engine/session management. Falls back to `sqlite:///local.db` when `DATABASE_URL` is unset
@@ -86,7 +86,7 @@ Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_K
 
 ## Conventions
 
-- Auth is magic-link email via AWS SES (no passwords)
+- Auth is magic-link email via Resend SDK (no passwords)
 - Plans: free (5 conversions/month), pro (50), enterprise (unlimited) — managed via Stripe subscriptions
 - Worker communicates progress to web via Redis keys; web pushes to browser via SocketIO
 - Transaction output format is standardized: Date, Description, Reference_Number, Withdrawal_Amount, Deposit_Amount, Transaction_Amount, Closing_Balance, Source_File, Page_Line
