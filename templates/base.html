@@ -43,6 +43,9 @@
     {# Structured Data (JSON-LD) #}
     {% block structured_data %}{% endblock %}
 
+    {# Umami Analytics #}
+    <script defer src="https://umami-production-9269.up.railway.app/script.js" data-website-id="b12954fa-b821-4978-a835-aa70845aee96"></script>
+
     {# Google Analytics (gtag.js) #}
     {% if config.get('GA_MEASUREMENT_ID') %}
     <script async src="https://www.googletagmanager.com/gtag/js?id={{ config.get('GA_MEASUREMENT_ID') }}"></script>
@@ -76,7 +79,7 @@
         <div class="nav-container" id="navContainer">
             <div class="nav-brand">
                 <a href="{{ url_for('pages.home') }}">
-                    <img src="{{ url_for('static', filename='ambion-logo.svg') }}" alt="Ambion" height="32">
+                    <img src="{{ url_for('static', filename='ambion-logo.svg') }}" alt="Ambion" height="48">
                     <span>Statement Converter</span>
                 </a>
             </div>
