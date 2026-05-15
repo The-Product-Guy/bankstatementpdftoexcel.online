@@ -37,11 +37,24 @@ class TestPublicRoutes:
         resp = client.get("/pricing")
         assert resp.status_code == 200
         assert b"Pricing" in resp.data
+        assert b"<h1>Simple, Transparent Pricing</h1>" in resp.data
 
     def test_blogs(self, client):
         resp = client.get("/blogs")
         assert resp.status_code == 200
         assert b"Blog" in resp.data
+        assert b"<h1>Blog and Guides</h1>" in resp.data
+        assert b"/blogs/how-to-convert-bank-statements-to-excel" in resp.data
+
+    def test_blog_article(self, client):
+        resp = client.get("/blogs/how-to-convert-bank-statements-to-excel")
+        assert resp.status_code == 200
+        assert b"<h1>How to Convert Bank Statements to Excel</h1>" in resp.data
+        assert b"Article" in resp.data
+
+    def test_blog_article_missing(self, client):
+        resp = client.get("/blogs/not-a-real-post")
+        assert resp.status_code == 404
 
     def test_signin(self, client):
         resp = client.get("/signin")
@@ -76,6 +89,8 @@ class TestPublicRoutes:
         assert b"<urlset" in resp.data
         assert b"/privacy" in resp.data
         assert b"/terms" in resp.data
+        assert b"/blogs/how-to-convert-bank-statements-to-excel" in resp.data
+        assert b"<lastmod>2026-05-15</lastmod>" in resp.data
 
     def test_robots(self, client):
         resp = client.get("/robots.txt")

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} | Statement Converter{% endblock %}
+
+{% block meta_description %}{{ post.description }}{% endblock %}
+
+{% block canonical_url %}{{ url_for('pages.blog_post', slug=post.slug, _external=True) }}{% endblock %}
+
+{% block og_type %}article{% endblock %}
+
+{% block og_title %}{{ post.title }} | Statement Converter{% endblock %}
+
+{% block og_description %}{{ post.description }}{% endblock %}
+
+{% block twitter_title %}{{ post.title }} | Statement Converter{% endblock %}
+
+{% block twitter_description %}{{ post.description }}{% endblock %}
+
+{% block structured_data %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ post.title|tojson }},
+  "description": {{ post.description|tojson }},
+  "dateModified": "{{ post.lastmod }}",
+  "mainEntityOfPage": "{{ url_for('pages.blog_post', slug=post.slug, _external=True) }}",
+  "publisher": {
+    "@type": "Organization",
+    "name": "Ambion Softwares",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "{{ url_for('static', filename='ambion-logo.svg', _external=True) }}"
+    }
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "{{ url_for('pages.home', _external=True) }}"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Blog",
+      "item": "{{ url_for('pages.blogs', _external=True) }}"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": {{ post.title|tojson }},
+      "item": "{{ url_for('pages.blog_post', slug=post.slug, _external=True) }}"
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<main class="main-content legal-page">
+    <p class="legal-updated">{{ post.category }}</p>
+    <h1>{{ post.title }}</h1>
+    <p>{{ post.description }}</p>
+
+    {% for section in post.sections %}
+    <section>
+        <h2>{{ section.heading }}</h2>
+        {% for paragraph in section.get('paragraphs', []) %}
+            <p>{{ paragraph }}</p>
+        {% endfor %}
+        {% if section.get('items') %}
+            <ul>
+            {% for item in section.get('items', []) %}
+                <li>{{ item }}</li>
+            {% endfor %}
+            </ul>
+        {% endif %}
+    </section>
+    {% endfor %}
+
+    <p><a href="{{ url_for('pages.blogs') }}">Back to all guides</a></p>
+</main>
+{% endblock %}

@@ -61,7 +61,7 @@
 {% block content %}
 <main class="main-content">
     <div class="blog-hero">
-        <h2>Blog and Guides</h2>
+        <h1>Blog and Guides</h1>
         <p>Tips, tutorials, and answers about converting bank statements to Excel.</p>
     </div>
 
@@ -74,7 +74,7 @@
                 <div class="blog-post-meta">
                     <span class="blog-post-category">Tutorial</span>
                 </div>
-                <h3>How to Convert Bank Statements to Excel</h3>
+                <h2><a href="{{ url_for('pages.blog_post', slug='how-to-convert-bank-statements-to-excel') }}">How to Convert Bank Statements to Excel</a></h2>
                 <div class="blog-body">
                     <p>Converting bank statement PDFs to Excel is straightforward with Statement Converter. Here's how it works:</p>
                     <ol>
@@ -96,7 +96,7 @@
                 <div class="blog-post-meta">
                     <span class="blog-post-category">Tips</span>
                 </div>
-                <h3>5 Excel Tips for Working with Converted Statements</h3>
+                <h2><a href="{{ url_for('pages.blog_post', slug='excel-tips-for-converted-bank-statements') }}">5 Excel Tips for Working with Converted Statements</a></h2>
                 <div class="blog-body">
                     <ol>
                         <li><strong>Pivot tables</strong> - select your transaction data and insert a PivotTable to summarize spending by category or month.</li>
@@ -117,7 +117,7 @@
                 <div class="blog-post-meta">
                     <span class="blog-post-category">Security</span>
                 </div>
-                <h3>How We Keep Your Financial Data Safe</h3>
+                <h2><a href="{{ url_for('pages.blog_post', slug='how-financial-data-is-handled') }}">How We Handle Your Financial Data</a></h2>
                 <div class="blog-body">
                     <p>Bank statements contain sensitive information. Here's how Statement Converter protects you:</p>
                     <ul>
@@ -139,7 +139,7 @@
                 <div class="blog-post-meta">
                     <span class="blog-post-category">Guide</span>
                 </div>
-                <h3>Text-Based vs Scanned PDFs: What's the Difference?</h3>
+                <h2><a href="{{ url_for('pages.blog_post', slug='text-based-vs-scanned-bank-statement-pdfs') }}">Text-Based vs Scanned PDFs: What's the Difference?</a></h2>
                 <div class="blog-body">
                     <p><strong>Text-based PDFs</strong> are generated digitally by your bank's online portal. The text is embedded in the PDF and can be copied. These convert the fastest and most accurately.</p>
                     <p><strong>Scanned PDFs</strong> are photographs of printed statements. The PDF contains images, not text. These need OCR (Optical Character Recognition) to extract the data, which takes longer but still gives accurate results.</p>
@@ -156,7 +156,7 @@
                 <div class="blog-post-meta">
                     <span class="blog-post-category">FAQ</span>
                 </div>
-                <h3>Frequently Asked Questions</h3>
+                <h2><a href="{{ url_for('pages.blog_post', slug='bank-statement-conversion-faq') }}">Frequently Asked Questions</a></h2>
                 <div class="blog-body">
                     <p><strong>Which banks are supported?</strong><br>Statement Converter is built for tabular bank statement PDFs, text-based or scanned. It includes profile hints for known formats and a universal fallback for other layouts.</p>
                     <p><strong>What's the maximum file size?</strong><br>Free plan: 20 MB. Pro: 100 MB. Enterprise: 500 MB. For large files (80+ pages), our engine splits them into chunks automatically.</p>

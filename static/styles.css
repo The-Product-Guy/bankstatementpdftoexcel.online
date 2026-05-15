@@ -1104,7 +1104,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   text-align: center;
   padding: 48px 0 36px;
 }
-.pricing-intro h2 {
+.pricing-intro h1 {
   font-size: 30px;
   font-weight: 700;
   color: var(--gray-900);
@@ -1293,7 +1293,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   padding: 48px 0 36px;
   text-align: center;
 }
-.blog-hero h2 {
+.blog-hero h1 {
   font-size: 28px;
   font-weight: 700;
   color: var(--gray-900);
@@ -1343,11 +1343,18 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   padding: 3px 10px;
   border-radius: 999px;
 }
-.blog-post-content h3 {
+.blog-post-content h2 {
   font-size: 18px;
   font-weight: 600;
   color: var(--gray-800);
   margin-bottom: 12px;
+}
+.blog-post-content h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+.blog-post-content h2 a:hover {
+  color: var(--blue);
 }
 .blog-body {
   font-size: 14px;
