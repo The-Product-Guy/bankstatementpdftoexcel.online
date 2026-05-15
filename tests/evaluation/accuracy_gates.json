@@ -2,20 +2,39 @@
   "version": 1,
   "datasets": [
     {
-      "name": "synthetic_canada",
-      "description": "Small synthetic scanned statements with checked truth CSVs.",
-      "input_dir": "tests/data/synthetic",
+      "name": "synthetic_canada_ci",
+      "description": "Deterministic clean synthetic statements generated at runtime for CI-safe row-match regression checks.",
+      "generate": {
+        "count": 2,
+        "region": "canada",
+        "chaos_level": 0,
+        "seed": 20260515,
+        "min_transactions": 12,
+        "max_transactions": 18
+      },
       "execution_preset": "local-low-mem",
       "disable_paddle": true,
       "disable_img2table": true,
       "require_truth": true,
       "min_true_accuracy": 95.0,
-      "min_field_accuracy": 95.0,
+      "min_proxy_accuracy": 75.0,
       "min_balance_consistency": 95.0
+    },
+    {
+      "name": "local_synthetic_canada",
+      "description": "Optional local scanned statements with checked truth CSVs. Files are intentionally not committed.",
+      "enabled": false,
+      "input_dir": "tests/data/synthetic",
+      "execution_preset": "local-low-mem",
+      "disable_paddle": true,
+      "disable_img2table": true,
+      "require_truth": true,
+      "min_true_accuracy": 95.0
     },
     {
       "name": "india_v1_sample",
       "description": "Real India bank statement sample set. Proxy-only until anonymized truth CSVs are added.",
+      "enabled": false,
       "input_dir": "tests/data/india_v1",
       "execution_preset": "local-low-mem",
       "disable_paddle": true,

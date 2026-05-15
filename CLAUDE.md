@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-**Statement Converter** by **Ambion Softwares** — a web app that converts bank statement PDFs (text-based and scanned) into Excel files. Supports 20+ Indian banks with universal fallback. Deployed on Railway with Stripe billing.
+**Statement Converter** by **Ambion Softwares** — a web app that converts bank statement PDFs (text-based and scanned) into Excel files using a universal parser. Deployed on Railway with Stripe billing.
 
 ## Development Commands
 
@@ -57,7 +57,7 @@ In production (Railway), these are separate services (`SERVICE_ROLE=web` vs `SER
 ### Parser Pipeline (`parsers/`)
 The extraction pipeline in `universal_parser.py` follows this strategy cascade:
 1. **Text extraction** (pdfplumber) — fast, free, works for text-based PDFs
-2. **Bank profile detection** (`bank_profiles.py`) — matches filename/text signatures against 20+ known bank profiles, provides header aliases for better column mapping
+2. **Optional header hints** (`bank_profiles.py`) — matches conservative filename/text signatures for known samples and provides header aliases, without replacing the universal parser path
 3. **Template detection** (`template_extractor.py`) — uses Claude Haiku to detect column layout once from first 2 pages, reuses for all pages (reduces LLM calls from N to 1)
 4. **img2table + PaddleOCR** (`img2table_extractor.py`) — for scanned PDFs: OpenCV/RLSA finds table structure, PaddleOCR reads cell text
 5. **LLM fallback** (`llm_table_extractor.py`) — OpenAI for edge cases where heuristics fail

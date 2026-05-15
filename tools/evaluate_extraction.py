@@ -96,6 +96,10 @@ def _parse_amount(value: object) -> Optional[float]:
     return -abs(amount) if negative else amount
 
 
+def _is_nonzero_amount(amount: Optional[float]) -> bool:
+    return amount is not None and abs(amount) >= 0.005
+
+
 def _extract_amount_for_match(row: Dict[str, object]) -> Optional[float]:
     """
     Determine a single amount to match for accuracy scoring.
@@ -111,12 +115,12 @@ def _extract_amount_for_match(row: Dict[str, object]) -> Optional[float]:
 
     withdrawal = _get_first_value(row, ("Withdrawal_Amount", "Debit", "Debit_Amount"))
     withdrawal_amount = _parse_amount(withdrawal)
-    if withdrawal_amount is not None:
+    if _is_nonzero_amount(withdrawal_amount):
         return -abs(withdrawal_amount)
 
     deposit = _get_first_value(row, ("Deposit_Amount", "Credit", "Credit_Amount"))
     deposit_amount = _parse_amount(deposit)
-    if deposit_amount is not None:
+    if _is_nonzero_amount(deposit_amount):
         return abs(deposit_amount)
 
     return None
@@ -217,6 +221,8 @@ def score_field_accuracy(
         for extracted_index, truth_index in row_matches:
             truth_value = _get_first_value(truth[truth_index], aliases)
             if truth_value in (None, ""):
+                continue
+            if field in {"withdrawal", "deposit"} and not _is_nonzero_amount(_parse_amount(truth_value)):
                 continue
             extracted_value = _get_first_value(extracted[extracted_index], aliases)
             expected += 1

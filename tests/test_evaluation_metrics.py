@@ -76,6 +76,33 @@ def test_score_field_accuracy_catches_field_errors_after_row_match():
     assert field_metrics["field_accuracy_pct"] < 100.0
 
 
+def test_zero_debit_does_not_hide_deposit_match():
+    from tools.evaluate_extraction import score_accuracy, score_field_accuracy
+
+    extracted = [{
+        "Date": "2026-04-14",
+        "Description": "Deposit from Parker-Evans",
+        "Withdrawal_Amount": None,
+        "Deposit_Amount": 390.27,
+        "Transaction_Amount": 390.27,
+        "Closing_Balance": 3853.70,
+    }]
+    truth = [{
+        "Date": "2026-04-14",
+        "Description": "Deposit from Parker-Evans",
+        "Withdrawal_Amount": "0",
+        "Deposit_Amount": "390.27",
+        "Closing_Balance": "3853.70",
+    }]
+
+    matches, extracted_count, truth_count, accuracy = score_accuracy(extracted, truth)
+    field_metrics = score_field_accuracy(extracted, truth)
+
+    assert (matches, extracted_count, truth_count, accuracy) == (1, 1, 1, 100.0)
+    assert field_metrics["withdrawal_expected"] == 0
+    assert field_metrics["deposit_accuracy_pct"] == 100.0
+
+
 def test_evaluation_summary_and_threshold_checks():
     from tools.evaluate_extraction import check_thresholds, summarize_rows
 

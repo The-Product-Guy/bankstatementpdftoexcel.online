@@ -19,13 +19,13 @@ Last updated: 2026-02-19
 - [x] Update evaluator `--max-pages` to sample first N pages (instead of hard page-limit failure).
 - [ ] Run full-file benchmark for 128-page HDFC statement on Railway worker hardware and record baseline.
 
-## Phase 3 - Bank Profile System (In Progress)
-- [x] Create bank profile module (`HDFC`, `KVB`) with filename/text/header signatures.
-- [x] Integrate profile detection at parse-time.
-- [x] Apply profile-aware header aliases before generic mapping.
-- [x] Extend header keyword detection with profile tokens.
-- [x] Add profile stats logging (matched/unknown count) to evaluation reports.
-- [x] Add first round of profile regression fixtures (header mapping unit tests).
+## Phase 3 - Universal Parser Header Hints (Completed)
+- [x] Create optional header-hint module (`HDFC`, `KVB`) with filename/text/header signatures.
+- [x] Integrate hint detection at parse-time without replacing the universal parser path.
+- [x] Apply hint-aware header aliases before generic mapping.
+- [x] Extend header keyword detection with hint tokens.
+- [x] Add hint stats logging (matched/unknown count) to evaluation reports.
+- [x] Add first round of header-hint regression fixtures (header mapping unit tests).
 
 ## Phase 4 - Selective AI Fallback (In Progress)
 - [x] Route only low-confidence page segments to fallback scope (avoid full-document fallback when confidence is weak).
@@ -36,12 +36,12 @@ Last updated: 2026-02-19
 
 ## Phase 5 - Release Gates (Planned)
 - [x] Define acceptance gates for true extraction accuracy by dataset.
-- [ ] Define balance-consistency SLO and failure budget.
-- [ ] Add CI job to fail builds when regression thresholds are breached.
+- [x] Define balance-consistency SLO and failure budget.
+- [x] Add CI job to fail builds when regression thresholds are breached.
 
 ## Benchmark Snapshots
 - [x] Local bounded baseline generated: `reports/india_v1_accuracy_local_baseline.csv` (`local-low-mem`, first 20 pages/file, `--disable-paddle`, `--disable-img2table`).
-- [x] Added configurable local gate runner: `python tools/run_accuracy_gates.py --dataset synthetic_canada`.
+- [x] Added configurable local gate runner: `python tools/run_accuracy_gates.py --dataset synthetic_canada_ci`.
 
 ## Hotfixes
 - [x] Worker stability patch: force safe runtime mode (`use_paddleocr=false`, `use_img2table=false`) when PaddleOCR warmup fails in production.

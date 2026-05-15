@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Bank profile definitions and lightweight matching helpers.
+Optional header-hint definitions and lightweight matching helpers.
 
 Phase 3 goal:
-- Identify known bank formats early.
-- Reuse bank-specific header aliases to improve column mapping.
+- Identify known header vocabulary early when confidence is high.
+- Reuse optional header aliases to improve universal column mapping.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class BankProfile:
         for signature in self.text_signatures:
             sig = _norm_text(signature)
             if sig and sig in normalized:
-                score += 15
+                score += 45
         return min(score, 45)
 
     def score_headers(self, headers: Sequence[str]) -> int:
@@ -73,8 +73,6 @@ PROFILES: List[BankProfile] = [
         filename_patterns=(r"\bhdfc\b",),
         text_signatures=(
             "hdfc bank",
-            "statement of account",
-            "closing balance",
         ),
         header_aliases={
             "date": ("date", "txn date", "transaction date", "value date"),
@@ -91,8 +89,6 @@ PROFILES: List[BankProfile] = [
         filename_patterns=(r"\bkvb\b", r"karur\s+vysya"),
         text_signatures=(
             "karur vysya bank",
-            "statement period",
-            "account statement",
         ),
         header_aliases={
             "date": ("txn dt", "date", "value dt", "transaction date"),
@@ -112,7 +108,7 @@ def detect_bank_profile(
     headers: Optional[Sequence[str]] = None
 ) -> Optional[BankProfile]:
     """
-    Detect best matching bank profile using filename, text signature, and header hints.
+    Detect best matching header-hint profile using filename, text signature, and headers.
     Returns None when confidence is too low.
     """
     best_profile: Optional[BankProfile] = None
@@ -120,9 +116,13 @@ def detect_bank_profile(
 
     for profile in PROFILES:
         score = 0
-        if profile.matches_filename(filename):
+        filename_match = profile.matches_filename(filename)
+        text_score = profile.score_text(first_page_text)
+        if not filename_match and text_score == 0:
+            continue
+        if filename_match:
             score += 80
-        score += profile.score_text(first_page_text)
+        score += text_score
         if headers:
             score += profile.score_headers(headers)
 

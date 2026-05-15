@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression checks for Phase 3 bank profiles.
+Regression checks for optional universal-parser header hints.
 Run with:
     python -m unittest tests.bank_profiles_checks -v
 """
@@ -19,6 +19,15 @@ class TestBankProfiles(unittest.TestCase):
         self.assertEqual(hdfc.key, "hdfc")
         self.assertIsNotNone(kvb)
         self.assertEqual(kvb.key, "kvb")
+
+    def test_generic_bank_text_does_not_trigger_profile(self):
+        profile = detect_bank_profile(
+            "stmt_canada_001.pdf",
+            first_page_text="CANADA National Bank Account Statement Balance Credits Debits",
+            headers=["Date", "Description", "Debits (-)", "Credits (+)", "Balance"],
+        )
+
+        self.assertIsNone(profile)
 
     def test_hdfc_header_alias_mapping(self):
         parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)

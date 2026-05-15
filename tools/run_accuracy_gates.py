@@ -7,6 +7,7 @@ can keep its own preset, sampling mode, and acceptance thresholds.
 """
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -37,8 +38,8 @@ def load_config(config_path: Path) -> Dict[str, object]:
             raise ValueError("Each dataset entry must be an object")
         if not dataset.get("name"):
             raise ValueError("Each dataset entry must define 'name'")
-        if not dataset.get("input_dir"):
-            raise ValueError(f"Dataset {dataset['name']} must define 'input_dir'")
+        if not dataset.get("input_dir") and not dataset.get("generate"):
+            raise ValueError(f"Dataset {dataset['name']} must define 'input_dir' or 'generate'")
     return config
 
 
@@ -62,12 +63,61 @@ def dataset_output_path(dataset: Dict[str, object], output_dir: Path) -> Path:
     return output_dir / output_name
 
 
-def build_evaluate_command(dataset: Dict[str, object], output_path: Path) -> List[str]:
+def dataset_generated_input_path(dataset: Dict[str, object], output_dir: Path) -> Path:
+    return output_dir / "generated" / str(dataset["name"])
+
+
+def dataset_input_path(
+    dataset: Dict[str, object],
+    output_dir: Optional[Path] = None,
+) -> Path:
+    if dataset.get("generate"):
+        if output_dir is None:
+            raise ValueError("output_dir is required for generated datasets")
+        return dataset_generated_input_path(dataset, output_dir)
+    return resolve_project_path(str(dataset["input_dir"]))
+
+
+def build_generation_command(dataset: Dict[str, object], output_dir: Path) -> Optional[List[str]]:
+    generate = dataset.get("generate")
+    if not generate:
+        return None
+    if not isinstance(generate, dict):
+        raise ValueError(f"Dataset {dataset['name']} generate value must be an object")
+
+    generated_dir = dataset_generated_input_path(dataset, output_dir)
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "tools" / "generate_test_data.py"),
+        "--output_dir",
+        str(generated_dir),
+    ]
+    option_flags = {
+        "count": "--count",
+        "region": "--region",
+        "chaos_level": "--chaos_level",
+        "seed": "--seed",
+        "min_transactions": "--min_transactions",
+        "max_transactions": "--max_transactions",
+    }
+    for key, flag in option_flags.items():
+        value = generate.get(key)
+        if value not in (None, ""):
+            cmd.extend([flag, str(value)])
+    return cmd
+
+
+def build_evaluate_command(
+    dataset: Dict[str, object],
+    output_path: Path,
+    input_dir: Optional[Path] = None,
+) -> List[str]:
+    resolved_input_dir = input_dir or dataset_input_path(dataset)
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "tools" / "evaluate_extraction.py"),
         "--input-dir",
-        str(PROJECT_ROOT / str(dataset["input_dir"])),
+        str(resolved_input_dir),
         "--output",
         str(output_path),
     ]
@@ -101,18 +151,31 @@ def build_evaluate_command(dataset: Dict[str, object], output_path: Path) -> Lis
 
 def run_dataset(dataset: Dict[str, object], output_dir: Path, dry_run: bool) -> Dict[str, object]:
     output_path = dataset_output_path(dataset, output_dir)
-    cmd = build_evaluate_command(dataset, output_path)
+    input_dir = dataset_input_path(dataset, output_dir)
+    generate_cmd = build_generation_command(dataset, output_dir)
+    cmd = build_evaluate_command(dataset, output_path, input_dir=input_dir)
     result = {
         "name": dataset["name"],
+        "input_dir": str(input_dir),
         "output": str(output_path),
         "command": cmd,
         "returncode": 0,
     }
+    if generate_cmd:
+        result["generate_command"] = generate_cmd
     if dry_run:
         result["dry_run"] = True
         return result
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    if generate_cmd:
+        if input_dir.exists():
+            shutil.rmtree(input_dir)
+        completed_generate = subprocess.run(generate_cmd, cwd=PROJECT_ROOT)
+        if completed_generate.returncode != 0:
+            result["returncode"] = completed_generate.returncode
+            return result
+
     completed = subprocess.run(cmd, cwd=PROJECT_ROOT)
     result["returncode"] = completed.returncode
     return result
@@ -148,6 +211,8 @@ def main() -> int:
         print(f"\nDataset: {dataset['name']}")
         result = run_dataset(dataset, output_dir, args.dry_run)
         results.append(result)
+        if result.get("generate_command"):
+            print("Generate:", " ".join(result["generate_command"]))
         print("Command:", " ".join(result["command"]))
         if result.get("dry_run"):
             continue

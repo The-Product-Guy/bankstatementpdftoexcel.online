@@ -198,38 +198,27 @@ Use the configured benchmark gates before changing extraction logic:
 
 ```bash
 python tools/run_accuracy_gates.py --dry-run
-python tools/run_accuracy_gates.py --dataset synthetic_canada
+python tools/run_accuracy_gates.py --dataset synthetic_canada_ci
 ```
 
-The gate config lives in `tests/evaluation/accuracy_gates.json`. It runs `tools/evaluate_extraction.py` with dataset-specific presets and thresholds for row-match accuracy, field accuracy, proxy accuracy, and balance consistency.
+The gate config lives in `tests/evaluation/accuracy_gates.json`. CI uses a deterministic generated dataset and fails on row-match, proxy-quality, or balance-consistency regressions.
 
 ## 🏗️ Architecture & Extensibility
 
-### Adding New Banks
+### Improving Extraction
 
-1. **Create Parser Class**
+The primary parser is universal. Prefer improving shared layout detection, normalization, confidence scoring, and benchmark coverage before adding narrow format-specific logic.
+
+1. **Improve Shared Parser Logic**
    ```python
-   # parsers/new_bank_parser.py
-   from .base_parser import BaseParser
-   
-   class NewBankParser(BaseParser):
-       def parse(self, pdf_path, filename):
-           # Implement parsing logic
-           return transactions
+   # parsers/universal_parser.py
+   parser = create_universal_parser(use_llm=False)
    ```
 
-2. **Register in App**
+2. **Use Optional Header Hints Sparingly**
    ```python
-   # app.py
-   from parsers.new_bank_parser import NewBankParser
-   
-   SUPPORTED_BANKS = {
-       'newbank': {
-           'name': 'New Bank',
-           'parser': NewBankParser,
-           'description': 'Description of format'
-       }
-   }
+   # parsers/bank_profiles.py
+   # Keep hints limited to signatures and header aliases.
    ```
 
 ### Technical Stack

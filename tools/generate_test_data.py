@@ -29,8 +29,6 @@ import numpy as np
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-fake = Faker()
-
 @dataclass
 class Transaction:
     date: str
@@ -51,13 +49,15 @@ class Transaction:
         }
 
 class BankStatementGenerator:
-    def __init__(self, region='us'):
+    def __init__(self, region='us', seed=None):
         self.region = region.lower()
         self.fake = Faker()
         if self.region == 'india':
             self.fake = Faker('en_IN')
         elif self.region == 'uk':
             self.fake = Faker('en_GB')
+        if seed is not None:
+            self.fake.seed_instance(seed)
         
     def _format_date(self, date_obj):
         if self.region == 'us':
@@ -275,12 +275,25 @@ def main():
     parser.add_argument("--region", type=str, default="us", choices=['us', 'india', 'canada', 'uk'], help="Region format")
     parser.add_argument("--chaos_level", type=int, default=0, help="0=Clean, 1=Scanned, 2=Messy")
     parser.add_argument("--output_dir", type=str, default="tests/data/synthetic")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible fixture generation")
+    parser.add_argument("--min_transactions", type=int, default=10, help="Minimum transactions per statement")
+    parser.add_argument("--max_transactions", type=int, default=50, help="Maximum transactions per statement")
     
     args = parser.parse_args()
+
+    if args.min_transactions <= 0:
+        parser.error("--min_transactions must be greater than zero")
+    if args.max_transactions < args.min_transactions:
+        parser.error("--max_transactions must be greater than or equal to --min_transactions")
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        Faker.seed(args.seed)
+        np.random.seed(args.seed)
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    generator = BankStatementGenerator(region=args.region)
+    generator = BankStatementGenerator(region=args.region, seed=args.seed)
     
     for i in range(args.count):
         filename_base = f"stmt_{args.region}_{i+1:03d}"
@@ -288,7 +301,9 @@ def main():
         csv_path = os.path.join(args.output_dir, f"{filename_base}_truth.csv")
         
         # Generate Data
-        txs = generator.generate_transactions(count=random.randint(10, 50))
+        txs = generator.generate_transactions(
+            count=random.randint(args.min_transactions, args.max_transactions)
+        )
         
         # Save Ground Truth CSV
         with open(csv_path, 'w', newline='') as f:

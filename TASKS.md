@@ -19,8 +19,8 @@ Last updated: 2026-03-08
 
 - [x] **LLM token/timeout guards** (Phase 4) - Added `LLM_MAX_OUTPUT_TOKENS` (default 4096) and `LLM_REQUEST_TIMEOUT` (default 60s) to both OpenAI and Anthropic clients.
 - [x] **Acceptance accuracy gates** (Phase 5) - Added configurable dataset gates via `tests/evaluation/accuracy_gates.json` and `tools/run_accuracy_gates.py`.
-- [ ] **Balance-consistency SLO** (Phase 5) - Define SLO and failure budget for balance checks.
-- [ ] **CI regression gate** (Phase 5) - Add CI job to fail builds when accuracy regresses.
+- [x] **Balance-consistency SLO** (Phase 5) - CI gate now requires deterministic synthetic benchmark balance consistency >= 95%.
+- [x] **CI regression gate** (Phase 5) - Added GitHub Actions job for tests plus deterministic synthetic accuracy gate.
 
 ### Auth & Email
 
@@ -79,5 +79,5 @@ Last updated: 2026-03-08
 - [x] Template-based extraction (LLM calls N to 1)
 - [x] Structured logging + Claude Haiku for templates
 - [x] Progress bar fixes, debit/credit inference
-- [x] Bank profile system (20+ profiles)
+- [x] Universal parser header-hint layer
 - [x] Resend email integration (replaced SES)

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex-pdf-retention-accuracy-foundation
+  workflow_dispatch:
+
+jobs:
+  tests-and-accuracy-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SECRET_KEY: test-secret
+      DISABLE_QUOTAS: "true"
+      USE_PADDLEOCR: "false"
+      USE_IMG2TABLE: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr libgl1 libglib2.0-0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m pytest -q
+
+      - name: Run extraction accuracy gate
+        run: python tools/run_accuracy_gates.py --dataset synthetic_canada_ci

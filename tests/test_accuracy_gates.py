@@ -5,11 +5,12 @@ def test_accuracy_gate_config_loads_default_datasets():
     from tools.run_accuracy_gates import DEFAULT_CONFIG, load_config, select_datasets
 
     config = load_config(DEFAULT_CONFIG)
-    selected = select_datasets(config, ["synthetic_canada"])
+    selected = select_datasets(config, ["synthetic_canada_ci"])
 
     assert len(selected) == 1
-    assert selected[0]["name"] == "synthetic_canada"
+    assert selected[0]["name"] == "synthetic_canada_ci"
     assert selected[0]["require_truth"] is True
+    assert selected[0]["generate"]["seed"] == 20260515
 
 
 def test_accuracy_gate_command_includes_dataset_controls(tmp_path):
@@ -44,3 +45,29 @@ def test_accuracy_gate_command_includes_dataset_controls(tmp_path):
     assert "--min-true-accuracy" in cmd
     assert "--min-field-accuracy" in cmd
     assert "--min-balance-consistency" in cmd
+
+
+def test_accuracy_gate_generation_command_uses_output_dir(tmp_path):
+    from tools.run_accuracy_gates import build_generation_command, dataset_input_path
+
+    dataset = {
+        "name": "synthetic_canada_ci",
+        "generate": {
+            "count": 2,
+            "region": "canada",
+            "chaos_level": 0,
+            "seed": 123,
+            "min_transactions": 12,
+            "max_transactions": 18,
+        },
+    }
+
+    cmd = build_generation_command(dataset, tmp_path)
+    input_path = dataset_input_path(dataset, tmp_path)
+
+    assert Path(cmd[1]).name == "generate_test_data.py"
+    assert "--output_dir" in cmd
+    assert str(input_path) in cmd
+    assert "--seed" in cmd
+    assert "123" in cmd
+    assert input_path == tmp_path / "generated" / "synthetic_canada_ci"
