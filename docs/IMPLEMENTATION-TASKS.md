@@ -35,12 +35,13 @@ Last updated: 2026-02-19
 - [x] Add blob-output rejection gate so page-level concatenation does not pass as valid extraction.
 
 ## Phase 5 - Release Gates (Planned)
-- [ ] Define acceptance gates for true extraction accuracy by dataset.
+- [x] Define acceptance gates for true extraction accuracy by dataset.
 - [ ] Define balance-consistency SLO and failure budget.
 - [ ] Add CI job to fail builds when regression thresholds are breached.
 
 ## Benchmark Snapshots
 - [x] Local bounded baseline generated: `reports/india_v1_accuracy_local_baseline.csv` (`local-low-mem`, first 20 pages/file, `--disable-paddle`, `--disable-img2table`).
+- [x] Added configurable local gate runner: `python tools/run_accuracy_gates.py --dataset synthetic_canada`.
 
 ## Hotfixes
 - [x] Worker stability patch: force safe runtime mode (`use_paddleocr=false`, `use_img2table=false`) when PaddleOCR warmup fails in production.

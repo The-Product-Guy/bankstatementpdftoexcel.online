@@ -192,6 +192,17 @@ pip3
 - **Processing timeout**: 5 minutes
 - **Concurrent uploads**: Handled automatically
 
+### Accuracy Gates
+
+Use the configured benchmark gates before changing extraction logic:
+
+```bash
+python tools/run_accuracy_gates.py --dry-run
+python tools/run_accuracy_gates.py --dataset synthetic_canada
+```
+
+The gate config lives in `tests/evaluation/accuracy_gates.json`. It runs `tools/evaluate_extraction.py` with dataset-specific presets and thresholds for row-match accuracy, field accuracy, proxy accuracy, and balance consistency.
+
 ## 🏗️ Architecture & Extensibility
 
 ### Adding New Banks

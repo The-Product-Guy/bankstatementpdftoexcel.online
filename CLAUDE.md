@@ -23,7 +23,7 @@ App runs at http://localhost:5001.
 
 ### Tests
 ```bash
-python -m pytest tests/ -v                          # Full test suite (83 tests)
+python -m pytest tests/ -v                          # Full test suite
 python -m pytest tests/test_routes.py -v            # Route tests
 python -m pytest tests/test_email.py -v             # Email tests
 python -m pytest tests/test_parsers.py -v           # Parser unit tests
@@ -35,6 +35,7 @@ python test_universal.py                            # Integration test with a sa
 ```bash
 python tests/evaluation/run_benchmark.py            # Accuracy benchmark against test data
 python tools/evaluate_extraction.py                 # Evaluate extraction quality
+python tools/run_accuracy_gates.py --dry-run        # Show configured accuracy gate commands
 ```
 
 ## Architecture

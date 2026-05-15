@@ -67,6 +67,7 @@ SUCCESS.py
 # Output files
 output/
 processed/
+reports/accuracy_gates/
 output_for_verification/
 dump.rdb
 *.xlsx

@@ -359,6 +359,69 @@ def evaluate_file(
         }
 
 
+def _is_numeric(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def average_metric(rows: List[Dict[str, object]], key: str) -> Optional[float]:
+    values = [float(row[key]) for row in rows if _is_numeric(row.get(key))]
+    if not values:
+        return None
+    return round(sum(values) / len(values), 1)
+
+
+def summarize_rows(rows: List[Dict[str, object]]) -> Dict[str, object]:
+    ok_rows = [row for row in rows if row.get("status") == "ok"]
+    truth_rows = [
+        row for row in ok_rows
+        if _is_numeric(row.get("true_accuracy_pct"))
+    ]
+    field_rows = [
+        row for row in truth_rows
+        if _is_numeric(row.get("field_accuracy_pct"))
+    ]
+    return {
+        "files": len(rows),
+        "ok_files": len(ok_rows),
+        "error_files": len(rows) - len(ok_rows),
+        "truth_files": len(truth_rows),
+        "avg_true_accuracy": average_metric(truth_rows, "true_accuracy_pct"),
+        "avg_field_accuracy": average_metric(field_rows, "field_accuracy_pct"),
+        "avg_proxy_accuracy": average_metric(ok_rows, "proxy_accuracy_pct"),
+        "avg_balance_consistency": average_metric(ok_rows, "balance_consistency_pct"),
+    }
+
+
+def check_thresholds(
+    summary: Dict[str, object],
+    min_true_accuracy: Optional[float] = None,
+    min_field_accuracy: Optional[float] = None,
+    min_proxy_accuracy: Optional[float] = None,
+    min_balance_consistency: Optional[float] = None,
+    require_truth: bool = False,
+) -> List[str]:
+    failures: List[str] = []
+    if require_truth and int(summary.get("truth_files") or 0) == 0:
+        failures.append("No ground-truth files were evaluated")
+
+    checks = [
+        ("Row-match accuracy", "avg_true_accuracy", min_true_accuracy),
+        ("Field accuracy", "avg_field_accuracy", min_field_accuracy),
+        ("Proxy accuracy", "avg_proxy_accuracy", min_proxy_accuracy),
+        ("Balance consistency", "avg_balance_consistency", min_balance_consistency),
+    ]
+    for label, key, threshold in checks:
+        if threshold is None:
+            continue
+        value = summary.get(key)
+        if value is None:
+            failures.append(f"{label} is unavailable; cannot enforce threshold {threshold:.1f}%")
+        elif float(value) < threshold:
+            failures.append(f"{label} {float(value):.1f}% is below threshold {threshold:.1f}%")
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-dir", required=True, help="Directory containing PDFs")
@@ -393,6 +456,23 @@ def main() -> int:
         type=float,
         default=None,
         help="Fail with exit code 2 if average field accuracy is below this percent",
+    )
+    parser.add_argument(
+        "--min-proxy-accuracy",
+        type=float,
+        default=None,
+        help="Fail with exit code 2 if average proxy accuracy is below this percent",
+    )
+    parser.add_argument(
+        "--min-balance-consistency",
+        type=float,
+        default=None,
+        help="Fail with exit code 2 if average balance consistency is below this percent",
+    )
+    parser.add_argument(
+        "--require-truth",
+        action="store_true",
+        help="Fail if no *_truth.csv files are available for the evaluated dataset",
     )
     args = parser.parse_args()
 
@@ -452,29 +532,29 @@ def main() -> int:
         "amount_coverage_pct",
         "truth_file",
         "true_accuracy_pct",
-            "truth_rows",
-            "matched_rows",
-            "field_accuracy_pct",
-            "field_matched",
-            "field_expected",
-            "date_accuracy_pct",
-            "date_matched",
-            "date_expected",
-            "description_accuracy_pct",
-            "description_matched",
-            "description_expected",
-            "withdrawal_accuracy_pct",
-            "withdrawal_matched",
-            "withdrawal_expected",
-            "deposit_accuracy_pct",
-            "deposit_matched",
-            "deposit_expected",
-            "balance_accuracy_pct",
-            "balance_matched",
-            "balance_expected",
-            "duration_sec",
-            "error",
-        ]
+        "truth_rows",
+        "matched_rows",
+        "field_accuracy_pct",
+        "field_matched",
+        "field_expected",
+        "date_accuracy_pct",
+        "date_matched",
+        "date_expected",
+        "description_accuracy_pct",
+        "description_matched",
+        "description_expected",
+        "withdrawal_accuracy_pct",
+        "withdrawal_matched",
+        "withdrawal_expected",
+        "deposit_accuracy_pct",
+        "deposit_matched",
+        "deposit_expected",
+        "balance_accuracy_pct",
+        "balance_matched",
+        "balance_expected",
+        "duration_sec",
+        "error",
+    ]
     output_path = Path(args.output)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -483,36 +563,30 @@ def main() -> int:
             writer.writerow(row)
 
     print(f"\nSaved report to {output_path}")
-    truth_rows = [
-        row for row in rows
-        if isinstance(row.get("true_accuracy_pct"), (int, float))
-    ]
-    if truth_rows:
-        avg_true_accuracy = sum(float(row["true_accuracy_pct"]) for row in truth_rows) / len(truth_rows)
-        field_rows = [
-            row for row in truth_rows
-            if isinstance(row.get("field_accuracy_pct"), (int, float))
-        ]
-        avg_field_accuracy = (
-            sum(float(row["field_accuracy_pct"]) for row in field_rows) / len(field_rows)
-            if field_rows
-            else 0.0
-        )
-        print(f"Average row-match accuracy: {avg_true_accuracy:.1f}%")
-        print(f"Average field accuracy: {avg_field_accuracy:.1f}%")
+    summary = summarize_rows(rows)
+    print(f"Files OK/error: {summary['ok_files']}/{summary['error_files']}")
+    for label, key in (
+        ("Average proxy accuracy", "avg_proxy_accuracy"),
+        ("Average balance consistency", "avg_balance_consistency"),
+        ("Average row-match accuracy", "avg_true_accuracy"),
+        ("Average field accuracy", "avg_field_accuracy"),
+    ):
+        value = summary.get(key)
+        if value is not None:
+            print(f"{label}: {float(value):.1f}%")
 
-        if args.min_true_accuracy is not None and avg_true_accuracy < args.min_true_accuracy:
-            print(
-                f"Row-match accuracy {avg_true_accuracy:.1f}% is below threshold "
-                f"{args.min_true_accuracy:.1f}%"
-            )
-            return 2
-        if args.min_field_accuracy is not None and avg_field_accuracy < args.min_field_accuracy:
-            print(
-                f"Field accuracy {avg_field_accuracy:.1f}% is below threshold "
-                f"{args.min_field_accuracy:.1f}%"
-            )
-            return 2
+    failures = check_thresholds(
+        summary,
+        min_true_accuracy=args.min_true_accuracy,
+        min_field_accuracy=args.min_field_accuracy,
+        min_proxy_accuracy=args.min_proxy_accuracy,
+        min_balance_consistency=args.min_balance_consistency,
+        require_truth=args.require_truth,
+    )
+    if failures:
+        for failure in failures:
+            print(failure)
+        return 2
 
     return 0
 

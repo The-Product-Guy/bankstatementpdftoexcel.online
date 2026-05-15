@@ -18,7 +18,7 @@ Last updated: 2026-03-08
 ### From IMPLEMENTATION-TASKS.md (unfinished phases)
 
 - [x] **LLM token/timeout guards** (Phase 4) - Added `LLM_MAX_OUTPUT_TOKENS` (default 4096) and `LLM_REQUEST_TIMEOUT` (default 60s) to both OpenAI and Anthropic clients.
-- [ ] **Acceptance accuracy gates** (Phase 5) - Define true extraction accuracy thresholds by dataset.
+- [x] **Acceptance accuracy gates** (Phase 5) - Added configurable dataset gates via `tests/evaluation/accuracy_gates.json` and `tools/run_accuracy_gates.py`.
 - [ ] **Balance-consistency SLO** (Phase 5) - Define SLO and failure budget for balance checks.
 - [ ] **CI regression gate** (Phase 5) - Add CI job to fail builds when accuracy regresses.
 
