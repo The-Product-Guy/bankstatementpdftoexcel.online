@@ -175,6 +175,8 @@ pip3
 | `PORT` | No | Application port | `5001` |
 | `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Recommended in production | Public site origin for sitemap URLs and production SocketIO CORS defaults. | Request host |
 | `SOCKETIO_CORS_ORIGINS` / `ALLOWED_ORIGINS` | No | Comma-separated SocketIO origins. Overrides the public base URL default. | Public base in production, `*` locally |
+| `SOCKETIO_ASYNC_MODE` | No | Flask-SocketIO runtime mode. Keep `threading` unless a different deployment runtime is intentionally configured. | `threading` |
+| `WEB_THREADS` | No | Gunicorn thread count for the web service entrypoint. | `20` |
 | `SESSION_COOKIE_SECURE` | No | Enables secure session cookies. | `true` in production, `false` locally |
 | `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. Leave off for availability-first behavior. | `false` |
 | `MAX_UPLOAD_MB` | No | Upload size limit for guest/default conversions. Plan-specific limits may be higher. | `20` |

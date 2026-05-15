@@ -51,9 +51,9 @@ echo "Binding Gunicorn on 0.0.0.0:${PORT_TO_USE}"
 exec gunicorn app:app \
   --bind 0.0.0.0:${PORT_TO_USE} \
   --workers 1 \
+  --threads ${WEB_THREADS:-20} \
   --timeout 120 \
   --graceful-timeout 30 \
-  --worker-class eventlet \
   --access-logfile - \
   --error-logfile - \
   --log-level info

@@ -101,7 +101,7 @@ else:
 socketio = SocketIO(
     app,
     cors_allowed_origins=allowed_origins,
-    async_mode='eventlet',
+    async_mode=os.environ.get('SOCKETIO_ASYNC_MODE', 'threading'),
     logger=False,
     engineio_logger=False,
     ping_timeout=60,

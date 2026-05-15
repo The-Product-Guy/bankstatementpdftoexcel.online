@@ -49,7 +49,7 @@ Browser polls /status/<job_id> or receives WebSocket updates via Flask-SocketIO
 
 ### Two-Process Model
 The app runs as **two separate processes** sharing Redis + Postgres:
-- **Web** (`app.py`): Flask + Gunicorn/eventlet — handles HTTP, WebSocket, auth, Stripe webhooks. No OCR models loaded.
+- **Web** (`app.py`): Flask + Gunicorn threads + simple-websocket — handles HTTP, WebSocket, auth, Stripe webhooks. No OCR models loaded.
 - **Worker** (`worker.py`): Celery with `solo` pool — runs PDF extraction. Loads PaddleOCR/ONNX (~2-3 GB RAM). Must use `--pool=solo` because native C++ libs (PaddleOCR, OpenCV, ONNX Runtime) crash with `fork()`.
 
 In production (Railway), these are separate services (`SERVICE_ROLE=web` vs `SERVICE_ROLE=worker`) configured in `entrypoint.sh`. Scale by adding worker replicas.

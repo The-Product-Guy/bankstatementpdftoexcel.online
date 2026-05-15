@@ -6,4 +6,4 @@ aptPkgs = ["libgl1-mesa-dri", "libglib2.0-0"]
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = "gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:socketio --timeout 600 --keep-alive 2 --max-requests 50 --max-requests-jitter 10 --worker-tmp-dir /dev/shm"
+cmd = "gunicorn -w 1 --threads 20 --bind 0.0.0.0:$PORT app:app --timeout 600 --keep-alive 2 --max-requests 50 --max-requests-jitter 10 --worker-tmp-dir /dev/shm"
