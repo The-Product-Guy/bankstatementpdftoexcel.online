@@ -6,6 +6,7 @@ Run with: python -m pytest tests/test_routes.py -v
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -166,6 +167,35 @@ class TestProtectedRoutes:
         })
         # Should fail gracefully (no file uploaded)
         assert resp.status_code in (302, 400, 500)
+
+
+class TestRateLimiting:
+    """Test rate limiter behavior when Redis is unavailable."""
+
+    @staticmethod
+    def _failing_redis_module():
+        def from_url(*args, **kwargs):
+            raise RuntimeError("redis down")
+
+        return SimpleNamespace(
+            StrictRedis=SimpleNamespace(from_url=from_url)
+        )
+
+    def test_rate_limit_backend_failure_defaults_open(self, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module, "RATE_LIMIT_FAIL_CLOSED", False)
+        monkeypatch.setitem(sys.modules, "redis", self._failing_redis_module())
+
+        assert app_module.rate_limited("rate:test", 1, 60) is False
+
+    def test_rate_limit_backend_failure_can_fail_closed(self, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module, "RATE_LIMIT_FAIL_CLOSED", True)
+        monkeypatch.setitem(sys.modules, "redis", self._failing_redis_module())
+
+        assert app_module.rate_limited("rate:test", 1, 60) is True
 
 
 class TestStripeWebhook:

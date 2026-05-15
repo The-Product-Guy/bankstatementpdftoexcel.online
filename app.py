@@ -25,16 +25,41 @@ from storage_utils import get_storage_config, delete_file
 from db import init_db, get_db_session
 from models import User, UsageCounter, Job, FeedbackSubmission
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _is_production_runtime() -> bool:
+    flask_env = os.environ.get('FLASK_ENV', '').strip().lower()
+    app_env = os.environ.get('APP_ENV', '').strip().lower()
+    return (
+        flask_env == 'production'
+        or app_env == 'production'
+        or bool(os.environ.get('RAILWAY_ENVIRONMENT'))
+        or bool(os.environ.get('RAILWAY_PROJECT_ID'))
+    )
+
+
+IS_PRODUCTION = _is_production_runtime()
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if IS_PRODUCTION and not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be set in production.")
+
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.secret_key = SECRET_KEY or 'dev-secret-key-change-in-production'
 MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '20'))
 MAX_PAGES = int(os.environ.get('MAX_PAGES', '250'))
 GUEST_CONVERSION_LIMIT = int(os.environ.get('GUEST_CONVERSION_LIMIT', '1'))
 USER_CONVERSION_LIMIT = int(os.environ.get('USER_CONVERSION_LIMIT', '5'))
 MAGIC_LINK_EXP_MINUTES = int(os.environ.get('MAGIC_LINK_EXP_MINUTES', '15'))
-DISABLE_QUOTAS = os.environ.get('DISABLE_QUOTAS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
-BETA_MODE = os.environ.get('BETA_MODE', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
-ENGLISH_ONLY_BETA = os.environ.get('ENGLISH_ONLY_BETA', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+DISABLE_QUOTAS = _env_bool('DISABLE_QUOTAS')
+BETA_MODE = _env_bool('BETA_MODE', True)
+ENGLISH_ONLY_BETA = _env_bool('ENGLISH_ONLY_BETA', True)
+RATE_LIMIT_FAIL_CLOSED = _env_bool('RATE_LIMIT_FAIL_CLOSED')
 FEEDBACK_RETENTION_DAYS = int(os.environ.get('FEEDBACK_RETENTION_DAYS', '30'))
 FEEDBACK_RETENTION_SWEEP_MINS = int(os.environ.get('FEEDBACK_RETENTION_SWEEP_MINS', '60'))
 ADMIN_EMAILS = {
@@ -56,7 +81,7 @@ PLAN_CONFIG = {
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+app.config['SESSION_COOKIE_SECURE'] = _env_bool('SESSION_COOKIE_SECURE', IS_PRODUCTION)
 app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')
 _last_feedback_retention_sweep = None
@@ -65,6 +90,11 @@ _last_feedback_retention_sweep = None
 allowed_origins_env = os.environ.get('SOCKETIO_CORS_ORIGINS') or os.environ.get('ALLOWED_ORIGINS')
 if allowed_origins_env:
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(',') if origin.strip()]
+elif IS_PRODUCTION:
+    public_origin = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+    allowed_origins = [public_origin.rstrip('/')] if public_origin else []
+    if not allowed_origins:
+        logger.warning("SocketIO CORS origins are empty in production; set SOCKETIO_CORS_ORIGINS or PUBLIC_BASE_URL.")
 else:
     allowed_origins = "*"
 
@@ -140,8 +170,9 @@ def rate_limited(key, limit, window_seconds):
         if count == 1:
             r.expire(key, window_seconds)
         return count > limit
-    except Exception:
-        return False
+    except Exception as exc:
+        logger.warning(f"Rate-limit backend unavailable: {exc}")
+        return RATE_LIMIT_FAIL_CLOSED
 
 def get_csrf_token():
     token = session.get('csrf_token')

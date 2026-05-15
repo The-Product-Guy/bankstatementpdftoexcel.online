@@ -128,7 +128,8 @@ This script will:
 2. **Deploy on Railway**
    - Connect your GitHub repository at [railway.app](https://railway.app)
    - Railway auto-detects all configurations
-   - Set environment variable: `SECRET_KEY=your-production-secret-key`
+   - Set `SECRET_KEY=your-production-secret-key`
+   - Set `PUBLIC_BASE_URL=https://your-domain.com` for canonical sitemap URLs and production SocketIO CORS defaults
    - Deploy automatically with zero configuration
 
 3. **Production Features**
@@ -169,12 +170,24 @@ pip3
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `SECRET_KEY` | Yes | Flask session security | - |
+| `SECRET_KEY` | Yes in production | Flask session security. Required when `APP_ENV=production`, `FLASK_ENV=production`, or Railway runtime vars are present. | Local dev fallback |
+| `APP_ENV` / `FLASK_ENV` | No | Set either to `production` to enable strict production defaults. | - |
 | `PORT` | No | Application port | `5001` |
+| `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Recommended in production | Public site origin for sitemap URLs and production SocketIO CORS defaults. | Request host |
+| `SOCKETIO_CORS_ORIGINS` / `ALLOWED_ORIGINS` | No | Comma-separated SocketIO origins. Overrides the public base URL default. | Public base in production, `*` locally |
+| `SESSION_COOKIE_SECURE` | No | Enables secure session cookies. | `true` in production, `false` locally |
+| `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. Leave off for availability-first behavior. | `false` |
+| `MAX_UPLOAD_MB` | No | Upload size limit for guest/default conversions. Plan-specific limits may be higher. | `20` |
+| `MAX_PAGES` | No | Maximum PDF pages processed per conversion. | `250` |
+| `RESULT_RETENTION_HOURS` | No | Retention window for generated outputs in object storage. | `24` |
+| `LOCAL_RESULT_RETENTION_HOURS` | No | Retention window for locally stored generated outputs. | `RESULT_RETENTION_HOURS` |
+| `FEEDBACK_RETENTION_DAYS` | No | Retention window for feedback submissions and copied source/output files. | `30` |
+| `USE_PYMUPDF` | No | Enables the optional PyMuPDF table-detection fallback for extraction. | `false` |
+| `GA_MEASUREMENT_ID` / `GTM_CONTAINER_ID` | No | Analytics IDs injected into public pages. | - |
 
 ### File Limits
 
-- **Maximum file size**: 100MB
+- **Maximum file size**: 20MB by default; paid plans allow larger uploads up to the enterprise cap
 - **Supported formats**: PDF only
 - **Processing timeout**: 5 minutes
 - **Concurrent uploads**: Handled automatically
