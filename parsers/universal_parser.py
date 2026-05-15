@@ -55,6 +55,7 @@ EXECUTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "local-low-mem": {
         "use_paddleocr": False,
         "use_img2table": False,
+        "use_pymupdf": True,
         "use_llm": False,
         "dpi": 120,
         "preprocess_images": False,
@@ -65,6 +66,7 @@ EXECUTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "prod-balanced": {
         "use_paddleocr": True,
         "use_img2table": True,
+        "use_pymupdf": True,
         "use_llm": False,
         "dpi": 150,
         "preprocess_images": True,
@@ -75,6 +77,7 @@ EXECUTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "prod-high-accuracy": {
         "use_paddleocr": True,
         "use_img2table": True,
+        "use_pymupdf": True,
         "use_llm": False,
         "dpi": 200,
         "preprocess_images": True,
@@ -130,6 +133,7 @@ class ProcessingConfig:
     # OCR Engine Selection
     use_paddleocr: bool = _env_bool('USE_PADDLEOCR', True)  # PaddleOCR by default (better accuracy)
     use_img2table: bool = _env_bool('USE_IMG2TABLE', True)  # img2table primary path for scanned docs
+    use_pymupdf: bool = _env_bool('USE_PYMUPDF', True)  # PyMuPDF fallback for text/vector tables
     use_llm: bool = _env_bool('USE_LLM', False)  # LLM extraction (requires API key)
     use_table_structure: bool = _env_bool('USE_TABLE_STRUCTURE', False)  # PPStructure (heavy)
     prefer_vision: bool = _env_bool('PREFER_VISION', False)  # Send images to LLM
@@ -757,6 +761,25 @@ class UniversalBankParser(BaseParser):
                     )
                 logger.warning("Table extraction quality low, falling back to layout/LLM.")
 
+        if self.config.use_pymupdf:
+            pymupdf_transactions, pymupdf_raw_table = self._extract_pymupdf_tables(
+                pdf_path,
+                source_file,
+                page_start=page_start,
+                page_end=page_end
+            )
+            if pymupdf_transactions and self._transactions_quality_ok(pymupdf_transactions):
+                low_ratio = self._low_confidence_ratio(pymupdf_transactions)
+                if low_ratio <= self.config.low_conf_ratio_for_fallback or not self.llm_extractor:
+                    logger.info("PyMuPDF table extraction found %d transactions; skipping LLM.", len(pymupdf_transactions))
+                    self.transactions.extend(pymupdf_transactions)
+                    self.raw_table = pymupdf_raw_table
+                    return 0
+                logger.warning(
+                    "PyMuPDF table extraction low-confidence ratio %.1f%%; continuing fallback.",
+                    low_ratio * 100,
+                )
+
         layout_transactions, raw_table = self._extract_layout_transactions(
             pdf_path,
             source_file,
@@ -899,6 +922,105 @@ class UniversalBankParser(BaseParser):
                     total_tokens += result.tokens_used
         
         return total_tokens
+
+    def _extract_pymupdf_tables(
+        self,
+        pdf_path: str,
+        source_file: str,
+        page_start: int = 1,
+        page_end: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Extract text/vector PDF tables using PyMuPDF's table detector."""
+        try:
+            try:
+                import pymupdf
+            except ImportError:
+                import fitz as pymupdf
+        except ImportError:
+            logger.info("PyMuPDF not installed; skipping PyMuPDF table fallback.")
+            return [], None
+
+        transactions: List[Dict[str, Any]] = []
+        raw_columns: Optional[List[str]] = None
+        raw_rows: List[List[str]] = []
+        doc = None
+        try:
+            doc = pymupdf.open(pdf_path)
+            doc_total_pages = len(doc)
+            start_page, end_page = self._resolve_page_window(doc_total_pages, page_start, page_end)
+            strategies = ("lines", "lines_strict", "text")
+
+            for actual_page_num in range(start_page, end_page + 1):
+                page = doc[actual_page_num - 1]
+                page_tables = []
+                for strategy in strategies:
+                    try:
+                        finder = page.find_tables(strategy=strategy)
+                    except Exception as exc:
+                        logger.debug(
+                            "PyMuPDF find_tables failed on page %d with strategy=%s: %s",
+                            actual_page_num,
+                            strategy,
+                            exc,
+                        )
+                        continue
+                    page_tables = list(getattr(finder, "tables", []) or [])
+                    if page_tables:
+                        logger.debug(
+                            "PyMuPDF found %d tables on page %d using strategy=%s",
+                            len(page_tables),
+                            actual_page_num,
+                            strategy,
+                        )
+                        break
+
+                for table in page_tables:
+                    try:
+                        extracted = table.extract()
+                    except Exception as exc:
+                        logger.debug("PyMuPDF table extraction failed on page %d: %s", actual_page_num, exc)
+                        continue
+                    if not extracted or len(extracted) < 2:
+                        continue
+
+                    rows = [
+                        [str(cell or "").strip() for cell in row]
+                        for row in extracted
+                        if row and any(str(cell or "").strip() for cell in row)
+                    ]
+                    if len(rows) < 2:
+                        continue
+
+                    transactions.extend(
+                        self._transactions_from_table(
+                            rows,
+                            source_file=source_file,
+                            page_ref=f"PyMuPDF_Page_{actual_page_num}"
+                        )
+                    )
+
+                    columns = rows[0]
+                    data_rows = rows[1:]
+                    if raw_columns is None:
+                        raw_columns = columns
+                    for row in data_rows:
+                        if raw_columns and len(row) < len(raw_columns):
+                            row = row + [""] * (len(raw_columns) - len(row))
+                        raw_rows.append(row[:len(raw_columns)] if raw_columns else row)
+
+            raw_table = {"columns": raw_columns or [], "rows": raw_rows} if raw_rows else None
+            if transactions:
+                logger.info("PyMuPDF extracted %d normalized transactions", len(transactions))
+            return transactions, raw_table
+        except Exception as exc:
+            logger.warning("PyMuPDF table fallback failed: %s", exc)
+            return [], None
+        finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
 
     def _extract_layout_transactions(
         self,
@@ -3588,6 +3710,7 @@ def create_universal_parser(
     execution_preset: Optional[str] = None,
     use_paddleocr: Optional[bool] = None,
     use_img2table: Optional[bool] = None,
+    use_pymupdf: Optional[bool] = None,
     use_llm: Optional[bool] = None,
     prefer_vision: Optional[bool] = None,
     llm_model: Optional[str] = None,
@@ -3607,6 +3730,7 @@ def create_universal_parser(
         EXECUTION_PRESET: One of local-low-mem | prod-balanced | prod-high-accuracy
         USE_PADDLEOCR: Use PaddleOCR instead of Tesseract (default: true)
         USE_IMG2TABLE: Use img2table as primary scanned-doc path (default: true)
+        USE_PYMUPDF: Use PyMuPDF table fallback for text/vector PDFs (default: true)
         USE_LLM: Use LLM for extraction (default: false)
         USE_TABLE_STRUCTURE: Use PPStructure for tables (default: false)
         OCR_DPI: Image DPI for OCR (default: 150)
@@ -3618,6 +3742,7 @@ def create_universal_parser(
         execution_preset: Runtime preset name (None = use EXECUTION_PRESET env if set)
         use_paddleocr: Whether to use PaddleOCR (None = use env)
         use_img2table: Whether to use img2table pipeline (None = use env)
+        use_pymupdf: Whether to use PyMuPDF table fallback (None = use env)
         use_llm: Whether to use LLM for extraction (None = use env)
         prefer_vision: Whether to send images directly to LLM (None = use env)
         llm_model: Which OpenAI model to use (None = use env)
@@ -3644,6 +3769,8 @@ def create_universal_parser(
         config.use_paddleocr = use_paddleocr
     if use_img2table is not None:
         config.use_img2table = use_img2table
+    if use_pymupdf is not None:
+        config.use_pymupdf = use_pymupdf
     if use_llm is not None:
         config.use_llm = use_llm
     if prefer_vision is not None:

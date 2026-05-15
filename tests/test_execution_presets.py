@@ -16,6 +16,7 @@ class TestExecutionPresets(unittest.TestCase):
         self.assertEqual(cfg.execution_preset, "local-low-mem")
         self.assertFalse(cfg.use_paddleocr)
         self.assertFalse(cfg.use_img2table)
+        self.assertTrue(cfg.use_pymupdf)
         self.assertFalse(cfg.use_llm)
         self.assertEqual(cfg.dpi, 120)
         self.assertFalse(cfg.preprocess_images)
@@ -27,6 +28,7 @@ class TestExecutionPresets(unittest.TestCase):
         self.assertEqual(cfg.execution_preset, "prod-high-accuracy")
         self.assertTrue(cfg.use_paddleocr)
         self.assertTrue(cfg.use_img2table)
+        self.assertTrue(cfg.use_pymupdf)
         self.assertEqual(cfg.dpi, 200)
         self.assertTrue(cfg.preprocess_images)
         self.assertTrue(cfg.adaptive_preprocess)
@@ -35,11 +37,13 @@ class TestExecutionPresets(unittest.TestCase):
         parser = create_universal_parser(
             execution_preset="local-low-mem",
             use_paddleocr=True,
+            use_pymupdf=False,
             dpi=180,
         )
         cfg = parser.config
         self.assertEqual(cfg.execution_preset, "local-low-mem")
         self.assertTrue(cfg.use_paddleocr)
+        self.assertFalse(cfg.use_pymupdf)
         self.assertEqual(cfg.dpi, 180)
 
 

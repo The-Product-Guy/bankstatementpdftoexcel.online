@@ -258,6 +258,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
         runtime_use_paddleocr = True
         runtime_use_img2table = True
+        runtime_use_pymupdf = os.environ.get('USE_PYMUPDF', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
         runtime_use_llm = os.environ.get('USE_LLM', '').strip().lower() in {'1', 'true', 'yes', 'on'}
         if not _PADDLE_WARMUP_AVAILABLE:
             # In environments where PaddleOCR isn't installed (or failed init),
@@ -278,6 +279,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             execution_preset=execution_preset,
             use_paddleocr=runtime_use_paddleocr,
             use_img2table=runtime_use_img2table,
+            use_pymupdf=runtime_use_pymupdf,
             use_llm=runtime_use_llm,
         )
         
@@ -383,6 +385,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     execution_preset=execution_preset,
                     use_paddleocr=runtime_use_paddleocr,
                     use_img2table=runtime_use_img2table,
+                    use_pymupdf=runtime_use_pymupdf,
                     use_llm=runtime_use_llm,
                 )
                 chunk_transactions = chunk_parser.parse(
