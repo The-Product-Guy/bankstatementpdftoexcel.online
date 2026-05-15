@@ -123,6 +123,38 @@ class TestParserConfidenceAndLanguage(unittest.TestCase):
         self.assertEqual(tx["Withdrawal_Amount"], 6000.0)
         self.assertEqual(tx["Closing_Balance"], 72506.23)
 
+    def test_month_name_date_and_signed_amount_parsing(self):
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+        row = [
+            "14 Jan 2025 POS PURCHASE",
+            "REF123",
+            "1,234.56 DR",
+            "",
+            "(12,345.67)",
+        ]
+        col_map = {
+            "date": 0,
+            "description": 0,
+            "reference": 1,
+            "debit": 2,
+            "credit": 3,
+            "balance": 4,
+        }
+
+        tx = parser._row_to_transaction(
+            row=row,
+            col_map=col_map,
+            source_file="sample.pdf",
+            page_ref="Template",
+        )
+
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx["Date"], "14 Jan 2025")
+        self.assertEqual(tx["Description"], "POS PURCHASE")
+        self.assertEqual(tx["Withdrawal_Amount"], 1234.56)
+        self.assertIsNone(tx["Deposit_Amount"])
+        self.assertEqual(tx["Closing_Balance"], -12345.67)
+
 
 if __name__ == "__main__":
     unittest.main()

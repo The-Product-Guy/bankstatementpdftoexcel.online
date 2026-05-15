@@ -1887,26 +1887,14 @@ class UniversalBankParser(BaseParser):
         date_val = get_cell('date')
         description = get_cell('description')
         reference = get_cell('reference')
-        date_exact_re = re.compile(
-            r'^\s*(\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*$'
-        )
-        date_prefix_re = re.compile(
-            r'^\s*(\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b'
-        )
-        m_exact = date_exact_re.match(date_val)
-        m = date_prefix_re.match(date_val)
-        if not m_exact and not m:
+
+        extracted_date, remaining = self.extract_date_token(date_val, anchored=True)
+        if not extracted_date:
             return None
 
-        if m_exact:
-            date_val = m_exact.group(1)
-            m = None
-        if m:
-            extracted_date = m.group(1)
-            remaining = date_val[m.end():].strip(" -|")
-            date_val = extracted_date
-            if remaining and (not description or self._looks_like_date(description) or self._looks_like_reference(description)):
-                description = remaining
+        date_val = extracted_date
+        if remaining and (not description or self._looks_like_date(description) or self._looks_like_reference(description)):
+            description = remaining
         if description:
             description = re.sub(
                 r'^\s*' + re.escape(date_val) + r'\b[\s\-|:]*',
@@ -1915,16 +1903,21 @@ class UniversalBankParser(BaseParser):
                 flags=re.IGNORECASE,
             ).strip(" -|")
 
-        withdrawal = self.clean_amount_string(get_cell('debit'))
-        deposit = self.clean_amount_string(get_cell('credit'))
+        withdrawal = self.positive_amount(self.clean_amount_string(get_cell('debit')))
+        deposit = self.positive_amount(self.clean_amount_string(get_cell('credit')))
         balance = self.clean_amount_string(get_cell('balance'))
 
         def amount_tokens(cell_text: str) -> List[float]:
             text = (cell_text or "").strip()
             if not text:
                 return []
-            # Prefer decimal-like amounts to avoid treating long references as money.
-            raw = re.findall(r'-?\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', text)
+            # Prefer decimal/grouped amounts to avoid treating long references as money.
+            raw = re.findall(
+                r'\(?-?(?:[₹$£€]\s*)?(?:\d{1,3}(?:[,\s]\d{2,3})+|\d+)(?:[.,]\d{1,2})\s*(?:CR|DR)?\)?'
+                r'|\(?-?(?:[₹$£€]\s*)?\d{1,3}(?:[,\s]\d{2,3})+\s*(?:CR|DR)?\)?',
+                text,
+                flags=re.IGNORECASE,
+            )
             vals: List[float] = []
             for tok in raw:
                 amt = self.clean_amount_string(tok)
@@ -1961,17 +1954,17 @@ class UniversalBankParser(BaseParser):
             if len(pair) >= 2:
                 a, b = pair[0], pair[1]
                 if a and b:
-                    withdrawal, deposit = a, b
+                    withdrawal, deposit = abs(a), abs(b)
                 elif a and not b:
-                    withdrawal = a
+                    withdrawal = abs(a)
                 elif b and not a:
-                    deposit = b
+                    deposit = abs(b)
             elif len(pair) == 1:
                 desc_lower = description.lower()
                 if any(w in desc_lower for w in ['cr', 'credit', 'deposit']):
-                    deposit = pair[0]
+                    deposit = abs(pair[0])
                 else:
-                    withdrawal = pair[0]
+                    withdrawal = abs(pair[0])
 
             # In some scanned bordered tables, balance is shifted to the next column
             # while the value-date + debit/credit pair is merged in one column.
@@ -1996,13 +1989,13 @@ class UniversalBankParser(BaseParser):
                 amounts.extend(amount_tokens(cell))
 
             if len(amounts) >= 3:
-                withdrawal, deposit, balance = amounts[0], amounts[1], amounts[-1]
+                withdrawal, deposit, balance = abs(amounts[0]), abs(amounts[1]), amounts[-1]
             elif len(amounts) == 2:
                 desc_lower = description.lower()
                 if any(w in desc_lower for w in ['cr', 'credit', 'deposit']):
-                    deposit = amounts[0]
+                    deposit = abs(amounts[0])
                 else:
-                    withdrawal = amounts[0]
+                    withdrawal = abs(amounts[0])
                 balance = amounts[1]
             elif len(amounts) == 1:
                 balance = amounts[0]

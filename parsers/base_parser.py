@@ -12,6 +12,48 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger(__name__)
 
 
+_MONTH_DATE_FORMATS = (
+    "%d %b %Y",
+    "%d %B %Y",
+    "%d-%b-%Y",
+    "%d-%B-%Y",
+    "%d %b %y",
+    "%d %B %y",
+    "%d-%b-%y",
+    "%d-%B-%y",
+    "%b %d %Y",
+    "%B %d %Y",
+    "%b %d, %Y",
+    "%B %d, %Y",
+)
+
+_NUMERIC_DATE_FORMATS = (
+    "%d/%m/%Y",
+    "%d/%m/%y",
+    "%d-%m-%Y",
+    "%d-%m-%y",
+    "%d.%m.%Y",
+    "%d.%m.%y",
+    "%Y/%m/%d",
+    "%Y-%m-%d",
+    "%Y.%m.%d",
+    "%m/%d/%Y",
+    "%m/%d/%y",
+    "%m-%d-%Y",
+    "%m-%d-%y",
+)
+
+_DATE_TOKEN_RE = re.compile(
+    r"(?P<date>"
+    r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"
+    r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+    r"|\d{1,2}[\s-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*[\s-]\d{2,4}"
+    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}"
+    r")",
+    re.IGNORECASE,
+)
+
+
 class BaseParser(ABC):
     """Abstract base class for bank statement parsers"""
     
@@ -40,30 +82,106 @@ class BaseParser(ABC):
         return True
     
     def clean_amount_string(self, amount_str):
-        """Clean and convert amount string to float"""
-        if not amount_str or amount_str.strip() == '':
+        """Clean and convert a bank-statement amount string to float."""
+        if amount_str is None:
             return None
-        
-        # Remove commas and extra spaces
-        cleaned = str(amount_str).replace(',', '').strip()
-        
-        # Handle different number formats
+
+        if isinstance(amount_str, (int, float)):
+            amount = float(amount_str)
+            return None if amount == 0 else amount
+
+        text = str(amount_str).strip()
+        if not text:
+            return None
+
+        negative = False
+        upper = text.upper()
+        if upper.endswith("DR"):
+            negative = True
+            text = text[:-2].strip()
+        elif upper.endswith("CR"):
+            text = text[:-2].strip()
+
+        if text.startswith("(") and text.endswith(")"):
+            negative = True
+            text = text[1:-1].strip()
+        if text.endswith("-"):
+            negative = True
+            text = text[:-1].strip()
+        if text.startswith("-"):
+            negative = True
+            text = text[1:].strip()
+
+        cleaned = re.sub(r"(?i)\b(?:inr|usd|aed|gbp|eur|rs\.?|rupees?)\b", "", text)
+        cleaned = re.sub(r"[^\d,.\s]", "", cleaned)
+        cleaned = re.sub(r"\s+", "", cleaned)
+        if not cleaned:
+            return None
+
+        if "," in cleaned and "." in cleaned:
+            if cleaned.rfind(",") > cleaned.rfind("."):
+                cleaned = cleaned.replace(".", "").replace(",", ".")
+            else:
+                cleaned = cleaned.replace(",", "")
+        elif "," in cleaned:
+            parts = cleaned.split(",")
+            if len(parts) == 2 and len(parts[1]) in {1, 2} and len(parts[0]) > 2:
+                cleaned = ".".join(parts)
+            else:
+                cleaned = "".join(parts)
+
         try:
-            # Check if it's zero
-            if cleaned in ['0', '0.0', '0.00']:
+            amount = float(cleaned)
+            if amount == 0:
                 return None
-            
-            return float(cleaned)
+            return -abs(amount) if negative else amount
         except (ValueError, TypeError):
             return None
-    
+
+    def positive_amount(self, amount):
+        """Return a positive transaction amount while preserving None."""
+        if amount is None:
+            return None
+        return abs(amount)
+
     def parse_date(self, date_str, input_format='%d/%m/%Y'):
         """Parse date string and return standardized format"""
+        if not date_str:
+            return date_str
+        value = str(date_str).strip().replace(",", "")
+        formats = []
+        if input_format:
+            formats.append(input_format)
+        formats.extend(fmt for fmt in _NUMERIC_DATE_FORMATS + _MONTH_DATE_FORMATS if fmt not in formats)
+        value_space_normalized = re.sub(r"\s+", " ", value)
         try:
-            date_obj = datetime.strptime(date_str, input_format)
-            return date_obj.strftime('%d/%m/%y')  # Standard output format
-        except (ValueError, TypeError):
-            return date_str  # Return original if parsing fails
+            for fmt in formats:
+                try:
+                    date_obj = datetime.strptime(value_space_normalized, fmt)
+                    return date_obj.strftime('%d/%m/%y')  # Standard output format
+                except ValueError:
+                    continue
+        except TypeError:
+            pass
+        return date_str  # Return original if parsing fails
+
+    def extract_date_token(self, text, anchored=False):
+        """
+        Extract a date-like token and remaining text from a table cell.
+        Returns (date_token, remaining_text) or (None, original_text).
+        """
+        value = str(text or "").strip()
+        if not value:
+            return None, ""
+
+        match = _DATE_TOKEN_RE.search(value)
+        if not match or (anchored and match.start() != 0):
+            return None, value
+
+        date_token = match.group("date").strip()
+        remaining = (value[:match.start()] + " " + value[match.end():]).strip(" -|:\t")
+        remaining = re.sub(r"\s+", " ", remaining)
+        return date_token, remaining
     
     def validate_transaction_line(self, line):
         """Basic validation for transaction lines"""
@@ -93,14 +211,16 @@ class BaseParser(ABC):
     
     def create_transaction_dict(self, date, description, reference, withdrawal_amt, deposit_amt, balance_amt, source_file, line_ref):
         """Create standardized transaction dictionary"""
-        
+        withdrawal_amt = self.positive_amount(withdrawal_amt)
+        deposit_amt = self.positive_amount(deposit_amt)
+
         # Calculate net transaction amount
         net_amount = 0
         if deposit_amt and deposit_amt > 0:
             net_amount = deposit_amt
         elif withdrawal_amt and withdrawal_amt > 0:
             net_amount = -withdrawal_amt
-        
+
         return {
             'Date': date,
             'Description': description.strip() if description else '',

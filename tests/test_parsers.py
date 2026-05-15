@@ -248,6 +248,10 @@ class TestBaseParser:
         parser.clean_amount_string = BaseParser.clean_amount_string
         
         assert parser.clean_amount_string(parser, "1,234.56") == 1234.56
+        assert parser.clean_amount_string(parser, "₹ 1,23,456.78 CR") == 123456.78
+        assert parser.clean_amount_string(parser, "1.234,56") == 1234.56
+        assert parser.clean_amount_string(parser, "(1,234.56)") == -1234.56
+        assert parser.clean_amount_string(parser, "1,234.56 DR") == -1234.56
         assert parser.clean_amount_string(parser, "0.00") is None
         assert parser.clean_amount_string(parser, "") is None
     
@@ -260,6 +264,12 @@ class TestBaseParser:
         
         result = parser.parse_date(parser, "15/01/2024", '%d/%m/%Y')
         assert result == "15/01/24"
+
+        result = parser.parse_date(parser, "15 Jan 2024")
+        assert result == "15/01/24"
+
+        result = parser.parse_date(parser, "2024-01-15")
+        assert result == "15/01/24"
     
     def test_create_transaction_dict(self):
         """Test transaction dictionary creation."""
@@ -267,6 +277,7 @@ class TestBaseParser:
         
         parser = Mock(spec=BaseParser)
         parser.create_transaction_dict = BaseParser.create_transaction_dict
+        parser.positive_amount = lambda amount: BaseParser.positive_amount(parser, amount)
         
         tx = parser.create_transaction_dict(
             parser,
