@@ -237,6 +237,10 @@ function clearFileSelection() {
             standardOption.querySelector('input[type="radio"]').checked = true;
         }
     }
+    const retainInputPdf = document.getElementById('retainInputPdf');
+    if (retainInputPdf) {
+        retainInputPdf.checked = false;
+    }
     checkFormValidity();
 }
 
@@ -610,7 +614,7 @@ async function submitFeedback(e) {
         closeFeedbackModal();
 
         if (result.status === 'ok') {
-            showAlert('Thank you for your feedback!', 'success');
+            showAlert(result.message || 'Thank you for your feedback!', 'success');
         } else {
             showAlert(result.error || 'Failed to submit feedback.', 'error');
         }

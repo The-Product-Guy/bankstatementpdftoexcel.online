@@ -49,6 +49,53 @@ def normalize_date(date_str: str) -> str:
     return value
 
 
+def normalize_text(value: object) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _get_first_value(row: Dict[str, object], aliases: Tuple[str, ...]) -> object:
+    for alias in aliases:
+        value = row.get(alias)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _parse_amount(value: object) -> Optional[float]:
+    if value in (None, ""):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    negative = False
+    upper = text.upper()
+    if upper.endswith("DR"):
+        negative = True
+        text = text[:-2]
+    elif upper.endswith("CR"):
+        text = text[:-2]
+
+    if text.startswith("(") and text.endswith(")"):
+        negative = True
+        text = text[1:-1]
+
+    cleaned = (
+        text.replace(",", "")
+        .replace("₹", "")
+        .replace("$", "")
+        .replace("£", "")
+        .replace("€", "")
+        .strip()
+    )
+    try:
+        amount = float(cleaned)
+    except ValueError:
+        return None
+    return -abs(amount) if negative else amount
+
+
 def _extract_amount_for_match(row: Dict[str, object]) -> Optional[float]:
     """
     Determine a single amount to match for accuracy scoring.
@@ -57,42 +104,36 @@ def _extract_amount_for_match(row: Dict[str, object]) -> Optional[float]:
     2) -Withdrawal_Amount
     3) Deposit_Amount
     """
-    tx = row.get("Transaction_Amount")
-    if tx not in (None, ""):
-        try:
-            return float(str(tx).replace(",", ""))
-        except (TypeError, ValueError):
-            pass
+    tx = _get_first_value(row, ("Transaction_Amount", "Amount"))
+    tx_amount = _parse_amount(tx)
+    if tx_amount is not None:
+        return tx_amount
 
-    w = row.get("Withdrawal_Amount")
-    if w not in (None, ""):
-        try:
-            return -abs(float(str(w).replace(",", "")))
-        except (TypeError, ValueError):
-            pass
+    withdrawal = _get_first_value(row, ("Withdrawal_Amount", "Debit", "Debit_Amount"))
+    withdrawal_amount = _parse_amount(withdrawal)
+    if withdrawal_amount is not None:
+        return -abs(withdrawal_amount)
 
-    d = row.get("Deposit_Amount")
-    if d not in (None, ""):
-        try:
-            return abs(float(str(d).replace(",", "")))
-        except (TypeError, ValueError):
-            pass
+    deposit = _get_first_value(row, ("Deposit_Amount", "Credit", "Credit_Amount"))
+    deposit_amount = _parse_amount(deposit)
+    if deposit_amount is not None:
+        return abs(deposit_amount)
 
     return None
 
 
-def score_accuracy(
+def match_rows(
     extracted: List[Dict[str, object]],
     truth: List[Dict[str, str]]
-) -> Tuple[int, int, int, float]:
+) -> List[Tuple[int, int]]:
     """
-    Match by normalized date + amount (tolerance 0.01).
-    Returns (matches, extracted_count, truth_count, accuracy_pct).
+    Match rows by normalized date + amount (tolerance 0.01).
+    Returns pairs of (extracted_index, truth_index).
     """
-    matches = 0
+    matches: List[Tuple[int, int]] = []
     used_truth_indices = set()
 
-    for tx in extracted:
+    for extracted_index, tx in enumerate(extracted):
         tx_amt = _extract_amount_for_match(tx)
         tx_date = normalize_date(str(tx.get("Date", "")))
         if tx_amt is None or not tx_date:
@@ -113,13 +154,88 @@ def score_accuracy(
                 break
 
         if matched_index != -1:
-            matches += 1
+            matches.append((extracted_index, matched_index))
             used_truth_indices.add(matched_index)
 
+    return matches
+
+
+def score_accuracy(
+    extracted: List[Dict[str, object]],
+    truth: List[Dict[str, str]]
+) -> Tuple[int, int, int, float]:
+    """
+    Match by normalized date + amount (tolerance 0.01).
+    Returns (matches, extracted_count, truth_count, accuracy_pct).
+    """
+    matches = match_rows(extracted, truth)
     truth_count = len(truth)
     extracted_count = len(extracted)
-    accuracy = (matches / truth_count * 100.0) if truth_count else 0.0
-    return matches, extracted_count, truth_count, accuracy
+    accuracy = (len(matches) / truth_count * 100.0) if truth_count else 0.0
+    return len(matches), extracted_count, truth_count, accuracy
+
+
+FIELD_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "date": ("Date", "date"),
+    "description": ("Description", "description", "Narration", "Transaction_Details"),
+    "withdrawal": ("Withdrawal_Amount", "Debit", "Debit_Amount"),
+    "deposit": ("Deposit_Amount", "Credit", "Credit_Amount"),
+    "balance": ("Balance", "Closing_Balance", "Running_Balance"),
+}
+
+
+def _field_matches(field: str, extracted_value: object, truth_value: object) -> bool:
+    if field == "date":
+        return normalize_date(str(extracted_value)) == normalize_date(str(truth_value))
+    if field in {"withdrawal", "deposit", "balance"}:
+        left = _parse_amount(extracted_value)
+        right = _parse_amount(truth_value)
+        return left is not None and right is not None and abs(left - right) < 0.01
+    return normalize_text(extracted_value) == normalize_text(truth_value)
+
+
+def score_field_accuracy(
+    extracted: List[Dict[str, object]],
+    truth: List[Dict[str, str]]
+) -> Dict[str, object]:
+    """
+    Score matched rows field-by-field against ground truth.
+    Fields absent from the truth row are excluded from the denominator.
+    """
+    row_matches = match_rows(extracted, truth)
+    total_matched = 0
+    total_expected = 0
+    metrics: Dict[str, object] = {
+        "field_accuracy_pct": 0.0,
+        "field_matched": 0,
+        "field_expected": 0,
+    }
+
+    for field, aliases in FIELD_ALIASES.items():
+        matched = 0
+        expected = 0
+        for extracted_index, truth_index in row_matches:
+            truth_value = _get_first_value(truth[truth_index], aliases)
+            if truth_value in (None, ""):
+                continue
+            extracted_value = _get_first_value(extracted[extracted_index], aliases)
+            expected += 1
+            if _field_matches(field, extracted_value, truth_value):
+                matched += 1
+
+        metrics[f"{field}_accuracy_pct"] = round((matched / expected * 100.0) if expected else 0.0, 1)
+        metrics[f"{field}_matched"] = matched
+        metrics[f"{field}_expected"] = expected
+        total_matched += matched
+        total_expected += expected
+
+    metrics["field_matched"] = total_matched
+    metrics["field_expected"] = total_expected
+    metrics["field_accuracy_pct"] = round(
+        (total_matched / total_expected * 100.0) if total_expected else 0.0,
+        1,
+    )
+    return metrics
 
 
 def find_truth_csv(pdf_path: Path) -> Optional[Path]:
@@ -207,11 +323,13 @@ def evaluate_file(
         if truth_csv:
             truth = load_truth(truth_csv)
             matches, extracted_count, truth_count, true_accuracy = score_accuracy(extracted, truth)
+            field_metrics = score_field_accuracy(extracted, truth)
             row["truth_file"] = truth_csv.name
             row["true_accuracy_pct"] = round(true_accuracy, 1)
             row["truth_rows"] = truth_count
             row["matched_rows"] = matches
             row["extracted_rows"] = extracted_count
+            row.update(field_metrics)
 
         return row
     except Exception as exc:
@@ -234,6 +352,9 @@ def evaluate_file(
             "true_accuracy_pct": "",
             "truth_rows": "",
             "matched_rows": "",
+            "field_accuracy_pct": "",
+            "field_matched": "",
+            "field_expected": "",
             "error": str(exc),
         }
 
@@ -260,6 +381,18 @@ def main() -> int:
         "--output",
         default="extraction_accuracy_report.csv",
         help="Output CSV report path",
+    )
+    parser.add_argument(
+        "--min-true-accuracy",
+        type=float,
+        default=None,
+        help="Fail with exit code 2 if average row-match accuracy is below this percent",
+    )
+    parser.add_argument(
+        "--min-field-accuracy",
+        type=float,
+        default=None,
+        help="Fail with exit code 2 if average field accuracy is below this percent",
     )
     args = parser.parse_args()
 
@@ -319,11 +452,29 @@ def main() -> int:
         "amount_coverage_pct",
         "truth_file",
         "true_accuracy_pct",
-        "truth_rows",
-        "matched_rows",
-        "duration_sec",
-        "error",
-    ]
+            "truth_rows",
+            "matched_rows",
+            "field_accuracy_pct",
+            "field_matched",
+            "field_expected",
+            "date_accuracy_pct",
+            "date_matched",
+            "date_expected",
+            "description_accuracy_pct",
+            "description_matched",
+            "description_expected",
+            "withdrawal_accuracy_pct",
+            "withdrawal_matched",
+            "withdrawal_expected",
+            "deposit_accuracy_pct",
+            "deposit_matched",
+            "deposit_expected",
+            "balance_accuracy_pct",
+            "balance_matched",
+            "balance_expected",
+            "duration_sec",
+            "error",
+        ]
     output_path = Path(args.output)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -332,6 +483,37 @@ def main() -> int:
             writer.writerow(row)
 
     print(f"\nSaved report to {output_path}")
+    truth_rows = [
+        row for row in rows
+        if isinstance(row.get("true_accuracy_pct"), (int, float))
+    ]
+    if truth_rows:
+        avg_true_accuracy = sum(float(row["true_accuracy_pct"]) for row in truth_rows) / len(truth_rows)
+        field_rows = [
+            row for row in truth_rows
+            if isinstance(row.get("field_accuracy_pct"), (int, float))
+        ]
+        avg_field_accuracy = (
+            sum(float(row["field_accuracy_pct"]) for row in field_rows) / len(field_rows)
+            if field_rows
+            else 0.0
+        )
+        print(f"Average row-match accuracy: {avg_true_accuracy:.1f}%")
+        print(f"Average field accuracy: {avg_field_accuracy:.1f}%")
+
+        if args.min_true_accuracy is not None and avg_true_accuracy < args.min_true_accuracy:
+            print(
+                f"Row-match accuracy {avg_true_accuracy:.1f}% is below threshold "
+                f"{args.min_true_accuracy:.1f}%"
+            )
+            return 2
+        if args.min_field_accuracy is not None and avg_field_accuracy < args.min_field_accuracy:
+            print(
+                f"Field accuracy {avg_field_accuracy:.1f}% is below threshold "
+                f"{args.min_field_accuracy:.1f}%"
+            )
+            return 2
+
     return 0
 
 

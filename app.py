@@ -10,6 +10,7 @@ load_dotenv()
 import logging
 import os
 import secrets
+import shutil
 import uuid
 from datetime import datetime, timedelta
 
@@ -82,6 +83,7 @@ STORAGE_ROOT = os.environ.get('SHARED_STORAGE_PATH')
 UPLOAD_FOLDER = os.path.join(STORAGE_ROOT, 'uploads') if STORAGE_ROOT else 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+PROCESSED_FOLDER = os.path.join(STORAGE_ROOT, 'processed') if STORAGE_ROOT else 'processed'
 
 try:
     init_db()
@@ -234,7 +236,7 @@ def is_admin_user():
 # ── Cleanup Jobs ─────────────────────────────────────────────────────────
 
 def cleanup_old_files():
-    """Clean up old uploaded files."""
+    """Clean up stale local uploads and generated result files."""
     try:
         current_time = datetime.now().timestamp()
         for filename in os.listdir(UPLOAD_FOLDER):
@@ -244,6 +246,23 @@ def cleanup_old_files():
                     os.remove(filepath)
     except Exception:
         pass
+
+    try:
+        if LOCAL_RESULT_RETENTION_HOURS <= 0 or not os.path.exists(PROCESSED_FOLDER):
+            return
+
+        cutoff_seconds = LOCAL_RESULT_RETENTION_HOURS * 3600
+        current_time = datetime.now().timestamp()
+        for name in os.listdir(PROCESSED_FOLDER):
+            path = os.path.join(PROCESSED_FOLDER, name)
+            if current_time - os.path.getmtime(path) <= cutoff_seconds:
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.isfile(path):
+                os.remove(path)
+    except Exception as exc:
+        logger.warning(f"Local result cleanup failed: {exc}")
 
 def cleanup_feedback_shared_pdfs(force: bool = False):
     """Delete user-consented shared PDFs after retention period."""
@@ -293,10 +312,18 @@ def cleanup_feedback_shared_pdfs(force: bool = False):
         _last_feedback_retention_sweep = now
 
 _last_s3_cleanup_sweep = None
-S3_RESULT_RETENTION_HOURS = int(os.environ.get('S3_RESULT_RETENTION_HOURS', '24'))
+RESULT_RETENTION_HOURS = int(os.environ.get(
+    'RESULT_RETENTION_HOURS',
+    os.environ.get('S3_RESULT_RETENTION_HOURS', '24')
+))
+S3_RESULT_RETENTION_HOURS = RESULT_RETENTION_HOURS
+LOCAL_RESULT_RETENTION_HOURS = int(os.environ.get(
+    'LOCAL_RESULT_RETENTION_HOURS',
+    str(RESULT_RETENTION_HOURS)
+))
 
 def cleanup_expired_s3_results(force: bool = False):
-    """Delete S3 result files for jobs older than the retention window."""
+    """Delete S3 job files older than the retention window."""
     global _last_s3_cleanup_sweep
 
     if S3_RESULT_RETENTION_HOURS <= 0:
@@ -320,18 +347,36 @@ def cleanup_expired_s3_results(force: bool = False):
         with get_db_session() as db:
             stale_jobs = (
                 db.query(Job)
-                .filter(Job.storage_key.isnot(None))
                 .filter(Job.finished_at < cutoff)
+                .filter(
+                    Job.input_storage_key.isnot(None)
+                    | Job.output_storage_key.isnot(None)
+                    | Job.storage_key.isnot(None)
+                )
                 .limit(100)
                 .all()
             )
             for job in stale_jobs:
-                try:
-                    delete_file(storage, job.storage_key)
-                except Exception as exc:
-                    logger.warning(f"S3 cleanup failed for {job.storage_key}: {exc}")
-                    continue
-                job.storage_key = None
+                candidate_keys = [
+                    job.input_storage_key,
+                    job.output_storage_key,
+                    job.storage_key,
+                ]
+                for key in dict.fromkeys(k for k in candidate_keys if k):
+                    try:
+                        delete_file(storage, key)
+                    except Exception as exc:
+                        logger.warning(f"S3 cleanup failed for {key}: {exc}")
+                        continue
+
+                    if key == job.input_storage_key:
+                        job.input_storage_key = None
+                        job.input_deleted_at = now
+                    if key == job.output_storage_key:
+                        job.output_storage_key = None
+                        job.output_deleted_at = now
+                    if key == job.storage_key:
+                        job.storage_key = None
     except Exception as exc:
         logger.warning(f"S3 cleanup sweep failed: {exc}")
     finally:

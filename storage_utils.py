@@ -40,6 +40,14 @@ def delete_file(storage: Dict[str, Any], key: str) -> None:
     storage["client"].delete_object(Bucket=storage["bucket"], Key=key)
 
 
+def copy_file(storage: Dict[str, Any], source_key: str, dest_key: str) -> None:
+    storage["client"].copy_object(
+        Bucket=storage["bucket"],
+        CopySource={"Bucket": storage["bucket"], "Key": source_key},
+        Key=dest_key,
+    )
+
+
 def generate_presigned_url(
     storage: Dict[str, Any],
     key: str,

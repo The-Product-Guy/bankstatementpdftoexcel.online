@@ -2055,8 +2055,8 @@ class UniversalBankParser(BaseParser):
                 if raw_table and raw_table.get("rows") and len(raw_table["rows"]) >= 2:
                     num_cols = len(raw_table.get("columns", []))
                     num_rows = len(raw_table["rows"])
-                    # Validate: at least 3 columns with data in most rows
-                    if num_cols >= 2:
+                    min_transactions = max(1, self.config.min_table_transactions)
+                    if num_cols >= 3:
                         self.raw_table = raw_table
                         derived = self._derive_transactions_from_raw_table(
                             source_file=source_file,
@@ -2065,7 +2065,12 @@ class UniversalBankParser(BaseParser):
                         logger.info("img2table extraction: %d rows, %d columns", num_rows, num_cols)
                         if derived:
                             logger.info("Derived %d normalized transactions from img2table output", derived)
-                        return 0
+                        if derived >= min_transactions:
+                            return 0
+                        logger.warning(
+                            "img2table produced only %d normalized transactions; trying fallbacks",
+                            derived
+                        )
                     else:
                         logger.warning("img2table found only %d columns; trying fallbacks", num_cols)
 
@@ -2163,6 +2168,33 @@ class UniversalBankParser(BaseParser):
             raw = result.get("raw_table")
             row_count = len(raw["rows"]) if raw and raw.get("rows") else 0
             logger.info("img2table found %d tables, %d rows total", table_count, row_count)
+
+            col_count = len(raw.get("columns", [])) if raw else 0
+            if row_count == 0 or col_count < 3:
+                logger.info(
+                    "img2table found %d columns; retrying with implicit column detection",
+                    col_count
+                )
+                retry = extractor.extract_tables_from_pdf(
+                    pdf_path=pdf_path,
+                    pages=page_indexes,
+                    implicit_rows=True,
+                    implicit_columns=True,
+                    borderless_tables=True,
+                    min_confidence=30,
+                )
+                retry_raw = retry.get("raw_table")
+                retry_rows = len(retry_raw["rows"]) if retry_raw and retry_raw.get("rows") else 0
+                retry_cols = len(retry_raw.get("columns", [])) if retry_raw else 0
+                if retry_rows >= row_count and retry_cols > col_count:
+                    logger.info(
+                        "img2table implicit-column retry improved shape: %d rows, %d columns",
+                        retry_rows,
+                        retry_cols
+                    )
+                    result = retry
+                    raw = retry_raw
+                    row_count = retry_rows
 
             self.emit_progress(
                 selected_pages, selected_pages,

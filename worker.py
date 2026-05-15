@@ -16,7 +16,7 @@ from parsers.chunk_utils import (
     sort_transactions_for_output,
 )
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
-from storage_utils import get_storage_config, download_file, upload_file
+from storage_utils import get_storage_config, delete_file, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
 from models import Job, UsageCounter
 import logging
@@ -175,22 +175,27 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
     """
     logger.info(f"Starting job {job_id} for file {original_filename} (quality={quality})")
     
-    # Set API key if provided (important for worker environment)
     if api_key:
-        os.environ['OPENAI_API_KEY'] = api_key
+        logger.warning("Job %s provided a per-request API key; per-job API keys are ignored.", job_id)
     
     temp_dir = None
     local_input_path = None
+    storage = None
+    input_storage_key = None
+    output_storage_key = None
+    retain_input_pdf = False
     try:
         storage = get_storage_config()
         if isinstance(file_ref, dict):
             ref_type = file_ref.get("type")
+            retain_input_pdf = bool(file_ref.get("retain_for_feedback"))
             if ref_type == "s3":
                 if not storage:
                     raise RuntimeError("Storage is not configured for S3 input.")
+                input_storage_key = file_ref.get("key")
                 temp_dir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
                 local_input_path = os.path.join(temp_dir, original_filename)
-                download_file(storage, file_ref.get("key"), local_input_path)
+                download_file(storage, input_storage_key, local_input_path)
                 file_path = local_input_path
             elif ref_type == "local":
                 file_path = file_ref.get("path")
@@ -253,6 +258,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
         runtime_use_paddleocr = True
         runtime_use_img2table = True
+        runtime_use_llm = os.environ.get('USE_LLM', '').strip().lower() in {'1', 'true', 'yes', 'on'}
         if not _PADDLE_WARMUP_AVAILABLE:
             # In environments where PaddleOCR isn't installed (or failed init),
             # img2table's Paddle backend can fall back to very heavy Tesseract paths
@@ -272,7 +278,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             execution_preset=execution_preset,
             use_paddleocr=runtime_use_paddleocr,
             use_img2table=runtime_use_img2table,
-            use_llm=False,  # Set USE_LLM=true to enable
+            use_llm=runtime_use_llm,
         )
         
         # Determine output path using absolute paths
@@ -377,7 +383,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     execution_preset=execution_preset,
                     use_paddleocr=runtime_use_paddleocr,
                     use_img2table=runtime_use_img2table,
-                    use_llm=False,
+                    use_llm=runtime_use_llm,
                 )
                 chunk_transactions = chunk_parser.parse(
                     file_path,
@@ -527,10 +533,10 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
         # Upload and update progress
         if storage:
-            output_key = f"outputs/{job_id}/{excel_filename}"
-            upload_file(storage, excel_path, output_key)
+            output_storage_key = f"outputs/{job_id}/{excel_filename}"
+            upload_file(storage, excel_path, output_storage_key)
             result_extra["storage"] = "s3"
-            result_extra["download_key"] = output_key
+            result_extra["download_key"] = output_storage_key
             update_progress(
                 job_id, 100, 100, status_msg,
                 percent_override=100,
@@ -547,6 +553,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             job_id,
             status="completed" if has_data else "completed_no_data",
             finished_at=datetime.utcnow(),
+            output_storage_key=output_storage_key,
+            storage_key=output_storage_key,
             transaction_count=len(transactions)
         )
         _increment_usage(job_id)
@@ -586,3 +594,15 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 os.rmdir(temp_dir)
             except Exception:
                 pass
+        if storage and input_storage_key and not retain_input_pdf:
+            try:
+                delete_file(storage, input_storage_key)
+                fields = {
+                    "input_storage_key": None,
+                    "input_deleted_at": datetime.utcnow(),
+                }
+                if not output_storage_key:
+                    fields["storage_key"] = None
+                _update_job(job_id, **fields)
+            except Exception as exc:
+                logger.warning("Failed to delete input PDF for job %s: %s", job_id, exc)

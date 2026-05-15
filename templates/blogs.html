@@ -80,7 +80,7 @@
                     <ol>
                         <li><strong>Upload your PDF</strong> - drag-and-drop or browse. We accept files up to 500 MB on Enterprise plans.</li>
                         <li><strong>Automatic detection</strong> - our engine figures out if the PDF is text-based (digital) or image-based (scanned) and picks the right extraction method.</li>
-                        <li><strong>OCR for scanned PDFs</strong> - scanned statements go through PaddleOCR with table-structure detection so every cell gets captured.</li>
+                        <li><strong>OCR for scanned PDFs</strong> - scanned statements go through OCR and table-structure detection to recover rows and columns.</li>
                         <li><strong>Download your Excel</strong> - the result has two sheets: <em>Raw_Statement</em> (exactly as extracted) and <em>Normalized_Transactions</em> (standardized columns for pivot tables).</li>
                     </ol>
                     <p>Text PDFs usually take 10-30 seconds. Scanned documents take 1-3 minutes.</p>
@@ -121,12 +121,12 @@
                 <div class="blog-body">
                     <p>Bank statements contain sensitive information. Here's how Statement Converter protects you:</p>
                     <ul>
-                        <li><strong>Zero retention</strong> - uploaded PDFs are deleted right after conversion. Result files are auto-deleted within 24 hours.</li>
+                        <li><strong>Limited retention</strong> - uploaded PDFs are deleted after conversion unless you explicitly retain one for feedback. Result files are auto-deleted within the configured download window.</li>
                         <li><strong>HTTPS everywhere</strong> - all data in transit is encrypted with TLS.</li>
-                        <li><strong>No persistent storage</strong> - files are processed in volatile memory and never written to permanent disk.</li>
+                        <li><strong>Controlled temporary storage</strong> - temporary files and generated results are cleaned up automatically.</li>
                         <li><strong>Isolated processing</strong> - each conversion runs in its own container with no shared state between users.</li>
                     </ul>
-                    <p>We never see, store, or analyze your transaction data. Read our full <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
+                    <p>We use transaction data only to produce your conversion result and do not keep it outside the stated retention windows. Read our full <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
                 </div>
             </div>
         </article>
@@ -158,9 +158,9 @@
                 </div>
                 <h3>Frequently Asked Questions</h3>
                 <div class="blog-body">
-                    <p><strong>Which banks are supported?</strong><br>Statement Converter works with any bank that produces PDF statements, text-based or scanned. We have optimized profiles for 20+ Indian banks (HDFC, ICICI, SBI, KVB, and more) with universal fallback for all others.</p>
+                    <p><strong>Which banks are supported?</strong><br>Statement Converter is built for tabular bank statement PDFs, text-based or scanned. It includes profile hints for known formats and a universal fallback for other layouts.</p>
                     <p><strong>What's the maximum file size?</strong><br>Free plan: 20 MB. Pro: 100 MB. Enterprise: 500 MB. For large files (80+ pages), our engine splits them into chunks automatically.</p>
-                    <p><strong>Is my data safe?</strong><br>Yes. Files are processed in memory and deleted right away. We never store your bank statements. See our <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
+                    <p><strong>Is my data safe?</strong><br>Files are processed with short retention windows. PDFs are deleted after processing unless you explicitly retain one for feedback. See our <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
                     <p><strong>What if the conversion result is wrong?</strong><br>Use the feedback button after conversion to let us know. You can also share the PDF so we can improve the parser for that format.</p>
                     <p><strong>Can I convert password-protected PDFs?</strong><br>Not yet. This is on our roadmap. For now, please remove the password before uploading.</p>
                 </div>

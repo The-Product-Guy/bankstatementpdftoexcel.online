@@ -2,7 +2,7 @@
 
 {% block title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block meta_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back. Free to start.{% endblock %}
+{% block meta_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back. Free to start.{% endblock %}
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
@@ -10,11 +10,11 @@
 
 {% block og_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block og_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back.{% endblock %}
+{% block og_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back.{% endblock %}
 
 {% block twitter_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
 
-{% block twitter_description %}Convert bank statement PDFs to Excel. Works with any bank, text or scanned. Upload your statement, get a clean spreadsheet back.{% endblock %}
+{% block twitter_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back.{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">
@@ -22,7 +22,7 @@
   "@context": "https://schema.org",
   "@type": "WebApplication",
   "name": "Statement Converter",
-  "description": "Convert bank statement PDFs to Excel format. Works with any bank.",
+  "description": "Convert bank statement PDFs to Excel format.",
   "url": "{{ url_for('pages.home', _external=True) }}",
   "applicationCategory": "UtilityApplication",
   "operatingSystem": "Web",
@@ -105,8 +105,8 @@
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2l6 3v4c0 4-2.5 7-6 9-3.5-2-6-5-6-9V5l6-3z"/></svg>
         </div>
         <div>
-            <p class="trust-title">Files deleted after conversion</p>
-            <p class="trust-desc">Zero retention. Your data is never stored.</p>
+            <p class="trust-title">Limited retention</p>
+            <p class="trust-desc">PDFs and Excel files expire automatically</p>
         </div>
     </div>
     <div class="trust-item">
@@ -123,8 +123,8 @@
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M2 10h16M10 2c2.5 3 2.5 12 0 16M10 2c-2.5 3-2.5 12 0 16"/></svg>
         </div>
         <div>
-            <p class="trust-title">Any bank, any country</p>
-            <p class="trust-desc">Handles multi-currency layouts</p>
+            <p class="trust-title">Flexible layouts</p>
+            <p class="trust-desc">Handles common multi-currency statements</p>
         </div>
     </div>
 </section>
@@ -171,15 +171,15 @@
             <div class="feature-icon">
                 <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8.5"/><path d="M3.5 11h17M11 2.5c3 3.5 3 13.5 0 17M11 2.5c-3 3.5-3 13.5 0 17"/></svg>
             </div>
-            <h3>Works with any bank</h3>
-            <p>20+ bank profiles built in, with universal fallback for everything else. From local credit unions to international banks.</p>
+            <h3>Universal statement parser</h3>
+            <p>Profile hints for known statement layouts with a universal fallback for other tabular bank PDFs.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon">
                 <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2.5L3.5 6.5v5c0 4.5 3 8 7.5 10 4.5-2 7.5-5.5 7.5-10v-5L11 2.5z"/><path d="M8 11.5l2.5 2.5 4-4"/></svg>
             </div>
             <h3>Your data stays private</h3>
-            <p>Files are deleted right after conversion. We don't keep your bank statements. Processing happens in isolated containers.</p>
+            <p>Uploaded PDFs are deleted after processing unless you explicitly retain them for feedback. Results expire after a short download window.</p>
         </div>
     </div>
 </section>
@@ -187,10 +187,10 @@
 <main class="main-content">
 <section class="security-section">
     <div class="security-content">
-        <h2>Your financial data is never stored on our servers.</h2>
+        <h2>Your financial data is handled with short retention windows.</h2>
         <p>
-            We delete your PDF the moment conversion finishes. The Excel output is available for download for a short window,
-            then it's permanently removed too. We don't read, analyze, or keep any of your transaction data.
+            We delete uploaded PDFs after processing unless you choose to retain one for feedback. The Excel output is available
+            for a short download window, then it is permanently removed too.
         </p>
         <p>
             All transfers happen over HTTPS. Each conversion runs in its own isolated process with no shared state between users.

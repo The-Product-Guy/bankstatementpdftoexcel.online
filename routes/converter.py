@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 
 from db import get_db_session
 from models import FeedbackSubmission, Job
-from storage_utils import generate_presigned_url, get_storage_config, upload_file
+from storage_utils import copy_file, generate_presigned_url, get_storage_config, upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -127,12 +127,17 @@ def convert():
             flash(message, 'error')
             return redirect(url_for('converter.dashboard'))
 
+        retain_for_feedback = request.form.get('retain_input_pdf', '').lower() in {'1', 'true', 'yes', 'on'}
         storage = get_storage_config()
         object_key = None
         if storage:
             object_key = f"uploads/{job_id}/{filename}"
             upload_file(storage, filepath, object_key)
-            file_ref = {"type": "s3", "key": object_key}
+            file_ref = {
+                "type": "s3",
+                "key": object_key,
+                "retain_for_feedback": retain_for_feedback,
+            }
             try:
                 os.remove(filepath)
             except Exception:
@@ -150,6 +155,7 @@ def convert():
                     file_size_bytes=file_size_bytes,
                     page_count=page_count,
                     status='queued',
+                    input_storage_key=object_key if storage else None,
                     storage_key=object_key if storage else None,
                     ip=get_client_ip(),
                     user_agent=request.headers.get('User-Agent', '')[:512]
@@ -278,9 +284,20 @@ def submit_feedback():
                 try:
                     with get_db_session() as db:
                         job = db.get(Job, job_id)
-                        if job and job.storage_key:
-                            pdf_storage_key = job.storage_key
+                        if job:
+                            source_key = job.input_storage_key
+                            if (
+                                not source_key
+                                and job.storage_key
+                                and job.storage_key.startswith("uploads/")
+                            ):
+                                source_key = job.storage_key
+                            if source_key:
+                                source_name = os.path.basename(source_key)
+                                pdf_storage_key = f"feedback/{job_id}/{uuid.uuid4()}_{source_name}"
+                                copy_file(storage, source_key, pdf_storage_key)
                 except Exception:
+                    logger.warning("Unable to attach retained PDF to feedback", exc_info=True)
                     pass
 
         with get_db_session() as db:
@@ -290,7 +307,7 @@ def submit_feedback():
                 guest_id=guest_id,
                 feedback_type=feedback_type,
                 message=message,
-                pdf_shared=share_pdf,
+                pdf_shared=bool(pdf_storage_key),
                 pdf_storage_key=pdf_storage_key,
                 extraction_rows=extraction_rows,
                 extraction_cols=extraction_cols,
@@ -300,7 +317,10 @@ def submit_feedback():
             )
             db.add(fb)
 
-        return jsonify({'status': 'ok', 'message': 'Thank you for your feedback!'}), 200
+        message = 'Thank you for your feedback!'
+        if share_pdf and not pdf_storage_key:
+            message = 'Feedback saved. The source PDF had already been deleted, so only metadata was submitted.'
+        return jsonify({'status': 'ok', 'message': message}), 200
 
     except Exception as e:
         logger.warning(f"Feedback submission error: {e}")

@@ -1,7 +1,7 @@
 import os
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from models import Base
@@ -25,6 +25,37 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_job_storage_columns()
+
+
+def _ensure_job_storage_columns() -> None:
+    """
+    Keep existing databases compatible without introducing a migration framework.
+    New installs get these columns from SQLAlchemy metadata; older DBs need them
+    added after create_all().
+    """
+    inspector = inspect(engine)
+    if not inspector.has_table("jobs"):
+        return
+
+    existing = {column["name"] for column in inspector.get_columns("jobs")}
+    storage_columns = {
+        "input_storage_key": "VARCHAR",
+        "output_storage_key": "VARCHAR",
+        "input_deleted_at": "TIMESTAMP",
+        "output_deleted_at": "TIMESTAMP",
+    }
+    missing = [
+        (name, column_type)
+        for name, column_type in storage_columns.items()
+        if name not in existing
+    ]
+    if not missing:
+        return
+
+    with engine.begin() as conn:
+        for name, column_type in missing:
+            conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {column_type}"))
 
 
 @contextmanager
