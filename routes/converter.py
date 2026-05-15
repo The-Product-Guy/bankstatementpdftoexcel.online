@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 
 from db import get_db_session
 from models import FeedbackSubmission, Job
+from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import copy_file, generate_presigned_url, get_storage_config, upload_file
 
 logger = logging.getLogger(__name__)
@@ -100,9 +101,19 @@ def convert():
         file_size_bytes = os.path.getsize(filepath)
         page_count = None
         try:
-            import pdfplumber
-            with pdfplumber.open(filepath) as pdf:
-                page_count = len(pdf.pages)
+            page_count = get_pdf_page_count(filepath)
+        except PasswordProtectedPDFError as e:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            message = str(e)
+            if is_ajax_request():
+                return jsonify({
+                    'status': 'error',
+                    'error': message,
+                    'error_code': 'PASSWORD_PROTECTED_PDF',
+                }), 400
+            flash(message, 'error')
+            return redirect(url_for('converter.dashboard'))
         except Exception as e:
             if os.path.exists(filepath):
                 os.remove(filepath)

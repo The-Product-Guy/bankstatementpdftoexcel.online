@@ -16,6 +16,7 @@ from parsers.chunk_utils import (
     sort_transactions_for_output,
 )
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
+from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
 from models import Job, UsageCounter
@@ -301,9 +302,9 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
         total_pages_for_chunk: Optional[int] = None
         try:
-            import pdfplumber
-            with pdfplumber.open(file_path) as pdf:
-                total_pages_for_chunk = len(pdf.pages)
+            total_pages_for_chunk = get_pdf_page_count(file_path)
+        except PasswordProtectedPDFError:
+            raise
         except Exception as exc:
             logger.warning(f"Job {job_id}: failed to read page count for chunking: {exc}")
 

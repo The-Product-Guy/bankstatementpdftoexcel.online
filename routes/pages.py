@@ -112,7 +112,7 @@ BLOG_POSTS = [
                 'items': [
                     'Statement Converter is built for tabular bank statement PDFs, text-based or scanned.',
                     'Free, Pro, and Enterprise plans have different file-size and conversion limits.',
-                    'Password-protected PDFs are not supported yet. Remove the password before uploading.',
+                    'Password-protected PDFs are rejected with a clear message. Remove the password before uploading.',
                     'If the result is incomplete, retry high-quality mode or submit feedback.',
                 ],
             },

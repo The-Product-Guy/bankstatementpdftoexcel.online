@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from PIL import Image
 from datetime import datetime
 
+from pdf_utils import raise_if_password_protected
 from .base_parser import BaseParser
 from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
 
@@ -274,6 +275,7 @@ class UniversalBankParser(BaseParser):
         start_time = time.time()
         
         self.validate_pdf_file(pdf_path)
+        raise_if_password_protected(pdf_path)
         self.transactions = []
         self.raw_table = None
         self.quality_report = {}
