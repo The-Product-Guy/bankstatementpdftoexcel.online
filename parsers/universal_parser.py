@@ -19,7 +19,7 @@ from datetime import datetime
 from pdf_utils import raise_if_password_protected
 from .base_parser import BaseParser
 from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
-from .ledger_validation import parse_money_to_minor
+from .ledger_validation import ledger_rows_from_transactions, parse_money_to_minor, validate_ledger_rows
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +335,7 @@ class UniversalBankParser(BaseParser):
         total_tokens = 0
         ocr_method = "paddleocr" if self.paddle_processor else "tesseract"
         
+        effective_pdf_type = pdf_type
         if pdf_type == "text":
             # Text-based PDF - extract directly and use LLM if available
             total_tokens = self._process_text_based(
@@ -343,6 +344,21 @@ class UniversalBankParser(BaseParser):
                 page_start=start_page,
                 page_end=end_page
             )
+            if not self.transactions and self._looks_like_statement_text(first_pages_text):
+                logger.info(
+                    "Text extraction found no transaction rows in a statement-like PDF; "
+                    "retrying image/OCR pipeline."
+                )
+                self.raw_table = None
+                total_tokens += self._process_image_based(
+                    pdf_path,
+                    original_filename,
+                    total_pages,
+                    page_start=start_page,
+                    page_end=end_page
+                )
+                if self.transactions:
+                    effective_pdf_type = "hybrid"
         else:
             # Image-based PDF - use enhanced OCR pipeline
             total_tokens = self._process_image_based(
@@ -374,8 +390,8 @@ class UniversalBankParser(BaseParser):
         )
         
         # --- Build extraction metadata for frontend quality feedback ---
-        self._build_extraction_metadata(pdf_type, pages_to_process)
-        self.quality_report = self._build_quality_report(pages_to_process, pdf_type)
+        self._build_extraction_metadata(effective_pdf_type, pages_to_process)
+        self.quality_report = self._build_quality_report(pages_to_process, effective_pdf_type)
         self.row_confidence_summary = self._build_row_confidence_summary()
         if self.quality_report and self.row_confidence_summary:
             self.quality_report.update(self.row_confidence_summary)
@@ -1377,16 +1393,20 @@ class UniversalBankParser(BaseParser):
         if suspicious_amount / total > 0.2:
             return False
 
+        ledger_report = validate_ledger_rows(ledger_rows_from_transactions(transactions))
+        if ledger_report.balance_checks >= 5 and ledger_report.balance_consistency_pct < 70.0:
+            return False
+
         return True
 
     def _looks_like_date(self, text: str) -> bool:
         """Check if text looks like a date in any common global format."""
         import re
-        # DD/MM/YY(YY), MM/DD/YYYY, DD-MM-YYYY
-        if re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', text):
+        # DD/MM/YY(YY), MM/DD/YYYY, DD-MM-YYYY, DD.MM.YYYY
+        if re.search(r'\d{1,2}[./-]\d{1,2}[./-]\d{2,4}', text):
             return True
-        # YYYY-MM-DD, YYYY/MM/DD
-        if re.search(r'\d{4}[/-]\d{2}[/-]\d{2}', text):
+        # YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+        if re.search(r'\d{4}[./-]\d{2}[./-]\d{2}', text):
             return True
         # DD-Mon-YYYY, DD Mon YYYY, Mon DD YYYY
         months = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
@@ -1414,11 +1434,40 @@ class UniversalBankParser(BaseParser):
         non_latin_ratio = non_latin_count / max(len(alpha_chars), 1)
         return non_latin_ratio <= 0.20
 
+    def _looks_like_statement_text(self, text: str) -> bool:
+        """Detect statement-like content even when the page is bilingual."""
+        if not text:
+            return False
+        import unicodedata
+
+        text = unicodedata.normalize("NFKC", text)
+        normalized = self._normalize_header_text(text)
+        latin_signals = (
+            "statement", "account", "transaction", "date", "details",
+            "description", "debit", "credit", "balance", "withdrawal", "deposit",
+        )
+        latin_hits = sum(1 for token in latin_signals if token in normalized)
+
+        arabic_signals = (
+            "كشف", "حساب", "التاريخ", "التفاصيل", "مدين", "دائن", "الرصيد",
+            # Some PDF text extractors return Arabic glyph runs in visual order.
+            "فشك", "باسح", "خيراتلا", "ليصافتلا", "نيدم", "نئاد", "ديصرلا",
+        )
+        arabic_hits = sum(1 for token in arabic_signals if token in text)
+
+        has_money_or_date = bool(
+            re.search(r'\d{1,2}[./-]\d{1,2}[./-]\d{2,4}', text)
+            and re.search(r'\d+(?:[,.]\d{2})', text)
+        )
+        return latin_hits >= 3 or arabic_hits >= 3 or has_money_or_date
+
     def _enforce_english_only(self, text: str, context: str) -> None:
         """Raise when ENGLISH_ONLY_BETA is enabled and text looks non-English."""
         if not self.config.english_only_beta:
             return
         if not text:
+            return
+        if self._looks_like_statement_text(text):
             return
         if not self._is_probably_english_text(text):
             raise UnsupportedLanguageError(
@@ -1893,11 +1942,11 @@ class UniversalBankParser(BaseParser):
         import re
 
         date_re = re.compile(
-            r'\d{4}[/-]\d{2}[/-]\d{2}'
-            r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+            r'\d{4}[./-]\d{2}[./-]\d{2}'
+            r'|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}'
         )
         exact_date_re = re.compile(
-            r'^(?:\d{4}[/-]\d{2}[/-]\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})$'
+            r'^(?:\d{4}[./-]\d{2}[./-]\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})$'
         )
         # Require either decimal precision or grouped separators to avoid
         # misclassifying long reference numbers as amount columns.
@@ -3295,7 +3344,12 @@ class UniversalBankParser(BaseParser):
                 return
             if re.match(r'^\d{1,4}$', text):
                 return
-            if text and not re.search(r'SCANNED\s+BY|PAGE\s+\d+', text, re.IGNORECASE):
+            footer_re = (
+                r'SCANNED\s+BY|PAGE\s+\d+|CONFIRMATION\s+OF\s+THE\s+CORRECTNESS'
+                r'|HEAD\s+OFFICE|REGISTERED\s+DETAILS|CENTRAL\s+BANK|ELECTRONICALLY\s+GENERATED'
+                r'|DOES\s+NOT\s+REQUIRE\s+A\s+SIGNATURE|WWW\.|TAX\s+REGISTRATION'
+            )
+            if text and not re.search(footer_re, text, re.IGNORECASE):
                 current_data_row[3] = f"{current_data_row[3]} {text}".strip()
 
         for idx, row_words in enumerate(grouped_rows):
@@ -3555,13 +3609,14 @@ class UniversalBankParser(BaseParser):
         This path is intentionally table-shaped: it reads rows from the right
         edge so long references and branch codes are not mistaken for money.
         """
-        date_pattern = re.compile(
-            r'^('
-            r'\d{4}[/-]\d{2}[/-]\d{2}'
-            r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+        date_token = (
+            r'\d{4}[./-]\d{2}[./-]\d{2}'
+            r'|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}'
             r'|\d{1,2}[\s-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s-]\d{2,4}'
             r'|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}'
-            r')',
+        )
+        date_pattern = re.compile(
+            rf'^\s*(?:\d{{1,6}}\s+)?(?P<date>{date_token})\b',
             re.IGNORECASE,
         )
         money_pattern = re.compile(
@@ -3575,7 +3630,8 @@ class UniversalBankParser(BaseParser):
             r'TXN\s*D(T|ATE)|VALUE\s*D(T|ATE)|DESCRIPTION|REFERENCE|DEBITS?|CREDITS?'
             r'|BALANCE|STATEMENT\s+OF\s+ACCOUNT|ACCOUNT\s+NUMBER|PERIOD\s+(FROM|TO)'
             r'|OPENING\s+BALANCE|CLOSING\s+BALANCE|TOTAL\s+(DEBIT|CREDIT)'
-            r'|SCANNED\s+BY|PAGE\s+\d+',
+            r'|SCANNED\s+BY|PAGE\s+\d+|WWW\.|REGISTERED\s+MOBILE|OTP|CVV|PASSWORD'
+            r'|BANK\s+EMPLOYEE|DIAL\s+YOUR\s+BANK',
             re.IGNORECASE,
         )
 
@@ -3641,6 +3697,8 @@ class UniversalBankParser(BaseParser):
         raw_rows: List[List[Any]] = []
         current_tx: Optional[Dict[str, Any]] = None
         previous_balance_minor: Optional[int] = None
+        pending_description_lines: List[str] = []
+        seen_table_header = False
 
         text = re.sub(r'(\d),\s+(\d)', r'\1,\2', text or "")
         lines = text.splitlines()
@@ -3678,16 +3736,26 @@ class UniversalBankParser(BaseParser):
             line = re.sub(r'\s+', ' ', (original_line or "").strip())
             if not line or len(line) < 5:
                 continue
+            if self._row_has_header_tokens(line):
+                seen_table_header = True
+                continue
 
             date_match = date_pattern.match(line)
             if not date_match:
                 if current_tx and not skip_re.search(line) and not re.match(r'^[\d,.\s]+$', line):
                     current_tx["description"] = f"{current_tx.get('description', '')} {line}".strip()
+                elif (
+                    seen_table_header
+                    and not skip_re.search(line)
+                    and not re.match(r'^[\d,.\s]+$', line)
+                    and not money_matches(line)
+                ):
+                    pending_description_lines.append(line)
                 continue
 
             commit_current()
 
-            txn_date = date_match.group(1)
+            txn_date = date_match.group("date")
             rest = line[date_match.end():].strip()
             value_date_match = date_pattern.match(rest)
             if value_date_match:
@@ -3705,7 +3773,12 @@ class UniversalBankParser(BaseParser):
                     amount_minor = matches[-2][3]
                     amount_start = matches[-2][0]
 
-            description = rest[:amount_start].strip(" -")
+            inline_description = rest[:amount_start].strip(" -")
+            description = " ".join(
+                part for part in (" ".join(pending_description_lines), inline_description)
+                if part
+            ).strip(" -")
+            pending_description_lines = []
             reference = extract_reference(description)
             withdrawal_minor, deposit_minor, signed_amount_minor = classify_amount(
                 description,

@@ -387,6 +387,50 @@ class TestUniversalParser:
         assert repaired[10]["Closing_Balance"] == 81811.6
         assert repaired_report.balance_checks_passed == 16
 
+    def test_regex_fallback_parses_serial_prefixed_dot_date_rows(self):
+        """Generic text fallback should handle S No. before date and DD.MM.YYYY."""
+        from parsers.ledger_validation import ledger_rows_from_transactions, validate_ledger_rows
+        from parsers.universal_parser import create_universal_parser
+
+        text = """
+        Transaction                                                                            Withdrawal           Deposit      Balance
+        S No.                    Cheque Number                   Transaction Remarks
+             Date                                                                               Amount (INR)        Amount (INR)    (INR)
+                                           MMT/IMPS/533514298342/Lend/DHIVYA
+          1       01.12.2025                                                                                  150000.00                    84170.98
+                                           A/KVBL0001129
+                                           UPI/ANGAALAMMA/paytm-9107086@/Sent
+          2       01.12.2025                                                                                       414.71                  83756.27
+                                           using/YES BANK
+                                           UPI/P MANOVA D/9965490825@pts/NA/State
+          3       03.12.2025                                                                                                      110.00   83866.27
+                                           Bank/533759668142/PTM0df701e18eec4fc6bbb1f
+          4       03.12.2025                                                                                       110.00                  83756.27
+        """
+
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+        parser._fallback_regex_parse(text, "icici-like.pdf")
+
+        assert len(parser.transactions) == 4
+        assert parser.transactions[0]["Date"] == "01.12.2025"
+        assert parser.transactions[0]["Withdrawal_Amount"] == 150000.0
+        assert parser.transactions[2]["Deposit_Amount"] == 110.0
+        assert parser.transactions[3]["Withdrawal_Amount"] == 110.0
+
+        report = validate_ledger_rows(ledger_rows_from_transactions(parser.transactions))
+        assert report.balance_checks == 3
+        assert report.balance_checks_passed == 3
+
+    def test_english_gate_allows_statement_like_reversed_arabic_text(self):
+        from parsers.universal_parser import create_universal_parser
+
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+
+        parser._enforce_english_only(
+            "باسحلا فشك ليصافت\nخيراتلا ليصافتلا نيدم نئاد ديصرلا",
+            "first page text",
+        )
+
 
 # Run tests if executed directly
 if __name__ == "__main__":
