@@ -164,6 +164,13 @@ pip3
 | `Source_File` | Original PDF name | `statement.pdf` |
 | `Page_Line` | Reference for debugging | `Page1_Line15` |
 
+Generated workbooks include validation sheets when normalized transactions are available:
+
+| Sheet | Purpose |
+|-------|---------|
+| `Validation` | Exact ledger checks for row count, balance continuity, debit/credit counts, and totals. |
+| `Issues` | Rows where extracted amounts do not reconcile with running balances or other ledger rules. |
+
 ## 🔧 Configuration
 
 ### Environment Variables

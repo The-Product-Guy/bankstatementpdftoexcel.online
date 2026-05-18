@@ -15,6 +15,11 @@ from parsers.chunk_utils import (
     merge_quality_reports,
     sort_transactions_for_output,
 )
+from parsers.ledger_validation import (
+    format_minor,
+    ledger_rows_from_transactions,
+    validate_ledger_rows,
+)
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
@@ -44,6 +49,46 @@ if DATABASE_URL.startswith("sqlite"):
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.StrictRedis.from_url(redis_url)
 _PADDLE_WARMUP_AVAILABLE = False
+
+
+def _ledger_validation_sheets(transactions: List[Dict[str, Any]]):
+    if not transactions:
+        return None, None, None
+
+    report = validate_ledger_rows(ledger_rows_from_transactions(transactions))
+    summary_df = pd.DataFrame([
+        ["Rows", report.row_count],
+        ["Balance checks passed", report.balance_checks_passed],
+        ["Balance checks total", report.balance_checks],
+        ["Balance consistency %", report.balance_consistency_pct],
+        ["Debit count", report.debit_count],
+        ["Debit total", format_minor(report.total_debit_minor)],
+        ["Credit count", report.credit_count],
+        ["Credit total", format_minor(report.total_credit_minor)],
+        ["Issue count", len(report.issues)],
+        ["Valid", report.is_valid],
+    ], columns=["Metric", "Value"])
+    issues_df = pd.DataFrame([
+        {
+            "Severity": issue.severity,
+            "Code": issue.code,
+            "Row": issue.row_index,
+            "Expected": format_minor(issue.expected_minor),
+            "Actual": format_minor(issue.actual_minor),
+            "Message": issue.message,
+        }
+        for issue in report.issues
+    ])
+    if issues_df.empty:
+        issues_df = pd.DataFrame([{
+            "Severity": "info",
+            "Code": "none",
+            "Row": "",
+            "Expected": "",
+            "Actual": "",
+            "Message": "No ledger validation issues detected.",
+        }])
+    return report, summary_df, issues_df
 
 
 def _warmup_ocr_models():
@@ -439,6 +484,13 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 quality_report = parser.get_quality_report() or {}
             except Exception:
                 quality_report = {}
+        ledger_report = None
+        validation_df = None
+        issues_df = None
+        try:
+            ledger_report, validation_df, issues_df = _ledger_validation_sheets(transactions)
+        except Exception as exc:
+            logger.warning("Ledger validation failed: %s", exc)
         has_data = False
 
         if raw_table and raw_table.get("rows") and transactions:
@@ -460,6 +512,10 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
                 raw_df.to_excel(writer, index=False, sheet_name="Raw_Statement")
                 tx_df.to_excel(writer, index=False, sheet_name="Normalized_Transactions")
+                if validation_df is not None:
+                    validation_df.to_excel(writer, index=False, sheet_name="Validation")
+                if issues_df is not None:
+                    issues_df.to_excel(writer, index=False, sheet_name="Issues")
 
             has_data = len(raw_table["rows"]) > 0 or len(transactions) > 0
             logger.info(
@@ -487,7 +543,12 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             # Add any extra columns not in preferred order
             columns += [col for col in df.columns if col not in preferred_order]
             df = df[columns]
-            df.to_excel(excel_path, index=False)
+            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="Normalized_Transactions")
+                if validation_df is not None:
+                    validation_df.to_excel(writer, index=False, sheet_name="Validation")
+                if issues_df is not None:
+                    issues_df.to_excel(writer, index=False, sheet_name="Issues")
             has_data = len(transactions) > 0
             logger.info(f"Job {job_id}: Wrote {len(transactions)} transactions to Excel")
         else:
@@ -525,6 +586,18 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 "row_confidence_low_ratio_pct": quality_report.get("row_confidence_low_ratio_pct", 0.0),
                 "row_confidence_low_count": quality_report.get("row_confidence_low_count", 0),
             })
+        if ledger_report:
+            result_extra.update({
+                "ledger_valid": ledger_report.is_valid,
+                "ledger_issue_count": len(ledger_report.issues),
+                "ledger_balance_checks": ledger_report.balance_checks,
+                "ledger_balance_checks_passed": ledger_report.balance_checks_passed,
+                "ledger_balance_consistency_pct": ledger_report.balance_consistency_pct,
+                "ledger_debit_count": ledger_report.debit_count,
+                "ledger_credit_count": ledger_report.credit_count,
+                "ledger_total_debit": format_minor(ledger_report.total_debit_minor),
+                "ledger_total_credit": format_minor(ledger_report.total_credit_minor),
+            })
 
         # Determine completion status message
         if not has_data:
@@ -532,6 +605,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 status_msg = "This PDF does not appear to contain tabular data."
             else:
                 status_msg = "Completed - no data extracted"
+        elif ledger_report and not ledger_report.is_valid:
+            status_msg = "Completed - extraction needs review"
         else:
             status_msg = "Completed successfully"
 
@@ -571,6 +646,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             'filename': excel_filename,
             'confidence': ext_meta.confidence if ext_meta else 'unknown',
             'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,
+            'ledger_valid': ledger_report.is_valid if ledger_report else None,
+            'ledger_balance_consistency_pct': ledger_report.balance_consistency_pct if ledger_report else None,
             'chunk_orchestrated': chunk_orchestrated,
         }
         
