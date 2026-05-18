@@ -179,6 +179,7 @@ Generated workbooks include validation sheets when normalized transactions are a
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
 | `SECRET_KEY` | Yes in production | Flask session security. Required when `APP_ENV=production`, `FLASK_ENV=production`, or Railway runtime vars are present. | Local dev fallback |
+| `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on both web and worker services so users, jobs, analytics, and feedback share one durable store. | `sqlite:///local.db` locally |
 | `APP_ENV` / `FLASK_ENV` | No | Set either to `production` to enable strict production defaults. | - |
 | `PORT` | No | Application port | `5001` |
 | `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Recommended in production | Public site origin for sitemap URLs and production SocketIO CORS defaults. | Request host |

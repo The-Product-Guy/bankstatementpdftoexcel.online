@@ -13,7 +13,30 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_db_url(os.environ.get("DATABASE_URL", "sqlite:///local.db"))
+def _is_production_runtime() -> bool:
+    flask_env = os.environ.get("FLASK_ENV", "").strip().lower()
+    app_env = os.environ.get("APP_ENV", "").strip().lower()
+    return (
+        flask_env == "production"
+        or app_env == "production"
+        or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+        or bool(os.environ.get("RAILWAY_PROJECT_ID"))
+    )
+
+
+def _resolve_database_url() -> str:
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        return _normalize_db_url(database_url)
+    if _is_production_runtime():
+        raise RuntimeError(
+            "DATABASE_URL must be set in production. Connect the Railway Postgres "
+            "service to both the web and worker services."
+        )
+    return "sqlite:///local.db"
+
+
+DATABASE_URL = _resolve_database_url()
 
 engine_kwargs = {"pool_pre_ping": True}
 if DATABASE_URL.startswith("sqlite"):
