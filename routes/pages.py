@@ -280,6 +280,9 @@ def terms():
 def admin_dashboard():
     from app import FIRST_PARTY_ANALYTICS_RETENTION_DAYS
     if not _require_admin():
+        if not session.get('user_email'):
+            flash('Please sign in with an admin email to continue.', 'error')
+            return redirect(url_for('auth.signin'))
         return "Not found", 404
 
     analytics_days = _admin_days_param()

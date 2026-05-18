@@ -5,6 +5,7 @@ Run with: python -m pytest tests/test_routes.py -v
 """
 import os
 import sys
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -152,6 +153,12 @@ class TestProtectedRoutes:
         assert resp.status_code == 302  # redirect to signin
 
     def test_admin_requires_admin(self, client):
+        resp = client.get("/admin")
+        assert resp.status_code == 302  # redirect to signin
+
+    def test_admin_hides_for_non_admin_user(self, client):
+        with client.session_transaction() as sess:
+            sess["user_email"] = f"non-admin-{uuid.uuid4().hex}@example.com"
         resp = client.get("/admin")
         assert resp.status_code == 404
 
