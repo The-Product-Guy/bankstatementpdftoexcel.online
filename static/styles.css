@@ -1561,8 +1561,28 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 .admin-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin: 0 0 20px;
+}
+.admin-range-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--gray-500);
+  font-size: 14px;
+}
+.admin-range-form select {
+  min-height: 40px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+}
+.muted {
+  color: var(--gray-400);
+  font-size: 14px;
 }
 
 .jobs-table-wrap {

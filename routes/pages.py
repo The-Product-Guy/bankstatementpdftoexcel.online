@@ -151,6 +151,66 @@ def _admin_days_param(default: int = 30, maximum: int = 365) -> int:
     return max(1, min(days, maximum))
 
 
+def _admin_day_key(value) -> str:
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()[:10]
+    return str(value)[:10]
+
+
+def _admin_daily_metrics(db, days: int) -> list:
+    today = datetime.utcnow().date()
+    start_day = today - timedelta(days=days - 1)
+    cutoff = datetime.combine(start_day, datetime.min.time())
+    metrics_by_day = {}
+    for offset in range(days):
+        day = (start_day + timedelta(days=offset)).isoformat()
+        metrics_by_day[day] = {
+            'day': day,
+            'unique_visitors': 0,
+            'page_views': 0,
+            'magic_link_requests': 0,
+            'login_successes': 0,
+        }
+
+    visit_day = func.date(SiteVisit.created_at)
+    visit_rows = (
+        db.query(
+            visit_day,
+            func.count(SiteVisit.id),
+            func.count(distinct(SiteVisit.visitor_id)),
+        )
+        .filter(SiteVisit.created_at >= cutoff)
+        .group_by(visit_day)
+        .all()
+    )
+    for day, page_views, unique_visitors in visit_rows:
+        key = _admin_day_key(day)
+        if key in metrics_by_day:
+            metrics_by_day[key]['page_views'] = page_views
+            metrics_by_day[key]['unique_visitors'] = unique_visitors
+
+    login_day = func.date(LoginEvent.created_at)
+    login_rows = (
+        db.query(login_day, LoginEvent.event_type, func.count(LoginEvent.id))
+        .filter(
+            LoginEvent.created_at >= cutoff,
+            LoginEvent.event_type.in_(('magic_link_requested', 'login_success')),
+        )
+        .group_by(login_day, LoginEvent.event_type)
+        .all()
+    )
+    for day, event_type, event_count in login_rows:
+        key = _admin_day_key(day)
+        if key not in metrics_by_day:
+            continue
+        if event_type == 'magic_link_requested':
+            metrics_by_day[key]['magic_link_requests'] = event_count
+        elif event_type == 'login_success':
+            metrics_by_day[key]['login_successes'] = event_count
+
+    return list(metrics_by_day.values())
+
+
 def _require_admin():
     from app import is_admin_user
     return is_admin_user()
@@ -222,6 +282,7 @@ def admin_dashboard():
     if not _require_admin():
         return "Not found", 404
 
+    analytics_days = _admin_days_param()
     stats = {
         'users': 0,
         'jobs': 0,
@@ -232,7 +293,11 @@ def admin_dashboard():
         'unique_visitors_7d': 0,
         'logins_24h': 0,
         'logins_7d': 0,
+        'magic_links_24h': 0,
+        'magic_links_7d': 0,
+        'login_conversion_7d': 0,
     }
+    daily_metrics = []
     recent_jobs = []
     recent_logins = []
     recent_users = []
@@ -242,6 +307,7 @@ def admin_dashboard():
             now = datetime.utcnow()
             day_ago = now - timedelta(days=1)
             week_ago = now - timedelta(days=7)
+            analytics_cutoff = now - timedelta(days=analytics_days)
             stats['users'] = db.query(User).count()
             stats['jobs'] = db.query(Job).count()
             stats['completed'] = db.query(Job).filter(Job.status.like('completed%')).count()
@@ -267,6 +333,19 @@ def admin_dashboard():
                 LoginEvent.event_type == 'login_success',
                 LoginEvent.created_at >= week_ago,
             ).count()
+            stats['magic_links_24h'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'magic_link_requested',
+                LoginEvent.created_at >= day_ago,
+            ).count()
+            stats['magic_links_7d'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'magic_link_requested',
+                LoginEvent.created_at >= week_ago,
+            ).count()
+            if stats['magic_links_7d']:
+                stats['login_conversion_7d'] = round(
+                    stats['logins_7d'] / stats['magic_links_7d'] * 100,
+                    1,
+                )
             recent_user_rows = (
                 db.query(User)
                 .order_by(
@@ -312,13 +391,14 @@ def admin_dashboard():
                 {'path': path, 'views': views}
                 for path, views in (
                     db.query(SiteVisit.path, func.count(SiteVisit.id))
-                    .filter(SiteVisit.created_at >= week_ago)
+                    .filter(SiteVisit.created_at >= analytics_cutoff)
                     .group_by(SiteVisit.path)
                     .order_by(func.count(SiteVisit.id).desc())
                     .limit(10)
                     .all()
                 )
             ]
+            daily_metrics = _admin_daily_metrics(db, analytics_days)
     except Exception as e:
         logger.warning(f"Admin dashboard query failed: {e}")
 
@@ -329,6 +409,8 @@ def admin_dashboard():
         recent_logins=recent_logins,
         recent_users=recent_users,
         top_paths=top_paths,
+        daily_metrics=daily_metrics,
+        analytics_days=analytics_days,
         analytics_retention_days=FIRST_PARTY_ANALYTICS_RETENTION_DAYS,
     )
 
@@ -424,6 +506,30 @@ def admin_export_site_visits():
     return _admin_csv_response(
         'site-visits.csv',
         ['id', 'visitor_id', 'user_id', 'path', 'referrer', 'ip', 'user_agent', 'created_at'],
+        rows,
+    )
+
+
+@pages_bp.route('/admin/export/analytics-daily.csv')
+def admin_export_daily_analytics():
+    if not _require_admin():
+        return "Not found", 404
+
+    days = _admin_days_param()
+    with get_db_session() as db:
+        rows = [
+            [
+                item['day'],
+                item['unique_visitors'],
+                item['page_views'],
+                item['magic_link_requests'],
+                item['login_successes'],
+            ]
+            for item in _admin_daily_metrics(db, days)
+        ]
+    return _admin_csv_response(
+        'analytics-daily.csv',
+        ['date_utc', 'unique_visitors', 'page_views', 'magic_link_requests', 'login_successes'],
         rows,
     )
 

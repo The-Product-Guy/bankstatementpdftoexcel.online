@@ -91,6 +91,12 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
         db.add(LoginEvent(
             user_id=user_id,
             email=email,
+            event_type="magic_link_requested",
+            success=True,
+        ))
+        db.add(LoginEvent(
+            user_id=user_id,
+            email=email,
             event_type="login_success",
             success=True,
         ))
@@ -104,6 +110,8 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
 
     assert resp.status_code == 200
     assert b"Visitors 24h" in resp.data
+    assert b"Daily Analytics" in resp.data
+    assert b"Login Rate 7d" in resp.data
     assert b"Recent Users" in resp.data
     assert b"Login Events" in resp.data
     assert email.encode("utf-8") in resp.data
@@ -138,14 +146,18 @@ def test_admin_exports_users_logins_and_visits():
         users_resp = client.get("/admin/export/users.csv")
         logins_resp = client.get("/admin/export/login-events.csv")
         visits_resp = client.get("/admin/export/site-visits.csv")
+        daily_resp = client.get("/admin/export/analytics-daily.csv?days=7")
 
     assert users_resp.status_code == 200
     assert logins_resp.status_code == 200
     assert visits_resp.status_code == 200
+    assert daily_resp.status_code == 200
     assert users_resp.mimetype == "text/csv"
+    assert daily_resp.mimetype == "text/csv"
     assert email.encode("utf-8") in users_resp.data
     assert email.encode("utf-8") in logins_resp.data
     assert b"/blogs" in visits_resp.data
+    assert b"date_utc,unique_visitors,page_views,magic_link_requests,login_successes" in daily_resp.data
 
 
 def test_tracking_cleanup_deletes_old_rows_only():

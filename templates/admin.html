@@ -14,6 +14,15 @@
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_users') }}">Export Users</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_login_events') }}">Export Logins</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_site_visits') }}">Export Visits</a>
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_daily_analytics', days=analytics_days) }}">Export Daily Analytics</a>
+        <form class="admin-range-form" action="{{ url_for('pages.admin_dashboard') }}" method="get">
+            <label for="admin-days">Range</label>
+            <select id="admin-days" name="days" onchange="this.form.submit()">
+                {% for option in [7, 14, 30, 90, 180, 365] %}
+                <option value="{{ option }}" {% if analytics_days == option %}selected{% endif %}>{{ option }} days</option>
+                {% endfor %}
+            </select>
+        </form>
     </div>
 
     <div class="admin-stats">
@@ -52,6 +61,49 @@
         <div class="stat-card">
             <h3>{{ stats.logins_7d }}</h3>
             <p>Logins 7d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.magic_links_7d }}</h3>
+            <p>Links 7d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.login_conversion_7d }}%</h3>
+            <p>Login Rate 7d</p>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Daily Analytics</h2>
+            <span class="muted">{{ analytics_days }} days, UTC</span>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Visitors</th>
+                            <th>Views</th>
+                            <th>Links</th>
+                            <th>Logins</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in daily_metrics|reverse %}
+                        <tr>
+                            <td>{{ item.day }}</td>
+                            <td>{{ item.unique_visitors }}</td>
+                            <td>{{ item.page_views }}</td>
+                            <td>{{ item.magic_link_requests }}</td>
+                            <td>{{ item.login_successes }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5">No analytics recorded yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -101,7 +153,7 @@
                     <thead>
                         <tr>
                             <th>Path</th>
-                            <th>Views 7d</th>
+                            <th>Views {{ analytics_days }}d</th>
                         </tr>
                     </thead>
                     <tbody>
