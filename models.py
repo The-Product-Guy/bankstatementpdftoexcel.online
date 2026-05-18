@@ -51,6 +51,32 @@ class AuthToken(Base):
     user_agent = Column(String)
 
 
+class LoginEvent(Base):
+    __tablename__ = "login_events"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), index=True)
+    email = Column(String, index=True)
+    event_type = Column(String, nullable=False)  # magic_link_requested, login_success, signout
+    success = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    ip = Column(String)
+    user_agent = Column(String)
+
+
+class SiteVisit(Base):
+    __tablename__ = "site_visits"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    visitor_id = Column(String, index=True, nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), index=True)
+    path = Column(String, index=True, nullable=False)
+    referrer = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    ip = Column(String)
+    user_agent = Column(String)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

@@ -24,6 +24,13 @@ from parsers.universal_parser import UniversalBankParser, ProcessingConfig
 from storage_utils import get_storage_config, delete_file
 from db import init_db, get_db_session
 from models import User, UsageCounter, Job, FeedbackSubmission
+from tracking import (
+    VISITOR_COOKIE,
+    VISITOR_COOKIE_MAX_AGE,
+    normalize_visitor_id,
+    record_page_view,
+    should_track_page_view,
+)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -451,6 +458,27 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    try:
+        if should_track_page_view(request.path, request.method, response.status_code, response.mimetype):
+            visitor_id = normalize_visitor_id(request.cookies.get(VISITOR_COOKIE))
+            response.set_cookie(
+                VISITOR_COOKIE,
+                visitor_id,
+                max_age=VISITOR_COOKIE_MAX_AGE,
+                httponly=True,
+                secure=app.config['SESSION_COOKIE_SECURE'],
+                samesite='Lax',
+            )
+            record_page_view(
+                visitor_id=visitor_id,
+                user_id=session.get('user_id'),
+                path=request.path,
+                referrer=request.headers.get('Referer', ''),
+                ip=get_client_ip(),
+                user_agent=request.headers.get('User-Agent', ''),
+            )
+    except Exception as exc:
+        logger.warning(f"Page-view tracking failed: {exc}")
     return response
 
 @app.errorhandler(RequestEntityTooLarge)

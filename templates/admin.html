@@ -22,6 +22,90 @@
             <h3>{{ stats.completed }}</h3>
             <p>Completed</p>
         </div>
+        <div class="stat-card">
+            <h3>{{ stats.unique_visitors_24h }}</h3>
+            <p>Visitors 24h</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.page_views_24h }}</h3>
+            <p>Views 24h</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.unique_visitors_7d }}</h3>
+            <p>Visitors 7d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.page_views_7d }}</h3>
+            <p>Views 7d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.logins_24h }}</h3>
+            <p>Logins 24h</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.logins_7d }}</h3>
+            <p>Logins 7d</p>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Top Pages</h2>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Views 7d</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in top_paths %}
+                        <tr>
+                            <td>{{ item.path }}</td>
+                            <td>{{ item.views }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="2">No page views recorded yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Login Events</h2>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Event</th>
+                            <th>IP</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in recent_logins %}
+                        <tr>
+                            <td>{{ event.email }}</td>
+                            <td>{{ event.event_type }}</td>
+                            <td>{{ event.ip }}</td>
+                            <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M') if event.created_at else '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4">No login events recorded yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <div class="account-card account-card-full">

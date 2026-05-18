@@ -7,7 +7,7 @@
 {% block content %}
 <main class="main-content legal-page">
     <h1>Privacy Policy</h1>
-    <p class="legal-updated">Last updated: March 2026</p>
+    <p class="legal-updated">Last updated: May 2026</p>
 
     <section>
         <h2>1. What We Collect</h2>
@@ -16,6 +16,7 @@
             <li><strong>Email address</strong> - used for sign-in only. We do not send marketing emails.</li>
             <li><strong>Uploaded PDF files</strong> - processed temporarily and deleted after conversion unless you explicitly retain a PDF for feedback.</li>
             <li><strong>Usage data</strong> - conversion counts, page counts, and file sizes to enforce plan limits. No transaction content is stored.</li>
+            <li><strong>First-party analytics</strong> - page paths, referrers, IP address, browser user agent, anonymous visitor ID, and sign-in events to monitor reliability and usage.</li>
             <li><strong>Feedback submissions</strong> - if you opt in to share a PDF for analysis, it is stored temporarily and deleted after {{ feedback_retention_days }} days.</li>
         </ul>
     </section>
@@ -26,6 +27,7 @@
             <li>To authenticate you via email sign-in link (powered by Resend).</li>
             <li>To process your PDF and return the converted Excel file.</li>
             <li>To track usage against your plan quota.</li>
+            <li>To measure site visits and diagnose inconsistencies between hosting analytics and browser-based analytics.</li>
             <li>To improve extraction accuracy (only with your explicit opt-in).</li>
         </ul>
     </section>
@@ -48,6 +50,7 @@
             <li><strong>Uploaded PDFs</strong> - deleted after processing unless retained for feedback. Retained source PDFs expire automatically if not attached to feedback.</li>
             <li><strong>Converted Excel files</strong> - stored temporarily for download, then deleted.</li>
             <li><strong>Account data</strong> - retained while your account is active. Contact us to request deletion.</li>
+            <li><strong>First-party analytics logs</strong> - retained for operational reporting and abuse prevention.</li>
             <li><strong>Feedback PDFs</strong> - deleted after {{ feedback_retention_days }} days if shared.</li>
         </ul>
     </section>

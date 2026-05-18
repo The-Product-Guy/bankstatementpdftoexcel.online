@@ -1,13 +1,14 @@
 """Public pages, SEO, health checks, and admin routes."""
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from xml.sax.saxutils import escape
 
 from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from sqlalchemy import distinct, func
 
 from db import get_db_session
-from models import Job, User
+from models import Job, LoginEvent, SiteVisit, User
 from parsers.universal_parser import UniversalBankParser
 
 logger = logging.getLogger(__name__)
@@ -190,18 +191,90 @@ def admin_dashboard():
     if not is_admin_user():
         return "Not found", 404
 
-    stats = {'users': 0, 'jobs': 0, 'completed': 0}
+    stats = {
+        'users': 0,
+        'jobs': 0,
+        'completed': 0,
+        'page_views_24h': 0,
+        'unique_visitors_24h': 0,
+        'page_views_7d': 0,
+        'unique_visitors_7d': 0,
+        'logins_24h': 0,
+        'logins_7d': 0,
+    }
     recent_jobs = []
+    recent_logins = []
+    top_paths = []
     try:
         with get_db_session() as db:
+            now = datetime.utcnow()
+            day_ago = now - timedelta(days=1)
+            week_ago = now - timedelta(days=7)
             stats['users'] = db.query(User).count()
             stats['jobs'] = db.query(Job).count()
             stats['completed'] = db.query(Job).filter(Job.status.like('completed%')).count()
+            stats['page_views_24h'] = db.query(SiteVisit).filter(SiteVisit.created_at >= day_ago).count()
+            stats['page_views_7d'] = db.query(SiteVisit).filter(SiteVisit.created_at >= week_ago).count()
+            stats['unique_visitors_24h'] = (
+                db.query(func.count(distinct(SiteVisit.visitor_id)))
+                .filter(SiteVisit.created_at >= day_ago)
+                .scalar()
+                or 0
+            )
+            stats['unique_visitors_7d'] = (
+                db.query(func.count(distinct(SiteVisit.visitor_id)))
+                .filter(SiteVisit.created_at >= week_ago)
+                .scalar()
+                or 0
+            )
+            stats['logins_24h'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'login_success',
+                LoginEvent.created_at >= day_ago,
+            ).count()
+            stats['logins_7d'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'login_success',
+                LoginEvent.created_at >= week_ago,
+            ).count()
             recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(20).all()
+            for job in recent_jobs:
+                db.expunge(job)
+            recent_login_rows = (
+                db.query(LoginEvent)
+                .order_by(LoginEvent.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            recent_logins = [
+                {
+                    'email': event.email or '-',
+                    'event_type': event.event_type,
+                    'success': event.success,
+                    'created_at': event.created_at,
+                    'ip': event.ip or '-',
+                }
+                for event in recent_login_rows
+            ]
+            top_paths = [
+                {'path': path, 'views': views}
+                for path, views in (
+                    db.query(SiteVisit.path, func.count(SiteVisit.id))
+                    .filter(SiteVisit.created_at >= week_ago)
+                    .group_by(SiteVisit.path)
+                    .order_by(func.count(SiteVisit.id).desc())
+                    .limit(10)
+                    .all()
+                )
+            ]
     except Exception as e:
         logger.warning(f"Admin dashboard query failed: {e}")
 
-    return render_template('admin.html', stats=stats, recent_jobs=recent_jobs)
+    return render_template(
+        'admin.html',
+        stats=stats,
+        recent_jobs=recent_jobs,
+        recent_logins=recent_logins,
+        top_paths=top_paths,
+    )
 
 
 # -- Health checks --

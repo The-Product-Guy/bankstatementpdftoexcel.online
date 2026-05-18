@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 
 from db import get_db_session
-from models import AuthToken, Job, User, UsageCounter
+from models import AuthToken, Job, LoginEvent, User, UsageCounter
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -143,6 +143,14 @@ def auth_start():
                 user_agent=request.headers.get('User-Agent', '')[:512]
             )
             db.add(auth_token)
+            db.add(LoginEvent(
+                user_id=user.id,
+                email=user.email,
+                event_type='magic_link_requested',
+                success=True,
+                ip=get_client_ip(),
+                user_agent=request.headers.get('User-Agent', '')[:512],
+            ))
 
         link = url_for('auth.auth_verify', token=token, _external=True)
         send_magic_link_email(email, link)
@@ -162,6 +170,8 @@ def auth_start():
 
 @auth_bp.route('/auth/verify')
 def auth_verify():
+    from app import get_client_ip
+
     token = request.args.get('token', '')
     if not token:
         flash('Invalid or expired sign-in link.', 'error')
@@ -182,6 +192,14 @@ def auth_verify():
 
             auth_token.used_at = datetime.utcnow()
             user.last_login_at = datetime.utcnow()
+            db.add(LoginEvent(
+                user_id=user.id,
+                email=user.email,
+                event_type='login_success',
+                success=True,
+                ip=get_client_ip(),
+                user_agent=request.headers.get('User-Agent', '')[:512],
+            ))
 
             session['user_id'] = user.id
             session['user_email'] = user.email
@@ -247,6 +265,22 @@ def account():
 @auth_bp.route('/signout')
 def signout():
     guest_id = session.get('guest_id')
+    user_id = session.get('user_id')
+    user_email = session.get('user_email')
+    if user_id:
+        try:
+            from app import get_client_ip
+            with get_db_session() as db:
+                db.add(LoginEvent(
+                    user_id=user_id,
+                    email=user_email,
+                    event_type='signout',
+                    success=True,
+                    ip=get_client_ip(),
+                    user_agent=request.headers.get('User-Agent', '')[:512],
+                ))
+        except Exception:
+            pass
     session.clear()
     if guest_id:
         session['guest_id'] = guest_id
