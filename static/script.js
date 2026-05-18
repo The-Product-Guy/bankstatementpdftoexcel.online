@@ -476,8 +476,14 @@ function showResultBanner(data, jobId) {
         banner.classList.add('success');
         icon.innerHTML = ICONS.checkCircle;
         title.textContent = 'Conversion Complete';
-        message.textContent = 'Your file has been downloaded successfully.';
+        message.textContent = 'Your file has been downloaded successfully. Was the Excel output accurate?';
         meta.textContent = `${rows} rows \u00d7 ${cols} columns extracted`;
+
+        const successBtn = document.createElement('button');
+        successBtn.className = 'btn-feedback';
+        successBtn.textContent = 'Looks good';
+        successBtn.onclick = () => submitQuickFeedback(jobId, data, 'success', successBtn);
+        actions.appendChild(successBtn);
 
         const fbBtn = document.createElement('button');
         fbBtn.className = 'btn-feedback';
@@ -536,7 +542,7 @@ function showResultBanner(data, jobId) {
     banner.style.display = 'block';
 
     if (confidence === 'good') {
-        setTimeout(() => { banner.style.display = 'none'; }, 15000);
+        setTimeout(() => { banner.style.display = 'none'; }, 45000);
     }
 }
 
@@ -624,6 +630,52 @@ async function submitFeedback(e) {
     } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Submit Feedback';
+    }
+}
+
+async function submitQuickFeedback(jobId, data, feedbackType, button) {
+    if (!jobId) return;
+
+    const originalText = button ? button.textContent : '';
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Saving...';
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('job_id', jobId);
+        formData.append('feedback_type', feedbackType);
+        formData.append('quality_used', data.quality_used || 'standard');
+        formData.append('extraction_rows', data.extraction_rows || 0);
+        formData.append('extraction_cols', data.extraction_cols || 0);
+        if (feedbackType === 'success') {
+            formData.append('message', 'Output marked accurate after download.');
+        }
+
+        const response = await fetch('/feedback', {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.status === 'ok') {
+            showAlert('Thanks for the feedback.', 'success');
+            if (button) button.textContent = 'Saved';
+        } else {
+            showAlert(result.error || 'Failed to submit feedback.', 'error');
+            if (button) {
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+    } catch (err) {
+        showAlert('Failed to submit feedback. Please try again.', 'error');
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
     }
 }
 

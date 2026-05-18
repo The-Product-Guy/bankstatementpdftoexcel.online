@@ -108,3 +108,46 @@ def test_feedback_copies_retained_pdf(monkeypatch):
             job = db.get(Job, job_id)
             if job:
                 db.delete(job)
+
+
+def test_feedback_accepts_success_signal():
+    import app as app_module
+    from db import get_db_session
+    from models import FeedbackSubmission, Job
+
+    job_id = f"feedback-success-{uuid4()}"
+    with get_db_session() as db:
+        db.add(Job(
+            id=job_id,
+            filename="statement.pdf",
+            status="completed",
+        ))
+
+    app_module.app.config["TESTING"] = True
+    try:
+        with app_module.app.test_client() as client:
+            response = client.post("/feedback", data={
+                "job_id": job_id,
+                "feedback_type": "success",
+                "message": "Output marked accurate",
+                "extraction_rows": "12",
+                "extraction_cols": "6",
+                "quality_used": "standard",
+            })
+
+        assert response.status_code == 200
+        assert response.get_json()["status"] == "ok"
+
+        with get_db_session() as db:
+            feedback = db.query(FeedbackSubmission).filter_by(job_id=job_id).first()
+            assert feedback is not None
+            assert feedback.feedback_type == "success"
+            assert feedback.extraction_rows == 12
+            assert feedback.extraction_cols == 6
+    finally:
+        with get_db_session() as db:
+            for feedback in db.query(FeedbackSubmission).filter_by(job_id=job_id).all():
+                db.delete(feedback)
+            job = db.get(Job, job_id)
+            if job:
+                db.delete(job)

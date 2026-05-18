@@ -285,7 +285,7 @@ def submit_feedback():
         extraction_rows = int(request.form.get('extraction_rows', 0) or 0)
         extraction_cols = int(request.form.get('extraction_cols', 0) or 0)
 
-        if feedback_type not in ('empty_result', 'incorrect_data', 'formatting', 'other'):
+        if feedback_type not in ('success', 'empty_result', 'incorrect_data', 'formatting', 'other'):
             feedback_type = 'other'
 
         pdf_storage_key = None

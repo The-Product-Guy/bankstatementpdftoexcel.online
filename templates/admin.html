@@ -15,6 +15,7 @@
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_login_events') }}">Export Logins</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_site_visits') }}">Export Visits</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_daily_analytics', days=analytics_days) }}">Export Daily Analytics</a>
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_feedback', days=analytics_days) }}">Export Feedback</a>
         <form class="admin-range-form" action="{{ url_for('pages.admin_dashboard') }}" method="get">
             <label for="admin-days">Range</label>
             <select id="admin-days" name="days" onchange="this.form.submit()">
@@ -69,6 +70,14 @@
         <div class="stat-card">
             <h3>{{ stats.login_conversion_7d }}%</h3>
             <p>Login Rate 7d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.feedback_24h }}</h3>
+            <p>Feedback 24h</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.feedback_7d }}</h3>
+            <p>Feedback 7d</p>
         </div>
     </div>
 
@@ -164,6 +173,45 @@
                         </tr>
                         {% else %}
                         <tr><td colspan="2">No page views recorded yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Recent Feedback</h2>
+            <span class="muted">Latest conversion responses</span>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>User</th>
+                            <th>File</th>
+                            <th>Rows</th>
+                            <th>PDF</th>
+                            <th>Message</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in recent_feedback %}
+                        <tr>
+                            <td>{{ item.feedback_type }}</td>
+                            <td>{{ item.user_email }}</td>
+                            <td>{{ item.filename }}</td>
+                            <td>{{ item.extraction_rows if item.extraction_rows is not none else '-' }}</td>
+                            <td>{{ 'shared' if item.pdf_shared else '-' }}</td>
+                            <td>{{ item.message[:120] if item.message else '-' }}</td>
+                            <td>{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="7">No feedback submitted yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

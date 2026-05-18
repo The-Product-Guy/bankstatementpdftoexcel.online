@@ -129,7 +129,7 @@ class FeedbackSubmission(Base):
     job_id = Column(String, ForeignKey("jobs.id"), index=True)
     user_id = Column(String, ForeignKey("users.id"))
     guest_id = Column(String, index=True)
-    feedback_type = Column(String, nullable=False)      # 'empty_result', 'incorrect_data', 'formatting', 'other'
+    feedback_type = Column(String, nullable=False)      # 'success', 'empty_result', 'incorrect_data', 'formatting', 'other'
     message = Column(Text)                               # Optional free-text from user
     pdf_shared = Column(Boolean, default=False)          # Did user consent to share their PDF?
     pdf_storage_key = Column(String)                     # S3 key if PDF was shared

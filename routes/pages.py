@@ -10,7 +10,7 @@ from flask import Blueprint, Response, flash, jsonify, redirect, render_template
 from sqlalchemy import distinct, func
 
 from db import get_db_session
-from models import Job, LoginEvent, SiteVisit, User
+from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
 from parsers.universal_parser import UniversalBankParser
 
 logger = logging.getLogger(__name__)
@@ -299,9 +299,12 @@ def admin_dashboard():
         'magic_links_24h': 0,
         'magic_links_7d': 0,
         'login_conversion_7d': 0,
+        'feedback_24h': 0,
+        'feedback_7d': 0,
     }
     daily_metrics = []
     recent_jobs = []
+    recent_feedback = []
     recent_logins = []
     recent_users = []
     top_paths = []
@@ -314,6 +317,12 @@ def admin_dashboard():
             stats['users'] = db.query(User).count()
             stats['jobs'] = db.query(Job).count()
             stats['completed'] = db.query(Job).filter(Job.status.like('completed%')).count()
+            stats['feedback_24h'] = db.query(FeedbackSubmission).filter(
+                FeedbackSubmission.created_at >= day_ago,
+            ).count()
+            stats['feedback_7d'] = db.query(FeedbackSubmission).filter(
+                FeedbackSubmission.created_at >= week_ago,
+            ).count()
             stats['page_views_24h'] = db.query(SiteVisit).filter(SiteVisit.created_at >= day_ago).count()
             stats['page_views_7d'] = db.query(SiteVisit).filter(SiteVisit.created_at >= week_ago).count()
             stats['unique_visitors_24h'] = (
@@ -374,6 +383,38 @@ def admin_dashboard():
             recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(20).all()
             for job in recent_jobs:
                 db.expunge(job)
+            recent_feedback_rows = (
+                db.query(FeedbackSubmission)
+                .order_by(FeedbackSubmission.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            feedback_user_ids = [row.user_id for row in recent_feedback_rows if row.user_id]
+            feedback_job_ids = [row.job_id for row in recent_feedback_rows if row.job_id]
+            feedback_user_email_by_id = {
+                user.id: user.email
+                for user in db.query(User).filter(User.id.in_(feedback_user_ids)).all()
+            } if feedback_user_ids else {}
+            feedback_job_filename_by_id = {
+                job.id: job.filename
+                for job in db.query(Job).filter(Job.id.in_(feedback_job_ids)).all()
+            } if feedback_job_ids else {}
+            recent_feedback = [
+                {
+                    'feedback_type': row.feedback_type,
+                    'message': row.message or '',
+                    'pdf_shared': row.pdf_shared,
+                    'quality_used': row.quality_used or '-',
+                    'extraction_rows': row.extraction_rows,
+                    'extraction_cols': row.extraction_cols,
+                    'status': row.status or 'new',
+                    'created_at': row.created_at,
+                    'user_email': feedback_user_email_by_id.get(row.user_id, '-'),
+                    'filename': feedback_job_filename_by_id.get(row.job_id, '-'),
+                    'job_id': row.job_id or '',
+                }
+                for row in recent_feedback_rows
+            ]
             recent_login_rows = (
                 db.query(LoginEvent)
                 .order_by(LoginEvent.created_at.desc())
@@ -409,6 +450,7 @@ def admin_dashboard():
         'admin.html',
         stats=stats,
         recent_jobs=recent_jobs,
+        recent_feedback=recent_feedback,
         recent_logins=recent_logins,
         recent_users=recent_users,
         top_paths=top_paths,
@@ -533,6 +575,63 @@ def admin_export_daily_analytics():
     return _admin_csv_response(
         'analytics-daily.csv',
         ['date_utc', 'unique_visitors', 'page_views', 'magic_link_requests', 'login_successes'],
+        rows,
+    )
+
+
+@pages_bp.route('/admin/export/feedback.csv')
+def admin_export_feedback():
+    if not _require_admin():
+        return "Not found", 404
+
+    cutoff = datetime.utcnow() - timedelta(days=_admin_days_param())
+    with get_db_session() as db:
+        submissions = (
+            db.query(FeedbackSubmission)
+            .filter(FeedbackSubmission.created_at >= cutoff)
+            .order_by(FeedbackSubmission.created_at.desc())
+            .limit(10000)
+            .all()
+        )
+        user_ids = [submission.user_id for submission in submissions if submission.user_id]
+        job_ids = [submission.job_id for submission in submissions if submission.job_id]
+        user_email_by_id = {
+            user.id: user.email
+            for user in db.query(User).filter(User.id.in_(user_ids)).all()
+        } if user_ids else {}
+        job_filename_by_id = {
+            job.id: job.filename
+            for job in db.query(Job).filter(Job.id.in_(job_ids)).all()
+        } if job_ids else {}
+        rows = [
+            [
+                submission.id,
+                submission.job_id or '',
+                job_filename_by_id.get(submission.job_id, ''),
+                user_email_by_id.get(submission.user_id, ''),
+                submission.guest_id or '',
+                submission.feedback_type,
+                submission.message or '',
+                bool(submission.pdf_shared),
+                submission.pdf_storage_key or '',
+                submission.extraction_rows if submission.extraction_rows is not None else '',
+                submission.extraction_cols if submission.extraction_cols is not None else '',
+                submission.quality_used or '',
+                submission.status or '',
+                submission.ip or '',
+                submission.user_agent or '',
+                submission.created_at.isoformat() if submission.created_at else '',
+            ]
+            for submission in submissions
+        ]
+    return _admin_csv_response(
+        'feedback.csv',
+        [
+            'id', 'job_id', 'filename', 'email', 'guest_id', 'feedback_type',
+            'message', 'pdf_shared', 'pdf_storage_key', 'extraction_rows',
+            'extraction_cols', 'quality_used', 'status', 'ip', 'user_agent',
+            'created_at',
+        ],
         rows,
     )
 

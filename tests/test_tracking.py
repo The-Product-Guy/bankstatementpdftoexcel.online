@@ -77,7 +77,7 @@ def test_auth_verify_logs_successful_login():
 def test_admin_dashboard_shows_visit_and_login_metrics():
     from app import app
     from db import get_db_session, init_db
-    from models import LoginEvent, SiteVisit, User
+    from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
 
     suffix = uuid.uuid4().hex
     email = f"admin-{suffix}@example.com"
@@ -100,6 +100,17 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
             event_type="login_success",
             success=True,
         ))
+        job = Job(id=f"admin-feedback-{suffix}", user_id=user_id, filename="statement.pdf", status="completed")
+        db.add(job)
+        db.add(FeedbackSubmission(
+            job_id=job.id,
+            user_id=user_id,
+            feedback_type="success",
+            message="Output looked accurate",
+            extraction_rows=42,
+            extraction_cols=6,
+            quality_used="standard",
+        ))
 
     app.config["TESTING"] = True
     with app.test_client() as client:
@@ -114,13 +125,15 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
     assert b"Login Rate 7d" in resp.data
     assert b"Recent Users" in resp.data
     assert b"Login Events" in resp.data
+    assert b"Recent Feedback" in resp.data
+    assert b"Output looked accurate" in resp.data
     assert email.encode("utf-8") in resp.data
 
 
 def test_admin_exports_users_logins_and_visits():
     from app import app
     from db import get_db_session, init_db
-    from models import LoginEvent, SiteVisit, User
+    from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
 
     suffix = uuid.uuid4().hex
     email = f"export-admin-{suffix}@example.com"
@@ -137,6 +150,17 @@ def test_admin_exports_users_logins_and_visits():
             event_type="login_success",
             success=True,
         ))
+        job = Job(id=f"export-feedback-{suffix}", user_id=user_id, filename="export-statement.pdf", status="completed")
+        db.add(job)
+        db.add(FeedbackSubmission(
+            job_id=job.id,
+            user_id=user_id,
+            feedback_type="incorrect_data",
+            message="Columns shifted",
+            extraction_rows=10,
+            extraction_cols=5,
+            quality_used="high",
+        ))
 
     app.config["TESTING"] = True
     with app.test_client() as client:
@@ -147,17 +171,22 @@ def test_admin_exports_users_logins_and_visits():
         logins_resp = client.get("/admin/export/login-events.csv")
         visits_resp = client.get("/admin/export/site-visits.csv")
         daily_resp = client.get("/admin/export/analytics-daily.csv?days=7")
+        feedback_resp = client.get("/admin/export/feedback.csv?days=7")
 
     assert users_resp.status_code == 200
     assert logins_resp.status_code == 200
     assert visits_resp.status_code == 200
     assert daily_resp.status_code == 200
+    assert feedback_resp.status_code == 200
     assert users_resp.mimetype == "text/csv"
     assert daily_resp.mimetype == "text/csv"
+    assert feedback_resp.mimetype == "text/csv"
     assert email.encode("utf-8") in users_resp.data
     assert email.encode("utf-8") in logins_resp.data
     assert b"/blogs" in visits_resp.data
     assert b"date_utc,unique_visitors,page_views,magic_link_requests,login_successes" in daily_resp.data
+    assert b"feedback_type" in feedback_resp.data
+    assert b"Columns shifted" in feedback_resp.data
 
 
 def test_tracking_cleanup_deletes_old_rows_only():
