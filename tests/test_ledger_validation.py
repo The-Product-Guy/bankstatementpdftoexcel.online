@@ -5,6 +5,7 @@ from parsers.ledger_validation import (
     parse_money_to_minor,
     validate_ledger_rows,
 )
+from parsers.ledger_repair import repair_transactions_from_balance_deltas
 from parsers.statement_summary import parse_statement_summary_text
 
 
@@ -81,3 +82,73 @@ def test_validate_ledger_reconciles_against_summary_with_exact_minor_units():
     assert report.balance_consistency_pct == 100.0
     assert report.total_credit_minor == 1010
     assert report.total_debit_minor == 505
+
+
+def test_validate_ledger_accepts_first_transaction_after_opening_balance():
+    transactions = [
+        {"Date": "02/01/24", "Description": "Credit", "Deposit_Amount": "10.10", "Closing_Balance": "110.10"},
+    ]
+    summary = StatementSummary(
+        opening_balance_minor=10000,
+        closing_balance_minor=11010,
+        total_credit_minor=1010,
+        credit_count=1,
+    )
+
+    report = validate_ledger_rows(ledger_rows_from_transactions(transactions), summary)
+
+    assert report.is_valid
+    assert report.balance_checks == 1
+    assert report.balance_checks_passed == 1
+
+
+def test_zero_debit_credit_cells_do_not_count_as_transactions():
+    transactions = [
+        {
+            "Date": "01/01/24",
+            "Description": "Opening",
+            "Withdrawal_Amount": "0.00",
+            "Deposit_Amount": "0.00",
+            "Transaction_Amount": "0.00",
+            "Closing_Balance": "100.00",
+        },
+    ]
+
+    report = validate_ledger_rows(ledger_rows_from_transactions(transactions))
+
+    assert report.debit_count == 0
+    assert report.credit_count == 0
+    assert report.total_debit_minor == 0
+    assert report.total_credit_minor == 0
+
+
+def test_repair_transactions_uses_balance_delta_for_merged_reference_amount():
+    transactions = [
+        {
+            "Date": "01/09/18",
+            "Description": "B/F",
+            "Closing_Balance": "1,43,666.60",
+            "Transaction_Amount": "0.00",
+            "Page_Line": "Page_1",
+        },
+        {
+            "Date": "01/09/18",
+            "Description": "IMPS CR reference merged into amount",
+            "Deposit_Amount": "96,36,200.00",
+            "Transaction_Amount": "96,36,200.00",
+            "Closing_Balance": "1,79,866.60",
+            "Page_Line": "Page_1",
+        },
+    ]
+    summary = StatementSummary(opening_balance_minor=14366660)
+
+    repaired, repair_report = repair_transactions_from_balance_deltas(transactions, summary)
+    report = validate_ledger_rows(ledger_rows_from_transactions(repaired), summary)
+
+    assert repair_report.repaired_count == 1
+    assert repaired[1]["Deposit_Amount"] == 36200.0
+    assert repaired[1]["Withdrawal_Amount"] is None
+    assert repaired[1]["Transaction_Amount"] == 36200.0
+    assert repair_report.actions[0].raw_amount_minor == 963620000
+    assert repair_report.actions[0].final_amount_minor == 3620000
+    assert report.balance_consistency_pct == 100.0

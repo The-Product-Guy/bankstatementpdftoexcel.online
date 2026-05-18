@@ -11,7 +11,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +23,8 @@ from parsers.ledger_validation import (  # noqa: E402
     ledger_rows_from_transactions,
     validate_ledger_rows,
 )
-from parsers.statement_summary import merge_summaries, parse_statement_summary_text  # noqa: E402
+from parsers.ledger_repair import repair_transactions_from_balance_deltas  # noqa: E402
+from parsers.statement_summary import extract_statement_summary_from_pdf  # noqa: E402
 
 
 def load_transactions_from_workbook(path: Path) -> List[Dict[str, Any]]:
@@ -50,62 +51,10 @@ def load_transactions_from_workbook(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def extract_pdf_text_native(pdf_path: Path, page_numbers: Iterable[int]) -> str:
-    import pdfplumber
-
-    chunks: List[str] = []
-    with pdfplumber.open(str(pdf_path)) as pdf:
-        for page_number in page_numbers:
-            if 1 <= page_number <= len(pdf.pages):
-                text = pdf.pages[page_number - 1].extract_text() or ""
-                if text.strip():
-                    chunks.append(text)
-    return "\n".join(chunks)
-
-
-def extract_pdf_text_ocr(pdf_path: Path, page_numbers: Iterable[int], dpi: int = 180) -> str:
-    from pdf2image import convert_from_path
-    import pytesseract
-
-    chunks: List[str] = []
-    for page_number in page_numbers:
-        images = convert_from_path(
-            str(pdf_path),
-            dpi=dpi,
-            first_page=page_number,
-            last_page=page_number,
-        )
-        if images:
-            chunks.append(pytesseract.image_to_string(images[0], config="--psm 6"))
-    return "\n".join(chunks)
-
-
-def page_sample(pdf_path: Path, sample_pages: int) -> List[int]:
-    import pdfplumber
-
-    with pdfplumber.open(str(pdf_path)) as pdf:
-        total_pages = len(pdf.pages)
-    pages = set(range(1, min(sample_pages, total_pages) + 1))
-    pages.update(range(max(1, total_pages - sample_pages + 1), total_pages + 1))
-    return sorted(pages)
-
-
 def extract_statement_summary(pdf_path: Optional[Path], sample_pages: int) -> StatementSummary:
     if not pdf_path:
         return StatementSummary()
-
-    pages = page_sample(pdf_path, sample_pages)
-    native_text = extract_pdf_text_native(pdf_path, pages)
-    summaries = [parse_statement_summary_text(native_text)] if native_text.strip() else []
-
-    try:
-        ocr_text = extract_pdf_text_ocr(pdf_path, pages)
-        if ocr_text.strip():
-            summaries.append(parse_statement_summary_text(ocr_text))
-    except Exception as exc:
-        print(f"Warning: OCR summary extraction failed: {exc}", file=sys.stderr)
-
-    return merge_summaries(summaries)
+    return extract_statement_summary_from_pdf(pdf_path, sample_pages=sample_pages, use_ocr=True)
 
 
 def summary_to_dict(summary: StatementSummary) -> Dict[str, Any]:
@@ -127,17 +76,22 @@ def main() -> int:
     parser.add_argument("--pdf", type=Path, help="Source PDF for summary extraction")
     parser.add_argument("--sample-pages", type=int, default=2, help="Pages to sample from start and end of PDF")
     parser.add_argument("--issue-samples", type=int, default=20, help="Maximum issues to print")
+    parser.add_argument("--repair", action="store_true", help="Apply deterministic balance-delta repairs before validation")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args()
 
     transactions = load_transactions_from_workbook(args.workbook)
     summary = extract_statement_summary(args.pdf, args.sample_pages) if args.pdf else StatementSummary()
+    repair_report = None
+    if args.repair:
+        transactions, repair_report = repair_transactions_from_balance_deltas(transactions, summary)
     report = validate_ledger_rows(ledger_rows_from_transactions(transactions), summary)
 
     payload = {
         "workbook": str(args.workbook),
         "pdf": str(args.pdf) if args.pdf else None,
         "statement_summary": summary_to_dict(summary),
+        "repairs": repair_report.repaired_count if repair_report else 0,
         "validation": report.to_dict(),
     }
 
@@ -152,6 +106,8 @@ def main() -> int:
             print(f"  {key}: {value}")
         validation = payload["validation"]
         print("Validation:")
+        if repair_report:
+            print(f"  repairs applied: {repair_report.repaired_count}")
         print(f"  rows: {validation['row_count']}")
         print(f"  balance checks: {validation['balance_checks_passed']}/{validation['balance_checks']}")
         print(f"  balance consistency: {validation['balance_consistency_pct']}%")

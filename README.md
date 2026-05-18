@@ -168,8 +168,9 @@ Generated workbooks include validation sheets when normalized transactions are a
 
 | Sheet | Purpose |
 |-------|---------|
-| `Validation` | Exact ledger checks for row count, balance continuity, debit/credit counts, and totals. |
+| `Validation` | Exact ledger checks for row count, balance continuity, debit/credit counts, totals, statement summary values, and repair counts. |
 | `Issues` | Rows where extracted amounts do not reconcile with running balances or other ledger rules. |
+| `Repairs` | Audit trail for rows that were deterministically repaired from running-balance deltas. |
 
 ## 🔧 Configuration
 
@@ -194,6 +195,8 @@ Generated workbooks include validation sheets when normalized transactions are a
 | `FIRST_PARTY_ANALYTICS_RETENTION_DAYS` | No | Retention window for internal page-view and login-event logs shown in the admin portal. | `180` |
 | `FIRST_PARTY_ANALYTICS_SWEEP_MINS` | No | Minimum interval between analytics cleanup sweeps. | `1440` |
 | `USE_PYMUPDF` | No | Enables the optional PyMuPDF table-detection fallback for extraction. | `false` |
+| `VALIDATION_SUMMARY_OCR` | No | Allows the worker to OCR sampled first/last pages when native text does not provide a complete statement summary. | `true` |
+| `VALIDATION_SUMMARY_SAMPLE_PAGES` | No | Number of pages sampled from the beginning and end for opening/closing balance and total extraction. | `2` |
 | `GA_MEASUREMENT_ID` / `GTM_CONTAINER_ID` | No | Analytics IDs injected into public pages. | - |
 
 ### File Limits
@@ -210,6 +213,7 @@ Use the configured benchmark gates before changing extraction logic:
 ```bash
 python tools/run_accuracy_gates.py --dry-run
 python tools/run_accuracy_gates.py --dataset synthetic_canada_ci
+python tools/validate_statement_output.py output.xlsx --pdf statement.pdf --repair
 ```
 
 The gate config lives in `tests/evaluation/accuracy_gates.json`. CI uses a deterministic generated dataset and fails on row-match, proxy-quality, or balance-consistency regressions.

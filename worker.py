@@ -16,10 +16,14 @@ from parsers.chunk_utils import (
     sort_transactions_for_output,
 )
 from parsers.ledger_validation import (
+    StatementSummary,
     format_minor,
+    has_summary_values,
     ledger_rows_from_transactions,
     validate_ledger_rows,
 )
+from parsers.ledger_repair import LedgerRepairReport, repair_transactions_from_balance_deltas
+from parsers.statement_summary import extract_statement_summary_from_pdf
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
@@ -51,20 +55,39 @@ redis_client = redis.StrictRedis.from_url(redis_url)
 _PADDLE_WARMUP_AVAILABLE = False
 
 
-def _ledger_validation_sheets(transactions: List[Dict[str, Any]]):
+def _summary_metric_rows(summary: StatementSummary) -> List[List[Any]]:
+    return [
+        ["Statement opening balance", format_minor(summary.opening_balance_minor)],
+        ["Statement closing balance", format_minor(summary.closing_balance_minor)],
+        ["Statement debit count", summary.debit_count],
+        ["Statement debit total", format_minor(summary.total_debit_minor)],
+        ["Statement credit count", summary.credit_count],
+        ["Statement credit total", format_minor(summary.total_credit_minor)],
+    ]
+
+
+def _ledger_validation_sheets(
+    transactions: List[Dict[str, Any]],
+    summary: Optional[StatementSummary] = None,
+    repair_report: Optional[LedgerRepairReport] = None,
+):
     if not transactions:
         return None, None, None
 
-    report = validate_ledger_rows(ledger_rows_from_transactions(transactions))
+    summary = summary or StatementSummary()
+    report = validate_ledger_rows(ledger_rows_from_transactions(transactions), summary)
     summary_df = pd.DataFrame([
         ["Rows", report.row_count],
         ["Balance checks passed", report.balance_checks_passed],
         ["Balance checks total", report.balance_checks],
         ["Balance consistency %", report.balance_consistency_pct],
+        ["Rows repaired", repair_report.repaired_count if repair_report else 0],
         ["Debit count", report.debit_count],
         ["Debit total", format_minor(report.total_debit_minor)],
         ["Credit count", report.credit_count],
         ["Credit total", format_minor(report.total_credit_minor)],
+        ["Statement summary found", has_summary_values(summary)],
+        *_summary_metric_rows(summary),
         ["Issue count", len(report.issues)],
         ["Valid", report.is_valid],
     ], columns=["Metric", "Value"])
@@ -89,6 +112,12 @@ def _ledger_validation_sheets(transactions: List[Dict[str, Any]]):
             "Message": "No ledger validation issues detected.",
         }])
     return report, summary_df, issues_df
+
+
+def _repair_audit_sheet(repair_report: Optional[LedgerRepairReport]):
+    if not repair_report or not repair_report.actions:
+        return None
+    return pd.DataFrame(repair_report.to_records())
 
 
 def _warmup_ocr_models():
@@ -471,6 +500,36 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
         # Enforce stable output ordering by page sequence to prevent mixed rows in Excel.
         transactions = sort_transactions_for_output(transactions)
+
+        statement_summary = StatementSummary()
+        try:
+            use_summary_ocr = os.environ.get("VALIDATION_SUMMARY_OCR", "true").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+            statement_summary = extract_statement_summary_from_pdf(
+                file_path,
+                sample_pages=int(os.environ.get("VALIDATION_SUMMARY_SAMPLE_PAGES", "2")),
+                use_ocr=use_summary_ocr,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning("Statement summary extraction failed: %s", exc)
+
+        repair_report = LedgerRepairReport(row_count=len(transactions))
+        try:
+            transactions, repair_report = repair_transactions_from_balance_deltas(
+                transactions,
+                statement_summary,
+            )
+            if repair_report.repaired_count:
+                logger.info(
+                    "Job %s: deterministically repaired %d transaction rows",
+                    job_id,
+                    repair_report.repaired_count,
+                )
+            parser.transactions = transactions
+        except Exception as exc:
+            logger.warning("Ledger repair failed: %s", exc)
         
         update_progress(job_id, 0, 1, "Generating Excel file...", percent_override=95)
         # Generate Excel file from transactions
@@ -487,8 +546,13 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         ledger_report = None
         validation_df = None
         issues_df = None
+        repair_df = _repair_audit_sheet(repair_report)
         try:
-            ledger_report, validation_df, issues_df = _ledger_validation_sheets(transactions)
+            ledger_report, validation_df, issues_df = _ledger_validation_sheets(
+                transactions,
+                statement_summary,
+                repair_report,
+            )
         except Exception as exc:
             logger.warning("Ledger validation failed: %s", exc)
         has_data = False
@@ -516,6 +580,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     validation_df.to_excel(writer, index=False, sheet_name="Validation")
                 if issues_df is not None:
                     issues_df.to_excel(writer, index=False, sheet_name="Issues")
+                if repair_df is not None:
+                    repair_df.to_excel(writer, index=False, sheet_name="Repairs")
 
             has_data = len(raw_table["rows"]) > 0 or len(transactions) > 0
             logger.info(
@@ -549,6 +615,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     validation_df.to_excel(writer, index=False, sheet_name="Validation")
                 if issues_df is not None:
                     issues_df.to_excel(writer, index=False, sheet_name="Issues")
+                if repair_df is not None:
+                    repair_df.to_excel(writer, index=False, sheet_name="Repairs")
             has_data = len(transactions) > 0
             logger.info(f"Job {job_id}: Wrote {len(transactions)} transactions to Excel")
         else:
@@ -564,7 +632,18 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             "runtime_use_paddleocr": runtime_use_paddleocr,
             "runtime_use_img2table": runtime_use_img2table,
             "chunk_orchestrated": chunk_orchestrated,
+            "statement_summary_found": has_summary_values(statement_summary),
+            "ledger_repair_count": repair_report.repaired_count,
         }
+        if has_summary_values(statement_summary):
+            result_extra.update({
+                "statement_opening_balance": format_minor(statement_summary.opening_balance_minor),
+                "statement_closing_balance": format_minor(statement_summary.closing_balance_minor),
+                "statement_total_debit": format_minor(statement_summary.total_debit_minor),
+                "statement_total_credit": format_minor(statement_summary.total_credit_minor),
+                "statement_debit_count": statement_summary.debit_count,
+                "statement_credit_count": statement_summary.credit_count,
+            })
         if ext_meta:
             result_extra.update({
                 "extraction_rows": ext_meta.row_count,
@@ -648,6 +727,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,
             'ledger_valid': ledger_report.is_valid if ledger_report else None,
             'ledger_balance_consistency_pct': ledger_report.balance_consistency_pct if ledger_report else None,
+            'ledger_repair_count': repair_report.repaired_count,
+            'statement_summary_found': has_summary_values(statement_summary),
             'chunk_orchestrated': chunk_orchestrated,
         }
         

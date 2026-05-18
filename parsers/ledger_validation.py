@@ -94,6 +94,22 @@ class LedgerValidationReport:
         }
 
 
+def has_summary_values(summary: Optional[StatementSummary]) -> bool:
+    if summary is None:
+        return False
+    return any(
+        getattr(summary, field_name) is not None
+        for field_name in (
+            "opening_balance_minor",
+            "closing_balance_minor",
+            "total_debit_minor",
+            "total_credit_minor",
+            "debit_count",
+            "credit_count",
+        )
+    )
+
+
 def parse_money_to_minor(value: Any) -> Optional[int]:
     """Parse a money value into integer minor units without float arithmetic."""
     if value is None:
@@ -169,6 +185,10 @@ def ledger_rows_from_transactions(transactions: Iterable[Dict[str, Any]]) -> Lis
     for index, tx in enumerate(transactions, start=1):
         debit_minor = parse_money_to_minor(_first_present(tx, ("Withdrawal_Amount", "Debit", "Debits")))
         credit_minor = parse_money_to_minor(_first_present(tx, ("Deposit_Amount", "Credit", "Credits")))
+        if debit_minor == 0:
+            debit_minor = None
+        if credit_minor == 0:
+            credit_minor = None
         amount_minor = parse_money_to_minor(_first_present(tx, ("Transaction_Amount", "Amount")))
         if amount_minor is None:
             if credit_minor is not None and debit_minor is None:
@@ -207,7 +227,7 @@ def validate_ledger_rows(
     total_credit = 0
     debit_count = 0
     credit_count = 0
-    previous_balance: Optional[int] = None
+    previous_balance: Optional[int] = summary.opening_balance_minor if summary else None
 
     for row in rows:
         has_debit = row.debit_minor is not None
@@ -327,7 +347,13 @@ def _append_summary_issues(
 
     first_balance = next((row.balance_minor for row in rows if row.balance_minor is not None), None)
     last_balance = next((row.balance_minor for row in reversed(rows) if row.balance_minor is not None), None)
-    if summary.opening_balance_minor is not None and first_balance != summary.opening_balance_minor:
+    first_row_with_balance = next((row for row in rows if row.balance_minor is not None), None)
+    if (
+        summary.opening_balance_minor is not None
+        and first_row_with_balance is not None
+        and first_row_with_balance.amount_minor is None
+        and first_balance != summary.opening_balance_minor
+    ):
         report.issues.append(ValidationIssue(
             "opening_balance_mismatch",
             "First extracted balance does not match statement opening balance.",
