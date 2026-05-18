@@ -104,5 +104,79 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
 
     assert resp.status_code == 200
     assert b"Visitors 24h" in resp.data
+    assert b"Recent Users" in resp.data
     assert b"Login Events" in resp.data
     assert email.encode("utf-8") in resp.data
+
+
+def test_admin_exports_users_logins_and_visits():
+    from app import app
+    from db import get_db_session, init_db
+    from models import LoginEvent, SiteVisit, User
+
+    suffix = uuid.uuid4().hex
+    email = f"export-admin-{suffix}@example.com"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=email, role="admin")
+        db.add(user)
+        db.flush()
+        user_id = user.id
+        db.add(SiteVisit(visitor_id=str(uuid.uuid4()), user_id=user_id, path="/blogs"))
+        db.add(LoginEvent(
+            user_id=user_id,
+            email=email,
+            event_type="login_success",
+            success=True,
+        ))
+
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["user_id"] = user_id
+            sess["user_email"] = email
+        users_resp = client.get("/admin/export/users.csv")
+        logins_resp = client.get("/admin/export/login-events.csv")
+        visits_resp = client.get("/admin/export/site-visits.csv")
+
+    assert users_resp.status_code == 200
+    assert logins_resp.status_code == 200
+    assert visits_resp.status_code == 200
+    assert users_resp.mimetype == "text/csv"
+    assert email.encode("utf-8") in users_resp.data
+    assert email.encode("utf-8") in logins_resp.data
+    assert b"/blogs" in visits_resp.data
+
+
+def test_tracking_cleanup_deletes_old_rows_only():
+    from db import get_db_session, init_db
+    from models import LoginEvent, SiteVisit
+    from tracking import cleanup_tracking_logs
+
+    old_visitor_id = str(uuid.uuid4())
+    fresh_visitor_id = str(uuid.uuid4())
+    old_email = f"old-{uuid.uuid4().hex}@example.com"
+    fresh_email = f"fresh-{uuid.uuid4().hex}@example.com"
+    init_db()
+    with get_db_session() as db:
+        db.add(SiteVisit(
+            visitor_id=old_visitor_id,
+            path="/old",
+            created_at=datetime.utcnow() - timedelta(days=400),
+        ))
+        db.add(SiteVisit(visitor_id=fresh_visitor_id, path="/fresh"))
+        db.add(LoginEvent(
+            email=old_email,
+            event_type="login_success",
+            created_at=datetime.utcnow() - timedelta(days=400),
+        ))
+        db.add(LoginEvent(email=fresh_email, event_type="login_success"))
+
+    deleted = cleanup_tracking_logs(retention_days=180)
+
+    assert deleted == {"site_visits": 1, "login_events": 1}
+    with get_db_session() as db:
+        assert db.query(SiteVisit).filter_by(visitor_id=old_visitor_id).first() is None
+        assert db.query(SiteVisit).filter_by(visitor_id=fresh_visitor_id).first() is not None
+        assert db.query(LoginEvent).filter_by(email=old_email).first() is None
+        assert db.query(LoginEvent).filter_by(email=fresh_email).first() is not None

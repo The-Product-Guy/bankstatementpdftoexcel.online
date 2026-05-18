@@ -203,6 +203,7 @@ def auth_verify():
 
             session['user_id'] = user.id
             session['user_email'] = user.email
+            session['role'] = user.role or 'user'
             session['plan_status'] = user.plan_status
             session['plan_id'] = user.plan_id
 

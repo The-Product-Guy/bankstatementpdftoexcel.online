@@ -1558,6 +1558,13 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 /* ============================================================
    Tables (Jobs, Admin)
    ============================================================ */
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 20px;
+}
+
 .jobs-table-wrap {
   overflow-x: auto;
 }

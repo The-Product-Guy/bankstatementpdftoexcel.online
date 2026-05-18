@@ -7,7 +7,14 @@
 <main class="main-content">
     <header class="header">
         <h1>Admin Dashboard</h1>
+        <p class="subtitle">First-party analytics retention: {{ analytics_retention_days }} days</p>
     </header>
+
+    <div class="admin-actions">
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_users') }}">Export Users</a>
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_login_events') }}">Export Logins</a>
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_site_visits') }}">Export Visits</a>
+    </div>
 
     <div class="admin-stats">
         <div class="stat-card">
@@ -45,6 +52,42 @@
         <div class="stat-card">
             <h3>{{ stats.logins_7d }}</h3>
             <p>Logins 7d</p>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Recent Users</h2>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Plan</th>
+                            <th>Status</th>
+                            <th>Role</th>
+                            <th>Created</th>
+                            <th>Last Login</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in recent_users %}
+                        <tr>
+                            <td>{{ user.email }}</td>
+                            <td>{{ user.plan_id }}</td>
+                            <td>{{ user.plan_status }}</td>
+                            <td>{{ user.role }}</td>
+                            <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '-' }}</td>
+                            <td>{{ user.last_login_at.strftime('%Y-%m-%d %H:%M') if user.last_login_at else '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6">No users recorded yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 

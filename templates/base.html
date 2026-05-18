@@ -93,6 +93,9 @@
                     {% set plan = session.get('plan_id', 'free') %}
                     <span class="nav-plan-badge plan-{{ plan }}">{{ plan|capitalize }}</span>
                     <a href="{{ url_for('converter.dashboard') }}" class="nav-signin" {% if request.endpoint == 'converter.dashboard' %}style="color:var(--blue)"{% endif %}>Dashboard</a>
+                    {% if current_user_is_admin %}
+                    <a href="{{ url_for('pages.admin_dashboard') }}" class="nav-signin" {% if request.endpoint == 'pages.admin_dashboard' %}style="color:var(--blue)"{% endif %}>Admin</a>
+                    {% endif %}
                     <a href="{{ url_for('auth.account') }}" class="nav-signin">Account</a>
                     <a href="/signout" class="nav-signin">Sign Out</a>
                 {% else %}

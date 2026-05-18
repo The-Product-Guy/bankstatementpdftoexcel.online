@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from typing import Optional
 
 from db import get_db_session
-from models import SiteVisit
+from models import LoginEvent, SiteVisit
 
 
 VISITOR_COOKIE = "sf_visitor_id"
@@ -72,3 +73,22 @@ def record_page_view(
             ip=ip[:128],
             user_agent=user_agent[:512],
         ))
+
+
+def cleanup_tracking_logs(retention_days: int) -> dict:
+    if retention_days <= 0:
+        return {"site_visits": 0, "login_events": 0}
+
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    with get_db_session() as db:
+        site_deleted = (
+            db.query(SiteVisit)
+            .filter(SiteVisit.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+        login_deleted = (
+            db.query(LoginEvent)
+            .filter(LoginEvent.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+    return {"site_visits": site_deleted, "login_events": login_deleted}

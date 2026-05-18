@@ -184,6 +184,8 @@ pip3
 | `RESULT_RETENTION_HOURS` | No | Retention window for generated outputs in object storage. | `24` |
 | `LOCAL_RESULT_RETENTION_HOURS` | No | Retention window for locally stored generated outputs. | `RESULT_RETENTION_HOURS` |
 | `FEEDBACK_RETENTION_DAYS` | No | Retention window for feedback submissions and copied source/output files. | `30` |
+| `FIRST_PARTY_ANALYTICS_RETENTION_DAYS` | No | Retention window for internal page-view and login-event logs shown in the admin portal. | `180` |
+| `FIRST_PARTY_ANALYTICS_SWEEP_MINS` | No | Minimum interval between analytics cleanup sweeps. | `1440` |
 | `USE_PYMUPDF` | No | Enables the optional PyMuPDF table-detection fallback for extraction. | `false` |
 | `GA_MEASUREMENT_ID` / `GTM_CONTAINER_ID` | No | Analytics IDs injected into public pages. | - |
 

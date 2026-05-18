@@ -1,4 +1,6 @@
 """Public pages, SEO, health checks, and admin routes."""
+import csv
+import io
 import logging
 import os
 from datetime import datetime, timedelta
@@ -131,15 +133,40 @@ def _public_base_url() -> str:
     return request.url_root.rstrip('/')
 
 
+def _admin_csv_response(filename: str, headers, rows) -> Response:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    response = Response(buffer.getvalue(), mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _admin_days_param(default: int = 30, maximum: int = 365) -> int:
+    try:
+        days = int(request.args.get('days', default))
+    except (TypeError, ValueError):
+        days = default
+    return max(1, min(days, maximum))
+
+
+def _require_admin():
+    from app import is_admin_user
+    return is_admin_user()
+
+
 @pages_bp.route('/')
 def home():
     """Marketing landing page."""
     from app import (
-        cleanup_expired_s3_results, cleanup_feedback_shared_pdfs, cleanup_old_files,
+        cleanup_expired_s3_results, cleanup_feedback_shared_pdfs,
+        cleanup_first_party_analytics, cleanup_old_files,
     )
     cleanup_old_files()
     cleanup_feedback_shared_pdfs()
     cleanup_expired_s3_results()
+    cleanup_first_party_analytics()
     return render_template('home.html')
 
 
@@ -176,8 +203,12 @@ def pricing():
 
 @pages_bp.route('/privacy')
 def privacy():
-    from app import FEEDBACK_RETENTION_DAYS
-    return render_template('privacy.html', feedback_retention_days=FEEDBACK_RETENTION_DAYS)
+    from app import FEEDBACK_RETENTION_DAYS, FIRST_PARTY_ANALYTICS_RETENTION_DAYS
+    return render_template(
+        'privacy.html',
+        feedback_retention_days=FEEDBACK_RETENTION_DAYS,
+        analytics_retention_days=FIRST_PARTY_ANALYTICS_RETENTION_DAYS,
+    )
 
 
 @pages_bp.route('/terms')
@@ -187,8 +218,8 @@ def terms():
 
 @pages_bp.route('/admin')
 def admin_dashboard():
-    from app import is_admin_user
-    if not is_admin_user():
+    from app import FIRST_PARTY_ANALYTICS_RETENTION_DAYS
+    if not _require_admin():
         return "Not found", 404
 
     stats = {
@@ -204,6 +235,7 @@ def admin_dashboard():
     }
     recent_jobs = []
     recent_logins = []
+    recent_users = []
     top_paths = []
     try:
         with get_db_session() as db:
@@ -235,6 +267,28 @@ def admin_dashboard():
                 LoginEvent.event_type == 'login_success',
                 LoginEvent.created_at >= week_ago,
             ).count()
+            recent_user_rows = (
+                db.query(User)
+                .order_by(
+                    User.last_login_at.is_(None),
+                    User.last_login_at.desc(),
+                    User.created_at.desc(),
+                )
+                .limit(20)
+                .all()
+            )
+            recent_users = [
+                {
+                    'email': user.email,
+                    'role': user.role or 'user',
+                    'plan_id': user.plan_id or 'free',
+                    'plan_status': user.plan_status or 'free',
+                    'created_at': user.created_at,
+                    'last_login_at': user.last_login_at,
+                    'is_active': user.is_active,
+                }
+                for user in recent_user_rows
+            ]
             recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(20).all()
             for job in recent_jobs:
                 db.expunge(job)
@@ -273,7 +327,104 @@ def admin_dashboard():
         stats=stats,
         recent_jobs=recent_jobs,
         recent_logins=recent_logins,
+        recent_users=recent_users,
         top_paths=top_paths,
+        analytics_retention_days=FIRST_PARTY_ANALYTICS_RETENTION_DAYS,
+    )
+
+
+@pages_bp.route('/admin/export/users.csv')
+def admin_export_users():
+    if not _require_admin():
+        return "Not found", 404
+
+    with get_db_session() as db:
+        users = db.query(User).order_by(User.created_at.desc()).limit(5000).all()
+        rows = [
+            [
+                user.id,
+                user.email,
+                user.role or 'user',
+                user.plan_id or 'free',
+                user.plan_status or 'free',
+                bool(user.is_active),
+                user.created_at.isoformat() if user.created_at else '',
+                user.last_login_at.isoformat() if user.last_login_at else '',
+            ]
+            for user in users
+        ]
+    return _admin_csv_response(
+        'users.csv',
+        ['id', 'email', 'role', 'plan_id', 'plan_status', 'is_active', 'created_at', 'last_login_at'],
+        rows,
+    )
+
+
+@pages_bp.route('/admin/export/login-events.csv')
+def admin_export_login_events():
+    if not _require_admin():
+        return "Not found", 404
+
+    cutoff = datetime.utcnow() - timedelta(days=_admin_days_param())
+    with get_db_session() as db:
+        events = (
+            db.query(LoginEvent)
+            .filter(LoginEvent.created_at >= cutoff)
+            .order_by(LoginEvent.created_at.desc())
+            .limit(10000)
+            .all()
+        )
+        rows = [
+            [
+                event.id,
+                event.user_id or '',
+                event.email or '',
+                event.event_type,
+                bool(event.success),
+                event.ip or '',
+                event.user_agent or '',
+                event.created_at.isoformat() if event.created_at else '',
+            ]
+            for event in events
+        ]
+    return _admin_csv_response(
+        'login-events.csv',
+        ['id', 'user_id', 'email', 'event_type', 'success', 'ip', 'user_agent', 'created_at'],
+        rows,
+    )
+
+
+@pages_bp.route('/admin/export/site-visits.csv')
+def admin_export_site_visits():
+    if not _require_admin():
+        return "Not found", 404
+
+    cutoff = datetime.utcnow() - timedelta(days=_admin_days_param())
+    with get_db_session() as db:
+        visits = (
+            db.query(SiteVisit)
+            .filter(SiteVisit.created_at >= cutoff)
+            .order_by(SiteVisit.created_at.desc())
+            .limit(10000)
+            .all()
+        )
+        rows = [
+            [
+                visit.id,
+                visit.visitor_id,
+                visit.user_id or '',
+                visit.path,
+                visit.referrer or '',
+                visit.ip or '',
+                visit.user_agent or '',
+                visit.created_at.isoformat() if visit.created_at else '',
+            ]
+            for visit in visits
+        ]
+    return _admin_csv_response(
+        'site-visits.csv',
+        ['id', 'visitor_id', 'user_id', 'path', 'referrer', 'ip', 'user_agent', 'created_at'],
+        rows,
     )
 
 

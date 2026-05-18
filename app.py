@@ -30,6 +30,7 @@ from tracking import (
     normalize_visitor_id,
     record_page_view,
     should_track_page_view,
+    cleanup_tracking_logs,
 )
 
 
@@ -69,6 +70,8 @@ ENGLISH_ONLY_BETA = _env_bool('ENGLISH_ONLY_BETA', True)
 RATE_LIMIT_FAIL_CLOSED = _env_bool('RATE_LIMIT_FAIL_CLOSED')
 FEEDBACK_RETENTION_DAYS = int(os.environ.get('FEEDBACK_RETENTION_DAYS', '30'))
 FEEDBACK_RETENTION_SWEEP_MINS = int(os.environ.get('FEEDBACK_RETENTION_SWEEP_MINS', '60'))
+FIRST_PARTY_ANALYTICS_RETENTION_DAYS = int(os.environ.get('FIRST_PARTY_ANALYTICS_RETENTION_DAYS', '180'))
+FIRST_PARTY_ANALYTICS_SWEEP_MINS = int(os.environ.get('FIRST_PARTY_ANALYTICS_SWEEP_MINS', '1440'))
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in os.environ.get('ADMIN_EMAILS', '').split(',')
@@ -92,6 +95,7 @@ app.config['SESSION_COOKIE_SECURE'] = _env_bool('SESSION_COOKIE_SECURE', IS_PROD
 app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')
 _last_feedback_retention_sweep = None
+_last_analytics_retention_sweep = None
 
 # Initialize SocketIO with proper configuration for production
 allowed_origins_env = os.environ.get('SOCKETIO_CORS_ORIGINS') or os.environ.get('ALLOWED_ORIGINS')
@@ -349,6 +353,35 @@ def cleanup_feedback_shared_pdfs(force: bool = False):
     finally:
         _last_feedback_retention_sweep = now
 
+
+def cleanup_first_party_analytics(force: bool = False):
+    """Delete old first-party analytics and login-event rows."""
+    global _last_analytics_retention_sweep
+
+    if FIRST_PARTY_ANALYTICS_RETENTION_DAYS <= 0:
+        return
+
+    now = datetime.utcnow()
+    if (
+        not force
+        and _last_analytics_retention_sweep
+        and now - _last_analytics_retention_sweep < timedelta(minutes=FIRST_PARTY_ANALYTICS_SWEEP_MINS)
+    ):
+        return
+
+    try:
+        deleted = cleanup_tracking_logs(FIRST_PARTY_ANALYTICS_RETENTION_DAYS)
+        if deleted.get("site_visits") or deleted.get("login_events"):
+            logger.info(
+                "Analytics retention sweep deleted site_visits=%s login_events=%s",
+                deleted.get("site_visits", 0),
+                deleted.get("login_events", 0),
+            )
+    except Exception as exc:
+        logger.warning(f"Analytics retention sweep failed: {exc}")
+    finally:
+        _last_analytics_retention_sweep = now
+
 _last_s3_cleanup_sweep = None
 RESULT_RETENTION_HOURS = int(os.environ.get(
     'RESULT_RETENTION_HOURS',
@@ -434,8 +467,14 @@ def inject_csrf_token():
 
 @app.context_processor
 def inject_user_context():
+    user_email = session.get('user_email')
+    normalized_email = (user_email or '').lower()
     return {
-        'current_user_email': session.get('user_email'),
+        'current_user_email': user_email,
+        'current_user_is_admin': bool(
+            normalized_email
+            and (normalized_email in ADMIN_EMAILS or session.get('role') == 'admin')
+        ),
         'now': datetime.utcnow,
     }
 
