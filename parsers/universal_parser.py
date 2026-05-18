@@ -764,6 +764,35 @@ class UniversalBankParser(BaseParser):
             sample_text = "\n".join(text for _, text in page_texts[:3])
             self._enforce_english_only(sample_text, "text extraction sample")
 
+        layout_transactions, raw_table = self._extract_layout_transactions(
+            pdf_path,
+            source_file,
+            page_start=page_start,
+            page_end=page_end
+        )
+        if layout_transactions and self._transactions_quality_ok(layout_transactions):
+            low_ratio = self._low_confidence_ratio(layout_transactions)
+            if low_ratio <= self.config.low_conf_ratio_for_fallback or not self.llm_extractor:
+                logger.info("Layout extraction found %d transactions; skipping LLM.", len(layout_transactions))
+                self.transactions.extend(layout_transactions)
+                self.raw_table = raw_table
+                return 0
+            logger.warning(
+                "Layout low-confidence ratio %.1f%%; escalating only low-confidence content to fallback.",
+                low_ratio * 100,
+            )
+            low_conf_pages = set()
+            for tx in layout_transactions:
+                score = float(tx.get("Row_Confidence", 0.0))
+                if score >= self.config.row_confidence_threshold:
+                    continue
+                page_line = str(tx.get("Page_Line", ""))
+                m = re.search(r"Page[_\s-]*(\d+)", page_line, re.IGNORECASE)
+                if m:
+                    low_conf_pages.add(int(m.group(1)))
+        else:
+            raw_table = None
+
         if table_transactions:
             min_table_tx = self.config.min_table_transactions
             if min_table_tx is None or len(table_transactions) >= min_table_tx:
@@ -799,33 +828,6 @@ class UniversalBankParser(BaseParser):
                     low_ratio * 100,
                 )
 
-        layout_transactions, raw_table = self._extract_layout_transactions(
-            pdf_path,
-            source_file,
-            page_start=page_start,
-            page_end=page_end
-        )
-        if layout_transactions and self._transactions_quality_ok(layout_transactions):
-            low_ratio = self._low_confidence_ratio(layout_transactions)
-            if low_ratio <= self.config.low_conf_ratio_for_fallback or not self.llm_extractor:
-                logger.info("Layout extraction found %d transactions; skipping LLM.", len(layout_transactions))
-                self.transactions.extend(layout_transactions)
-                self.raw_table = raw_table
-                return 0
-            logger.warning(
-                "Layout low-confidence ratio %.1f%%; escalating only low-confidence content to fallback.",
-                low_ratio * 100,
-            )
-            low_conf_pages = set()
-            for tx in layout_transactions:
-                score = float(tx.get("Row_Confidence", 0.0))
-                if score >= self.config.row_confidence_threshold:
-                    continue
-                page_line = str(tx.get("Page_Line", ""))
-                m = re.search(r"Page[_\s-]*(\d+)", page_line, re.IGNORECASE)
-                if m:
-                    low_conf_pages.add(int(m.group(1)))
-        
         if not self.llm_extractor:
             # Fallback to regex-based parsing
             all_text = "\n\n".join(text for _, text in page_texts)
@@ -1058,6 +1060,17 @@ class UniversalBankParser(BaseParser):
         raw_col_map: Optional[Dict[str, int]] = None
 
         last_header = None
+        pending_between_parts: List[str] = []
+
+        def append_parts_to_transaction(tx: Dict[str, Any], parts: List[str]) -> None:
+            for part in parts:
+                if not part:
+                    continue
+                if self._looks_like_reference(part):
+                    tx["Reference_Number"] = f"{tx.get('Reference_Number') or ''} {part}".strip()
+                else:
+                    tx["Description"] = f"{tx.get('Description') or ''} {part}".strip()
+
         with pdfplumber.open(pdf_path) as pdf:
             total_pages = len(pdf.pages)
             start_page, end_page = self._resolve_page_window(total_pages, page_start, page_end)
@@ -1081,6 +1094,9 @@ class UniversalBankParser(BaseParser):
                         continue
                     if raw_columns and self._is_header_row(row, raw_columns):
                         continue
+                    row_text = " ".join(cell for cell in row if cell.strip())
+                    if self._is_statement_footer_text(row_text):
+                        continue
                     raw_rows.append(row)
 
                     tx = self._row_to_transaction(
@@ -1090,21 +1106,29 @@ class UniversalBankParser(BaseParser):
                         page_ref=f"Page_{actual_page_num}"
                     )
                     if tx:
+                        if pending_between_parts:
+                            if last_tx is None or not (tx.get("Description") or "").strip():
+                                tx["Description"] = " ".join(
+                                    part for part in [*pending_between_parts, tx.get("Description") or ""]
+                                    if part
+                                ).strip()
+                            else:
+                                append_parts_to_transaction(last_tx, pending_between_parts)
+                            pending_between_parts = []
                         transactions.append(tx)
                         last_tx = tx
                     else:
                         # Continuation line (reference/details)
-                        if last_tx and any(cell.strip() for cell in row):
-                            ref_idx = header["col_map"].get("reference")
+                        if any(cell.strip() for cell in row):
                             desc_idx = header["col_map"].get("description")
-                            ref_text = row[ref_idx].strip() if ref_idx is not None and ref_idx < len(row) else ""
+                            ref_idx = header["col_map"].get("reference")
                             desc_text = row[desc_idx].strip() if desc_idx is not None and desc_idx < len(row) else ""
-                            extra = ref_text or desc_text or " ".join(c for c in row if c.strip())
-                            if extra:
-                                if self._looks_like_reference(extra):
-                                    last_tx["Reference_Number"] = (last_tx.get("Reference_Number") or "") + extra
-                                else:
-                                    last_tx["Description"] = (last_tx.get("Description") or "") + " " + extra
+                            ref_text = row[ref_idx].strip() if ref_idx is not None and ref_idx < len(row) else ""
+                            extra = desc_text or ref_text or row_text
+                            if extra and not self._is_statement_footer_text(extra):
+                                pending_between_parts.append(extra)
+            if pending_between_parts and last_tx:
+                append_parts_to_transaction(last_tx, pending_between_parts)
         raw_table = None
         if raw_columns and raw_rows and raw_col_map:
             raw_rows = self._merge_continuation_rows(raw_rows, raw_col_map)
@@ -1141,6 +1165,19 @@ class UniversalBankParser(BaseParser):
         if self._row_has_header_tokens(joined) and not self._looks_like_date(joined):
             return True
         return False
+
+    def _is_statement_footer_text(self, text: str) -> bool:
+        if not text:
+            return False
+        return bool(re.search(
+            r'WWW\.|REGISTERED\s+MOBILE|NEVER\s+SHARE|BANK\s+EMPLOYEE'
+            r'|DIAL\s+YOUR\s+BANK|CONFIRMATION\s+OF\s+THE\s+CORRECTNESS'
+            r'|HEAD\s+OFFICE|REGISTERED\s+DETAILS|CENTRAL\s+BANK'
+            r'|ELECTRONICALLY\s+GENERATED|DOES\s+NOT\s+REQUIRE\s+A\s+SIGNATURE'
+            r'|TAX\s+REGISTRATION|SCANNED\s+BY|PAGE\s+\d+\s+OF\s+\d+',
+            text,
+            re.IGNORECASE,
+        ))
 
     def _merge_continuation_rows(
         self,
@@ -1185,7 +1222,14 @@ class UniversalBankParser(BaseParser):
             "txn", "dt", "date", "value", "brn", "description",
             "reference", "debits", "credits", "balance",
             "s", "no", "transaction", "cheque", "number", "remarks",
-            "withdrawal", "deposit", "amount", "inr"
+            "withdrawal", "deposit", "amount", "inr", "details",
+            "narration", "particulars", "debit", "credit", "dr", "cr",
+            "bal", "currency", "aed", "usd", "gbp", "eur"
+        }
+        strong_tokens = {
+            "date", "description", "details", "narration", "particulars",
+            "remarks", "debit", "credit", "debits", "credits",
+            "withdrawal", "deposit", "balance", "bal", "amount"
         }
         if self.active_profile:
             header_tokens.update(self.active_profile.header_tokens())
@@ -1199,94 +1243,156 @@ class UniversalBankParser(BaseParser):
         def token_list(text: str) -> List[str]:
             return normalize(text).split()
 
-        # Group potential header words by y position
-        y_groups: Dict[float, List[Dict[str, Any]]] = {}
-        for w in words:
-            tokens = token_list(w["text"])
-            if any(t in header_tokens for t in tokens):
-                key = round(w["top"], 1)
-                y_groups.setdefault(key, []).append(w)
+        line_tolerance = 4.0
+        lines: List[Dict[str, Any]] = []
+        for word in sorted(words, key=lambda w: (w["top"], w["x0"])):
+            if not lines or abs(word["top"] - lines[-1]["top"]) > line_tolerance:
+                lines.append({"top": word["top"], "words": [word]})
+            else:
+                lines[-1]["words"].append(word)
+                lines[-1]["top"] = (lines[-1]["top"] + word["top"]) / 2.0
 
-        if not y_groups:
+        if not lines:
             return None
 
-        header_top, header_words = max(y_groups.items(), key=lambda item: len(item[1]))
-        if len(header_words) < 4:
+        def line_tokens(line: Dict[str, Any]) -> List[str]:
+            tokens: List[str] = []
+            for word in line["words"]:
+                tokens.extend(token_list(word["text"]))
+            return tokens
+
+        best_band: Optional[Tuple[float, int, int, List[Dict[str, Any]]]] = None
+        for start_idx in range(len(lines)):
+            band_words: List[Dict[str, Any]] = []
+            band_tokens: List[str] = []
+            previous_top = lines[start_idx]["top"]
+            for end_idx in range(start_idx, min(start_idx + 4, len(lines))):
+                if end_idx > start_idx and lines[end_idx]["top"] - previous_top > 22:
+                    break
+                previous_top = lines[end_idx]["top"]
+                band_words.extend(lines[end_idx]["words"])
+                band_tokens.extend(line_tokens(lines[end_idx]))
+
+                hit_count = sum(1 for token in band_tokens if token in header_tokens)
+                strong_count = sum(1 for token in band_tokens if token in strong_tokens)
+                token_set = set(band_tokens)
+                has_date_side = bool({"date", "txn", "transaction", "value"} & token_set)
+                has_money_side = bool(
+                    {"debit", "debits", "credit", "credits", "withdrawal", "deposit", "balance", "bal", "amount"} & token_set
+                )
+                if hit_count < 4 or strong_count < 2 or not (has_date_side and has_money_side):
+                    continue
+
+                score = hit_count + (strong_count * 2) + len(token_set & {"debit", "credit", "withdrawal", "deposit", "balance"})
+                candidate = (float(score), start_idx, end_idx, band_words.copy())
+                if best_band is None or candidate[0] > best_band[0]:
+                    best_band = candidate
+
+        if best_band is None:
             return None
 
-        # Merge header tokens into column labels using known pairs
-        header_words = sorted(header_words, key=lambda w: w["x0"])
-        header_groups: List[Dict[str, Any]] = []
-        merge_threshold = 25
+        _, start_idx, end_idx, _ = best_band
+        selected_lines = lines[start_idx:end_idx + 1]
+        phrase_groups: List[Dict[str, Any]] = []
         merge_pairs = {
-            ("txn", "dt"),
-            ("value", "dt"),
-            ("value", "date"),
-            ("s", "no"),
-            ("transaction", "date"),
-            ("cheque", "number"),
-            ("transaction", "remarks"),
-            ("withdrawal", "amount"),
-            ("deposit", "amount"),
-            ("balance", "inr"),
-            ("closing", "balance"),
+            ("txn", "dt"), ("value", "dt"), ("value", "date"),
+            ("s", "no"), ("transaction", "date"), ("cheque", "number"),
+            ("transaction", "remarks"), ("transaction", "details"),
+            ("withdrawal", "amount"), ("deposit", "amount"), ("debit", "amount"),
+            ("credit", "amount"), ("balance", "inr"), ("balance", "aed"),
+            ("amount", "inr"), ("amount", "aed"), ("closing", "balance"),
             ("opening", "balance"),
         }
 
-        def norm_token(text: str) -> str:
-            return normalize(text)
+        for line in selected_lines:
+            header_line_words = [
+                word for word in sorted(line["words"], key=lambda w: w["x0"])
+                if any(token in header_tokens for token in token_list(word["text"]))
+            ]
+            current: Optional[Dict[str, Any]] = None
+            for word in header_line_words:
+                token = normalize(word["text"])
+                if not token:
+                    continue
+                token_first = token.split()[0]
+                if current is None:
+                    current = {
+                        "x0": word["x0"],
+                        "x1": word["x1"],
+                        "top": word["top"],
+                        "bottom": word.get("bottom", word["top"]),
+                        "text": word["text"],
+                        "token": token,
+                    }
+                    continue
 
-        for w in header_words:
-            token = norm_token(w["text"])
-            token_first = token.split()[0] if token else ""
-            if not header_groups:
-                header_groups.append({
-                    "x0": w["x0"],
-                    "x1": w["x1"],
-                    "text": w["text"],
-                    "token": token
-                })
+                prev_token = current["token"].split()[-1] if current["token"] else ""
+                pair = (prev_token, token_first)
+                gap = word["x0"] - current["x1"]
+                currency_tokens = {"inr", "aed", "usd", "gbp", "eur"}
+                should_merge_currency = (
+                    token_first in currency_tokens
+                    and prev_token not in currency_tokens
+                )
+                if gap <= 28 and (pair in merge_pairs or should_merge_currency):
+                    current["x1"] = max(current["x1"], word["x1"])
+                    current["bottom"] = max(current["bottom"], word.get("bottom", word["top"]))
+                    current["text"] = f"{current['text']} {word['text']}"
+                    current["token"] = f"{current['token']} {token}".strip()
+                else:
+                    phrase_groups.append(current)
+                    current = {
+                        "x0": word["x0"],
+                        "x1": word["x1"],
+                        "top": word["top"],
+                        "bottom": word.get("bottom", word["top"]),
+                        "text": word["text"],
+                        "token": token,
+                    }
+            if current is not None:
+                phrase_groups.append(current)
+
+        if len(phrase_groups) < 3:
+            return None
+
+        header_groups: List[Dict[str, Any]] = []
+        for phrase in sorted(phrase_groups, key=lambda g: (g["top"], g["x0"])):
+            target = None
+            phrase_center = (phrase["x0"] + phrase["x1"]) / 2.0
+            for group in header_groups:
+                group_center = (group["x0"] + group["x1"]) / 2.0
+                overlap = min(group["x1"], phrase["x1"]) - max(group["x0"], phrase["x0"])
+                close_center = abs(phrase_center - group_center) <= max(18.0, (group["x1"] - group["x0"]) * 0.45)
+                if overlap > 0 or close_center:
+                    target = group
+                    break
+            if target is None:
+                header_groups.append(dict(phrase))
                 continue
 
-            prev = header_groups[-1]
-            prev_token = prev["token"].split()[-1] if prev["token"] else ""
-            pair = (prev_token, token_first)
+            target["x0"] = min(target["x0"], phrase["x0"])
+            target["x1"] = max(target["x1"], phrase["x1"])
+            target["bottom"] = max(target["bottom"], phrase["bottom"])
+            target["text"] = f"{target['text']} {phrase['text']}".strip()
+            target["token"] = f"{target['token']} {phrase['token']}".strip()
 
-            if pair in merge_pairs and w["x0"] - prev["x1"] <= merge_threshold:
-                prev["x1"] = max(prev["x1"], w["x1"])
-                prev["text"] = f"{prev['text']} {w['text']}"
-                prev["token"] = f"{prev['token']} {token}".strip()
-            else:
-                header_groups.append({
-                    "x0": w["x0"],
-                    "x1": w["x1"],
-                    "text": w["text"],
-                    "token": token
-                })
+        header_groups = sorted(header_groups, key=lambda g: g["x0"])
 
-        # Merge second-line header words like "Amount(INR)"
-        secondary_words = [
-            w for w in words
-            if 0 < (w["top"] - header_top) <= 14
-            and any(t in header_tokens for t in token_list(w["text"]))
-        ]
-        for w in secondary_words:
-            token = norm_token(w["text"])
-            if not token:
-                continue
-            # Append to nearest header group
-            target = min(header_groups, key=lambda g: abs(w["x0"] - g["x0"]))
-            target["text"] = f"{target['text']} {w['text']}".strip()
-            target["token"] = f"{target['token']} {token}".strip()
-
-        # Build boundaries
-        xs = [g["x0"] for g in header_groups]
-        if len(xs) < 2:
+        # Build boundaries from the gap between adjacent header spans. Using
+        # left-edge midpoints is fragile for right-aligned numeric columns:
+        # narrow debit values can start to the right of the debit header's
+        # left edge and otherwise get assigned to credit.
+        if len(header_groups) < 2:
             return None
 
         boundaries = [0.0]
-        for i in range(1, len(xs)):
-            boundaries.append((xs[i - 1] + xs[i]) / 2)
+        for i in range(1, len(header_groups)):
+            prev_group = header_groups[i - 1]
+            next_group = header_groups[i]
+            if prev_group["x1"] < next_group["x0"]:
+                boundaries.append((prev_group["x1"] + next_group["x0"]) / 2)
+            else:
+                boundaries.append((prev_group["x0"] + next_group["x0"]) / 2)
         boundaries.append(page.width + 1)
 
         col_map = self._map_headers([g["text"] for g in header_groups])
@@ -1297,7 +1403,7 @@ class UniversalBankParser(BaseParser):
             "columns": header_groups,
             "boundaries": boundaries,
             "col_map": col_map,
-            "header_top": header_top
+            "header_top": max(line["top"] for line in selected_lines)
         }
 
     def _row_has_header_tokens(self, text: str) -> bool:
@@ -1883,7 +1989,7 @@ class UniversalBankParser(BaseParser):
             matches = {k for k in header_keywords if k in joined}
             has_strong = any(k in joined for k in strong_keywords)
             looks_data_like = bool(
-                re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', joined)
+                re.search(r'\d{1,2}[./-]\d{1,2}[./-]\d{2,4}', joined)
                 or re.search(r'\d{1,3}(?:,\d{2,3})*(?:\.\d{2})', joined)
             )
 
@@ -1923,10 +2029,16 @@ class UniversalBankParser(BaseParser):
 
             tokens = set(h.split())
 
-            if 'date' in h or 'txn' in h or 'value' in h:
-                mapping.setdefault('date', idx)
-            elif any(x in h for x in ['desc', 'narr', 'partic', 'remark', 'details']):
+            if any(x in h for x in ['desc', 'narr', 'partic', 'remark', 'details']):
                 mapping.setdefault('description', idx)
+            elif (
+                'date' in h
+                or 'txn dt' in h
+                or 'txn date' in h
+                or 'transaction date' in h
+                or 'value date' in h
+            ):
+                mapping.setdefault('date', idx)
             elif any(x in h for x in ['ref', 'cheq', 'chq', 'utr', 'instrument']):
                 mapping.setdefault('reference', idx)
             elif 'debit' in h or 'withdraw' in h or 'dr' in tokens:

@@ -71,6 +71,42 @@ class TestBankProfiles(unittest.TestCase):
         self.assertEqual(mapping.get("credit"), 4)
         self.assertEqual(mapping.get("balance"), 5)
 
+    def test_generic_multiline_header_geometry(self):
+        class FakePage:
+            width = 595
+
+            def extract_words(self):
+                return [
+                    {"text": "S", "x0": 23.54, "x1": 28.0, "top": 222.0, "bottom": 230.0},
+                    {"text": "No.", "x0": 30.0, "x1": 44.45, "top": 222.0, "bottom": 230.0},
+                    {"text": "Transaction", "x0": 60.24, "x1": 107.76, "top": 217.0, "bottom": 225.0},
+                    {"text": "Date", "x0": 70.0, "x1": 98.0, "top": 227.0, "bottom": 235.0},
+                    {"text": "Cheque", "x0": 122.42, "x1": 153.0, "top": 222.0, "bottom": 230.0},
+                    {"text": "Number", "x0": 156.0, "x1": 185.58, "top": 222.0, "bottom": 230.0},
+                    {"text": "Transaction", "x0": 247.13, "x1": 291.0, "top": 222.0, "bottom": 230.0},
+                    {"text": "Remarks", "x0": 294.0, "x1": 331.87, "top": 222.0, "bottom": 230.0},
+                    {"text": "Withdrawal", "x0": 399.0, "x1": 447.0, "top": 217.0, "bottom": 225.0},
+                    {"text": "Amount", "x0": 395.6, "x1": 427.3, "top": 227.0, "bottom": 235.0},
+                    {"text": "(INR)", "x0": 429.6, "x1": 450.4, "top": 227.0, "bottom": 235.0},
+                    {"text": "Deposit", "x0": 473.8, "x1": 504.2, "top": 217.0, "bottom": 225.0},
+                    {"text": "Amount", "x0": 461.6, "x1": 493.3, "top": 227.0, "bottom": 235.0},
+                    {"text": "(INR)", "x0": 495.6, "x1": 516.4, "top": 227.0, "bottom": 235.0},
+                    {"text": "Balance", "x0": 532.1, "x1": 563.9, "top": 217.0, "bottom": 225.0},
+                    {"text": "(INR)", "x0": 537.6, "x1": 558.4, "top": 227.0, "bottom": 235.0},
+                ]
+
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+        header = parser._detect_header_layout(FakePage())
+
+        self.assertIsNotNone(header)
+        self.assertEqual(header["col_map"].get("date"), 1)
+        self.assertEqual(header["col_map"].get("description"), 3)
+        self.assertEqual(header["col_map"].get("debit"), 4)
+        self.assertEqual(header["col_map"].get("credit"), 5)
+        self.assertEqual(header["col_map"].get("balance"), 6)
+        self.assertEqual(parser._boundary_index(431.9, header["boundaries"]), 4)
+        self.assertEqual(parser._boundary_index(493.1, header["boundaries"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()
