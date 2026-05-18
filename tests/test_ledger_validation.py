@@ -152,3 +152,29 @@ def test_repair_transactions_uses_balance_delta_for_merged_reference_amount():
     assert repair_report.actions[0].raw_amount_minor == 963620000
     assert repair_report.actions[0].final_amount_minor == 3620000
     assert report.balance_consistency_pct == 100.0
+
+
+def test_repair_prefers_clean_amount_when_balance_loses_leading_digits():
+    transactions = [
+        {
+            "Date": "11/01/19",
+            "Description": "IMPS CR-1763308000000128- VRAJ TEXT",
+            "Reference_Number": "901116159323",
+            "Deposit_Amount": "21,000.00",
+            "Transaction_Amount": "21,000.00",
+            "Closing_Balance": "577.00",
+            "Page_Line": "Page_23",
+        },
+    ]
+    summary = StatementSummary(opening_balance_minor=15652020)
+
+    repaired, repair_report = repair_transactions_from_balance_deltas(transactions, summary)
+    report = validate_ledger_rows(ledger_rows_from_transactions(repaired), summary)
+
+    assert repair_report.repaired_count == 1
+    assert repair_report.actions[0].reason == "balance_from_amount_delta"
+    assert repair_report.actions[0].raw_balance_minor == 57700
+    assert repair_report.actions[0].final_balance_minor == 17752020
+    assert repaired[0]["Deposit_Amount"] == 21000.0
+    assert repaired[0]["Closing_Balance"] == 177520.2
+    assert report.balance_consistency_pct == 100.0

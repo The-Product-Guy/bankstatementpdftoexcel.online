@@ -323,6 +323,70 @@ class TestUniversalParser:
         assert parser.config.max_pages == 50
         assert parser.config.llm_model == "gpt-4o-mini"
 
+    def test_ocr_fallback_parses_statement_rows_from_right_edge(self):
+        """OCR fallback should not treat reference digits as money."""
+        from parsers.ledger_validation import ledger_rows_from_transactions, validate_ledger_rows
+        from parsers.ledger_repair import repair_transactions_from_balance_deltas
+        from parsers.universal_parser import create_universal_parser
+
+        text = """
+        TXN DT VALUE DT BRN DESCRIPTION REFERENCE DEBITS CREDITS BALANCE
+        01/09/18 01/09/18 B/F... 1,43, 666.60
+        01/09/18 01/09/18 1763 IMPS CR-1763308000000128- 824418052096 36,200.00 1,79,866.60
+        GOLDEN EA-249805000396
+        03/09/18 03/09/18 1763 IMPS DR-1763308000000116- 824521658273 15,000.00 1,64,866.60
+        HDFC0000240-2017FO0100498
+        914
+        03/09/18 03/09/18 1763 ATM CSW/0100162693/Kovai- 824610043534 10,000.00 1,54,866.60
+        Salem Rd/Salem
+        03/09/18 03/09/18 1763 CA ATM TXN OTHER BANK CHA 824610043534 20.00 1,54,846.60
+        RGES
+        03/09/18 03/09/18 1763 ATM CSW/0100162693/Kovai- 824610044170 5,000.00 1,49,846.60
+        Salem Rd/Salew
+        03/09/18 03/09/18 1763 CA ATM TXN OTHER BANK CHA 824610044170 20.00 1,49,826.60
+        RGES
+        04/09/18 04/09/18 1221 To Clg : PALANIAPPAN ocacoo000008 61,415.00 88,411.60
+        04/09/18 04/09/18 1684 NEFT : 000065525534 - ANG 33,400.00 1,21,811.60
+        AN FOODS PVT LTD
+        04/09/18 04/09/18 1763 IMPS DR-1763308000000116- 824715614177 30,000.00 91,811.60
+        HDEFC0000240-3017FO0100498
+        914
+        05/09/18 05/09/18 1684 ATM CSwW/0100162693/KARUR 3470 10,000.00 81,911.60
+        VYSYA BANK/SALEM
+        06/09/18 06/09/18 1289 Cash Deposit 29,100.00 1,10,911.60
+        06/09/18 06/09/18 1684 NEFT : KKBKH18249778072 - 30,000.00 1,40,911.60
+        SHREE PRASANNA TRANSPORT
+        06/09/18 06/09/18 1684 NEFT : IDIBH18249145739 - 50,000.00 1,90,911.60
+        SIVA LOGISTICS
+        06/09/18 06/09/18 1763 IMPS DR-1763308000000116- 824918954222 50,000.00 1,40,911.60
+        HDFC0000240-3017F00100498
+        914
+        07/09/18 07/09/18 1763 IMPS DR-1763308000000116- 825013281637 10,000.00 1,30,911.60
+        SBIN0007464-32372805878
+        07/09/18 07/09/18 1684 AIM CSW/0100162693/KARUR 4370 1,500.00 1,29,411.60
+        VYSYA BANK/SALEM
+        Scanned by CamScanner
+        """
+
+        parser = create_universal_parser(use_paddleocr=False, use_img2table=False, use_llm=False)
+        parser._fallback_regex_parse(text, "statement.pdf")
+
+        assert len(parser.transactions) == 17
+        assert parser.transactions[1]["Deposit_Amount"] == 36200.0
+        assert parser.transactions[2]["Withdrawal_Amount"] == 15000.0
+        assert parser.transactions[7]["Withdrawal_Amount"] == 61415.0
+        assert parser.transactions[11]["Deposit_Amount"] == 29100.0
+
+        report = validate_ledger_rows(ledger_rows_from_transactions(parser.transactions))
+        assert report.balance_checks == 16
+        assert report.balance_checks_passed == 14
+
+        repaired, repair_report = repair_transactions_from_balance_deltas(parser.transactions)
+        repaired_report = validate_ledger_rows(ledger_rows_from_transactions(repaired))
+        assert repair_report.repaired_count == 1
+        assert repaired[10]["Closing_Balance"] == 81811.6
+        assert repaired_report.balance_checks_passed == 16
+
 
 # Run tests if executed directly
 if __name__ == "__main__":

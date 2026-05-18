@@ -120,6 +120,58 @@ def _repair_audit_sheet(repair_report: Optional[LedgerRepairReport]):
     return pd.DataFrame(repair_report.to_records())
 
 
+def _should_retry_high_accuracy(
+    parser,
+    ledger_report,
+    statement_summary: StatementSummary,
+    execution_preset: str,
+    chunk_orchestrated: bool,
+) -> bool:
+    if os.environ.get("VALIDATION_HIGH_ACCURACY_RETRY", "true").strip().lower() not in {
+        "1", "true", "yes", "on"
+    }:
+        return False
+    if chunk_orchestrated or execution_preset == "prod-high-accuracy":
+        return False
+    if not has_summary_values(statement_summary) or not ledger_report or ledger_report.is_valid:
+        return False
+
+    quality_report = {}
+    if hasattr(parser, "get_quality_report"):
+        try:
+            quality_report = parser.get_quality_report() or {}
+        except Exception:
+            quality_report = {}
+
+    if quality_report.get("pdf_type") == "text":
+        return False
+
+    retry_codes = {
+        "total_debit_mismatch",
+        "total_credit_mismatch",
+        "debit_count_mismatch",
+        "credit_count_mismatch",
+        "closing_balance_mismatch",
+    }
+    if any(issue.code in retry_codes for issue in ledger_report.issues):
+        return True
+    return ledger_report.balance_checks > 0 and ledger_report.balance_consistency_pct < 99.0
+
+
+def _retry_result_is_better(current_report, retry_report) -> bool:
+    if retry_report.is_valid:
+        return True
+    if current_report.is_valid:
+        return False
+    current_errors = sum(1 for issue in current_report.issues if issue.severity == "error")
+    retry_errors = sum(1 for issue in retry_report.issues if issue.severity == "error")
+    if retry_errors < current_errors:
+        return True
+    if retry_errors > current_errors:
+        return False
+    return retry_report.balance_checks_passed > current_report.balance_checks_passed
+
+
 def _warmup_ocr_models():
     """
     Pre-load PaddleOCR models at worker startup so first request isn't slow.
@@ -530,6 +582,69 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             parser.transactions = transactions
         except Exception as exc:
             logger.warning("Ledger repair failed: %s", exc)
+
+        ledger_report_for_retry = validate_ledger_rows(
+            ledger_rows_from_transactions(transactions),
+            statement_summary,
+        )
+        if _should_retry_high_accuracy(
+            parser,
+            ledger_report_for_retry,
+            statement_summary,
+            execution_preset,
+            chunk_orchestrated,
+        ):
+            logger.warning(
+                "Job %s: ledger validation failed after %s; retrying with prod-high-accuracy",
+                job_id,
+                execution_preset,
+            )
+            update_progress(
+                job_id,
+                0,
+                1,
+                "Validation found inconsistencies; retrying high-accuracy extraction...",
+                percent_override=90,
+            )
+            try:
+                retry_parser = create_universal_parser(
+                    progress_callback=progress_callback,
+                    execution_preset="prod-high-accuracy",
+                    use_paddleocr=runtime_use_paddleocr,
+                    use_img2table=runtime_use_img2table,
+                    use_pymupdf=runtime_use_pymupdf,
+                    use_llm=runtime_use_llm,
+                )
+                retry_transactions = retry_parser.parse(file_path, original_filename)
+                retry_transactions = sort_transactions_for_output(retry_transactions)
+                retry_transactions, retry_repair_report = repair_transactions_from_balance_deltas(
+                    retry_transactions,
+                    statement_summary,
+                )
+                retry_parser.transactions = retry_transactions
+                retry_ledger_report = validate_ledger_rows(
+                    ledger_rows_from_transactions(retry_transactions),
+                    statement_summary,
+                )
+                if _retry_result_is_better(ledger_report_for_retry, retry_ledger_report):
+                    logger.info(
+                        "Job %s: high-accuracy retry accepted (valid=%s, issues=%d)",
+                        job_id,
+                        retry_ledger_report.is_valid,
+                        len(retry_ledger_report.issues),
+                    )
+                    parser = retry_parser
+                    transactions = retry_transactions
+                    repair_report = retry_repair_report
+                    execution_preset = "prod-high-accuracy"
+                    ledger_report_for_retry = retry_ledger_report
+                else:
+                    logger.warning(
+                        "Job %s: high-accuracy retry did not improve validation; keeping original extraction",
+                        job_id,
+                    )
+            except Exception as exc:
+                logger.warning("High-accuracy validation retry failed: %s", exc)
         
         update_progress(job_id, 0, 1, "Generating Excel file...", percent_override=95)
         # Generate Excel file from transactions

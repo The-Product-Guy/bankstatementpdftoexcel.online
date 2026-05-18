@@ -19,6 +19,7 @@ from datetime import datetime
 from pdf_utils import raise_if_password_protected
 from .base_parser import BaseParser
 from .bank_profiles import BankProfile, detect_bank_profile, get_profile_header_aliases
+from .ledger_validation import parse_money_to_minor
 
 logger = logging.getLogger(__name__)
 
@@ -3164,6 +3165,244 @@ class UniversalBankParser(BaseParser):
 
         return matrix
 
+    def _extract_statement_table_from_ocr_words(self, img_pil) -> List[List[str]]:
+        """Extract statement rows from OCR word coordinates.
+
+        This targets scanned statements where full-line OCR is readable but
+        plain text loses the debit/credit/balance column positions.
+        """
+        words = self._get_ocr_words(img_pil, psm=6, min_conf=0)
+        words = [w for w in words if (w.get("text") or "").strip()]
+        if not words:
+            return []
+
+        date_re = re.compile(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$')
+        amountish_re = re.compile(r'\d[\d,]*[.,]\d{2}$|\d{1,3},$')
+        amount_piece_re = re.compile(r'^(?:\d{1,3}(?:,\d{2,3})+|[0-9OoAaIl]{2})$')
+
+        heights = sorted(w["height"] for w in words if w.get("height", 0) > 0)
+        median_h = heights[len(heights) // 2] if heights else 12
+        row_tolerance = max(8, int(median_h * 0.85))
+
+        grouped_rows: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        current_y: Optional[float] = None
+        for word in sorted(words, key=lambda w: (w["top"], w["left"])):
+            cy = word["top"] + word["height"] / 2.0
+            if current_y is None or abs(cy - current_y) <= row_tolerance:
+                current.append(word)
+                current_y = cy if current_y is None else ((current_y + cy) / 2.0)
+            else:
+                grouped_rows.append(current)
+                current = [word]
+                current_y = cy
+        if current:
+            grouped_rows.append(current)
+
+        data_row_indices: List[int] = []
+        first_date_x: List[int] = []
+        second_date_x: List[int] = []
+        branch_x: List[int] = []
+        tx_amount_x: List[int] = []
+        balance_x_samples: List[int] = []
+        header_words: List[Dict[str, Any]] = []
+
+        def word_text(word: Dict[str, Any]) -> str:
+            return str(word.get("text") or "").strip()
+
+        for idx, row_words in enumerate(grouped_rows):
+            row_words = sorted(row_words, key=lambda w: w["left"])
+            texts = [word_text(w) for w in row_words]
+            upper_joined = " ".join(texts).upper()
+            if any(token in upper_joined for token in ("DESCRIPTION", "NARRATION", "PARTICULAR", "DEBITS", "CREDITS", "BALANCE")):
+                header_words = row_words
+
+            date_positions = [i for i, text in enumerate(texts) if date_re.match(text)]
+            if not date_positions or date_positions[0] > 1:
+                continue
+
+            data_row_indices.append(idx)
+            first_date_x.append(row_words[date_positions[0]]["left"])
+            if len(date_positions) > 1:
+                second_date_x.append(row_words[date_positions[1]]["left"])
+
+            after_dates = row_words[date_positions[-1] + 1:]
+            for w in after_dates[:3]:
+                if re.match(r'^\d{3,5}$', word_text(w)):
+                    branch_x.append(w["left"])
+                    break
+
+            amount_words = [
+                w for w in row_words
+                if amountish_re.search(word_text(w).replace(" ", ""))
+            ]
+            if amount_words:
+                balance_x_samples.append(max(w["left"] for w in amount_words))
+                if len(amount_words) >= 2:
+                    tx_amount_x.append(sorted(w["left"] for w in amount_words)[-2])
+
+        if len(data_row_indices) < 3:
+            return []
+
+        def median(values: List[int], default: Optional[int] = None) -> Optional[int]:
+            if not values:
+                return default
+            values = sorted(values)
+            return values[len(values) // 2]
+
+        def header_x(*needles: str) -> Optional[int]:
+            for w in header_words:
+                text = re.sub(r'[^A-Z]', '', word_text(w).upper())
+                if any(needle in text for needle in needles):
+                    return w["left"]
+            return None
+
+        date1_x = median(first_date_x, 70) or 70
+        date2_x = median(second_date_x, date1_x + 100) or (date1_x + 100)
+        branch_anchor = median(branch_x, date2_x + 100) or (date2_x + 100)
+        desc_anchor = header_x("DESCRIPTION", "NARRATION", "PARTICULAR") or (branch_anchor + 65)
+        ref_anchor = header_x("REFERENCE", "REF") or (desc_anchor + 280)
+        balance_anchor = header_x("BALANCE") or median(balance_x_samples, ref_anchor + 520) or (ref_anchor + 520)
+
+        debit_anchor = header_x("DEBIT", "WITHDRAW")
+        credit_anchor = header_x("CREDIT", "DEPOSIT")
+        if debit_anchor is None and tx_amount_x:
+            debit_anchor = min(tx_amount_x)
+        if credit_anchor is None and tx_amount_x:
+            high_tx = max(tx_amount_x)
+            if debit_anchor is not None and high_tx - debit_anchor > 80:
+                credit_anchor = high_tx
+        if debit_anchor is None:
+            debit_anchor = ref_anchor + 210
+        if credit_anchor is None:
+            credit_anchor = debit_anchor + 160
+
+        desc_boundary = int((branch_anchor + desc_anchor) / 2)
+        ref_boundary = int((desc_anchor + ref_anchor) / 2)
+        debit_boundary = int((ref_anchor + debit_anchor) / 2)
+        credit_boundary = int((debit_anchor + credit_anchor) / 2)
+        balance_boundary = int((credit_anchor + balance_anchor) / 2)
+
+        rows: List[List[str]] = []
+        header = ["Txn Date", "Value Date", "Branch", "Description", "Reference", "Debit", "Credit", "Balance"]
+        if header_words:
+            rows.append(header)
+
+        current_data_row: Optional[List[str]] = None
+
+        def append_to_description(text: str) -> None:
+            if current_data_row is None:
+                return
+            if re.match(r'^\d{1,4}$', text):
+                return
+            if text and not re.search(r'SCANNED\s+BY|PAGE\s+\d+', text, re.IGNORECASE):
+                current_data_row[3] = f"{current_data_row[3]} {text}".strip()
+
+        for idx, row_words in enumerate(grouped_rows):
+            row_words = sorted(row_words, key=lambda w: w["left"])
+            texts = [word_text(w) for w in row_words]
+            date_positions = [i for i, text in enumerate(texts) if date_re.match(text)]
+
+            if not date_positions or date_positions[0] > 1:
+                if idx > (data_row_indices[0] if data_row_indices else 0):
+                    continuation = " ".join(texts).strip()
+                    append_to_description(continuation)
+                continue
+
+            row_cells = [""] * 8
+            used_positions = set()
+            row_cells[0] = texts[date_positions[0]]
+            used_positions.add(date_positions[0])
+            if len(date_positions) > 1:
+                row_cells[1] = texts[date_positions[1]]
+                used_positions.add(date_positions[1])
+
+            for pos, word in enumerate(row_words):
+                if pos in used_positions:
+                    continue
+                text = texts[pos]
+                if not text:
+                    continue
+                cx = word["left"] + word["width"] / 2.0
+                is_amount_piece = bool(
+                    amountish_re.search(text.replace(" ", ""))
+                    or amount_piece_re.match(text.replace(" ", ""))
+                )
+                if not row_cells[2] and cx < desc_boundary and re.match(r'^\d{3,5}$', text):
+                    row_cells[2] = text
+                elif cx >= balance_boundary and is_amount_piece:
+                    row_cells[7] = f"{row_cells[7]} {text}".strip()
+                elif cx >= credit_boundary and is_amount_piece:
+                    row_cells[6] = f"{row_cells[6]} {text}".strip()
+                elif cx >= debit_boundary and is_amount_piece:
+                    row_cells[5] = f"{row_cells[5]} {text}".strip()
+                elif cx >= ref_boundary:
+                    row_cells[4] = f"{row_cells[4]} {text}".strip()
+                else:
+                    row_cells[3] = f"{row_cells[3]} {text}".strip()
+
+            if any(cell.strip() for cell in row_cells):
+                self._repair_split_ocr_amount_cells(row_cells)
+                for amount_idx in (5, 6, 7):
+                    row_cells[amount_idx] = self._normalize_ocr_amount_cell(row_cells[amount_idx])
+                rows.append(row_cells)
+                current_data_row = row_cells
+
+        data_rows = rows[1:] if rows and rows[0] == header else rows
+        if len(data_rows) < 3:
+            return []
+
+        return rows
+
+    @staticmethod
+    def _repair_split_ocr_amount_cells(row_cells: List[str]) -> None:
+        # Balance can be split as "... 1,509,508." in reference and "40" in
+        # the balance column. Move the trailing amount prefix back to balance.
+        if re.match(r'^[0-9OoAaIl]{2}$', (row_cells[7] or "").strip()):
+            match = re.search(r'(\d{1,3}(?:,\d{2,3})+\.?)\s*$', row_cells[4] or "")
+            if match:
+                cents = row_cells[7].strip()
+                row_cells[7] = f"{match.group(1).rstrip('.')}.{cents}"
+                row_cells[4] = (row_cells[4] or "")[:match.start()].strip()
+
+        # Transaction amount can be split across adjacent debit/credit cells as
+        # "15,000" and "00". Keep it in the original transaction amount side.
+        if re.match(r'^\d{1,3}(?:,\d{2,3})+$', (row_cells[5] or "").strip()) and re.match(
+            r'^[0-9OoAaIl]{2}$', (row_cells[6] or "").strip()
+        ):
+            row_cells[5] = f"{row_cells[5].strip()}.{row_cells[6].strip()}"
+            row_cells[6] = ""
+        elif re.match(r'^\d{1,3}(?:,\d{2,3})+$', (row_cells[6] or "").strip()) and re.match(
+            r'^[0-9OoAaIl]{2}$', (row_cells[7] or "").strip()
+        ):
+            row_cells[6] = f"{row_cells[6].strip()}.{row_cells[7].strip()}"
+            row_cells[7] = ""
+
+    @staticmethod
+    def _normalize_ocr_amount_cell(text: str) -> str:
+        value = re.sub(r'\s+', ' ', (text or "").strip())
+        if not value:
+            return ""
+
+        value = re.sub(r'([.,])\s+(\d{1,2})\b', r'\1\2', value)
+
+        def clean_cents(match: re.Match) -> str:
+            cents = match.group(2).translate(str.maketrans({
+                "O": "0", "o": "0",
+                "I": "1", "l": "1",
+                "A": "8", "a": "8",
+            }))
+            return f"{match.group(1)}.{cents}"
+
+        value = re.sub(
+            r'^(\d{1,3}(?:,\d{2,3})+|\d+)\s+([0-9OoAaIl]{2})$',
+            clean_cents,
+            value,
+        )
+        if re.match(r'^\d{1,3}(?:,\d{2,3})+$', value):
+            value = f"{value}.00"
+        return value
+
     def _extract_table_from_image(
         self, img_pil, prev_col_xs: Optional[List[int]] = None
     ) -> Optional[List[List[str]]]:
@@ -3182,6 +3421,10 @@ class UniversalBankParser(BaseParser):
             gray = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
         except Exception:
             return None
+
+        statement_matrix = self._extract_statement_table_from_ocr_words(img_pil)
+        if statement_matrix and len(statement_matrix) >= 3:
+            return statement_matrix
 
         # Try bordered table first
         row_ys, col_xs = self._detect_table_grid(gray)
@@ -3300,6 +3543,203 @@ class UniversalBankParser(BaseParser):
 
         return blob_ratio >= 0.20 or (blob_ratio >= 0.10 and sparse_ratio >= 0.40)
 
+    @staticmethod
+    def _minor_to_float(value_minor: Optional[int]) -> Optional[float]:
+        if value_minor is None:
+            return None
+        return value_minor / 100.0
+
+    def _fallback_regex_parse_statement_rows(self, text: str, source_file: str) -> int:
+        """Parse OCR text rows with trailing amount/balance columns.
+
+        This path is intentionally table-shaped: it reads rows from the right
+        edge so long references and branch codes are not mistaken for money.
+        """
+        date_pattern = re.compile(
+            r'^('
+            r'\d{4}[/-]\d{2}[/-]\d{2}'
+            r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+            r'|\d{1,2}[\s-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s-]\d{2,4}'
+            r'|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}'
+            r')',
+            re.IGNORECASE,
+        )
+        money_pattern = re.compile(
+            r'(?<![A-Za-z0-9])'
+            r'\(?-?(?:[₹$£€]\s*)?(?:\d{1,3}(?:,\s*\d{2,3})+|\d+)[.,]\s*\d{2}\)?'
+            r'\s*(?:CR|DR)?'
+            r'(?![A-Za-z0-9])',
+            re.IGNORECASE,
+        )
+        skip_re = re.compile(
+            r'TXN\s*D(T|ATE)|VALUE\s*D(T|ATE)|DESCRIPTION|REFERENCE|DEBITS?|CREDITS?'
+            r'|BALANCE|STATEMENT\s+OF\s+ACCOUNT|ACCOUNT\s+NUMBER|PERIOD\s+(FROM|TO)'
+            r'|OPENING\s+BALANCE|CLOSING\s+BALANCE|TOTAL\s+(DEBIT|CREDIT)'
+            r'|SCANNED\s+BY|PAGE\s+\d+',
+            re.IGNORECASE,
+        )
+
+        def money_matches(line_text: str):
+            matches = []
+            for match in money_pattern.finditer(line_text):
+                value = parse_money_to_minor(match.group(0))
+                if value is not None:
+                    matches.append((match.start(), match.end(), match.group(0), abs(value)))
+            return matches
+
+        def classify_amount(
+            description: str,
+            amount_minor: Optional[int],
+            balance_minor: Optional[int],
+            previous_balance_minor: Optional[int],
+        ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+            if amount_minor is None and previous_balance_minor is not None and balance_minor is not None:
+                delta = balance_minor - previous_balance_minor
+                if delta != 0:
+                    amount_minor = abs(delta)
+
+            if amount_minor is None:
+                return None, None, None
+
+            if previous_balance_minor is not None and balance_minor is not None:
+                delta = balance_minor - previous_balance_minor
+                if delta > 0:
+                    return None, abs(amount_minor), amount_minor
+                if delta < 0:
+                    return abs(amount_minor), None, -abs(amount_minor)
+                return None, None, 0
+
+            desc_upper = (description or "").upper()
+            credit_markers = (
+                " CR", "CREDIT", "DEPOSIT", "RECEIVED", "INTEREST", "REFUND",
+                "SALARY", "BY TRANSFER", "CASH DEPOSIT", "NEFT :", "RTGS :",
+            )
+            debit_markers = (
+                " DR", "DEBIT", "WITHDRAW", "PAYMENT", "PURCHASE", "CHARGE",
+                "FEE", "ATM", "TO CLG", "IMPS DR", "NEFT DR", "UPI DR",
+            )
+            if any(marker in desc_upper for marker in credit_markers) and not any(
+                marker in desc_upper for marker in debit_markers
+            ):
+                return None, abs(amount_minor), amount_minor
+            return abs(amount_minor), None, -abs(amount_minor)
+
+        def extract_reference(description: str) -> str:
+            patterns = [
+                r'\b(?:IMPS|UPI|NEFT|RTGS)[\s:/-]*(?:CR|DR)?[\s:/-]*([A-Z0-9]{10,24})\b',
+                r'\b(?:UTR|REF|TXN|TRANS(?:ACTION)?)[:\s#-]*([A-Z0-9]{8,24})\b',
+                r'\b([A-Z]{2,5}\d{8,20})\b',
+                r'\b(\d{10,18})\b',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, description or "", re.IGNORECASE)
+                if match:
+                    return match.group(1)
+            return ""
+
+        transactions: List[Dict[str, Any]] = []
+        raw_rows: List[List[Any]] = []
+        current_tx: Optional[Dict[str, Any]] = None
+        previous_balance_minor: Optional[int] = None
+
+        text = re.sub(r'(\d),\s+(\d)', r'\1,\2', text or "")
+        lines = text.splitlines()
+
+        def commit_current() -> None:
+            nonlocal current_tx
+            if not current_tx:
+                return
+            if current_tx.get("balance_minor") is None and current_tx.get("amount_minor") is None:
+                current_tx = None
+                return
+            description = self._clean_description(current_tx.get("description") or "")
+            std_tx = self.create_transaction_dict(
+                date=current_tx["date"],
+                description=description[:500],
+                reference=current_tx.get("reference") or "",
+                withdrawal_amt=self._minor_to_float(current_tx.get("withdrawal_minor")),
+                deposit_amt=self._minor_to_float(current_tx.get("deposit_minor")),
+                balance_amt=self._minor_to_float(current_tx.get("balance_minor")),
+                source_file=source_file,
+                line_ref=current_tx.get("line_num"),
+            )
+            transactions.append(std_tx)
+            raw_rows.append([
+                current_tx["date"],
+                description,
+                current_tx.get("reference") or "",
+                self._minor_to_float(current_tx.get("withdrawal_minor")) or "",
+                self._minor_to_float(current_tx.get("deposit_minor")) or "",
+                self._minor_to_float(current_tx.get("balance_minor")) or "",
+            ])
+            current_tx = None
+
+        for line_num, original_line in enumerate(lines, start=1):
+            line = re.sub(r'\s+', ' ', (original_line or "").strip())
+            if not line or len(line) < 5:
+                continue
+
+            date_match = date_pattern.match(line)
+            if not date_match:
+                if current_tx and not skip_re.search(line) and not re.match(r'^[\d,.\s]+$', line):
+                    current_tx["description"] = f"{current_tx.get('description', '')} {line}".strip()
+                continue
+
+            commit_current()
+
+            txn_date = date_match.group(1)
+            rest = line[date_match.end():].strip()
+            value_date_match = date_pattern.match(rest)
+            if value_date_match:
+                rest = rest[value_date_match.end():].strip()
+            rest = re.sub(r'^\d{3,5}\b\s*', '', rest)
+
+            matches = money_matches(rest)
+            balance_minor: Optional[int] = None
+            amount_minor: Optional[int] = None
+            amount_start = len(rest)
+            if matches:
+                balance_minor = matches[-1][3]
+                amount_start = matches[-1][0]
+                if len(matches) >= 2:
+                    amount_minor = matches[-2][3]
+                    amount_start = matches[-2][0]
+
+            description = rest[:amount_start].strip(" -")
+            reference = extract_reference(description)
+            withdrawal_minor, deposit_minor, signed_amount_minor = classify_amount(
+                description,
+                amount_minor,
+                balance_minor,
+                previous_balance_minor,
+            )
+
+            current_tx = {
+                "date": txn_date,
+                "description": description,
+                "reference": reference,
+                "withdrawal_minor": withdrawal_minor,
+                "deposit_minor": deposit_minor,
+                "amount_minor": signed_amount_minor,
+                "balance_minor": balance_minor,
+                "line_num": line_num,
+            }
+            if balance_minor is not None:
+                previous_balance_minor = balance_minor
+
+        commit_current()
+
+        if len(transactions) < 3:
+            return 0
+
+        self.transactions.extend(transactions)
+        self.raw_table = {
+            "columns": ["Date", "Description", "Reference", "Debit", "Credit", "Balance"],
+            "rows": raw_rows,
+        }
+        logger.info("Parsed %d transactions from OCR table rows", len(transactions))
+        return len(transactions)
+
     def _fallback_regex_parse(
         self, 
         text: str, 
@@ -3312,6 +3752,10 @@ class UniversalBankParser(BaseParser):
         """
         import re
         
+        parsed_rows = self._fallback_regex_parse_statement_rows(text, source_file)
+        if parsed_rows:
+            return
+
         logger.info("Using structured OCR parsing...")
         
         # Pre-process text to fix common OCR issues with number formats
