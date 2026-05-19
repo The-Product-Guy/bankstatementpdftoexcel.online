@@ -228,6 +228,7 @@ def check_conversion_quota(user_id, guest_id):
         return True, None
     try:
         monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
+        month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         with get_db_session() as db:
             if user_id:
                 user = db.query(User).filter_by(id=user_id).first()
@@ -241,7 +242,17 @@ def check_conversion_quota(user_id, guest_id):
 
                 if plan_status in ('active', 'past_due', 'free'):
                     counter = get_usage_counter(db, user_id=user_id, guest_id=None, scope=monthly_scope)
-                    used = counter.conversions_count if counter else 0
+                    counter_count = counter.conversions_count if counter else 0
+                    completed_job_count = (
+                        db.query(Job)
+                        .filter(
+                            Job.user_id == user_id,
+                            Job.created_at >= month_start,
+                            Job.status.like('completed%'),
+                        )
+                        .count()
+                    )
+                    used = max(counter_count, completed_job_count)
                     limit = monthly_limit if monthly_limit is not None else PLAN_CONFIG['free']['monthly_conversions']
                     if used >= limit:
                         return False, {
@@ -250,7 +261,16 @@ def check_conversion_quota(user_id, guest_id):
                         }
             else:
                 counter = get_usage_counter(db, user_id=None, guest_id=guest_id, scope='lifetime')
-                used = counter.conversions_count if counter else 0
+                counter_count = counter.conversions_count if counter else 0
+                completed_job_count = (
+                    db.query(Job)
+                    .filter(
+                        Job.guest_id == guest_id,
+                        Job.status.like('completed%'),
+                    )
+                    .count()
+                )
+                used = max(counter_count, completed_job_count)
                 if used >= GUEST_CONVERSION_LIMIT:
                     return False, {
                         'error': 'You have used your free conversion. Sign in to get more.',

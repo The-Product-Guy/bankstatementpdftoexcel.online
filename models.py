@@ -77,6 +77,23 @@ class SiteVisit(Base):
     user_agent = Column(String)
 
 
+class FunnelEvent(Base):
+    __tablename__ = "funnel_events"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    visitor_id = Column(String, index=True)
+    user_id = Column(String, ForeignKey("users.id"), index=True)
+    guest_id = Column(String, index=True)
+    job_id = Column(String, ForeignKey("jobs.id"), index=True)
+    email = Column(String, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    path = Column(String)
+    extra = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    ip = Column(String)
+    user_agent = Column(String)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

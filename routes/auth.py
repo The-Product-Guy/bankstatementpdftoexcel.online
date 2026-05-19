@@ -11,6 +11,26 @@ from models import AuthToken, Job, LoginEvent, User, UsageCounter
 auth_bp = Blueprint('auth', __name__)
 
 
+def _record_auth_funnel_event(event_type: str, email: str = "", extra: str = "") -> None:
+    try:
+        from app import get_client_ip
+        from tracking import record_funnel_event
+
+        record_funnel_event(
+            event_type=event_type,
+            visitor_id=request.cookies.get('sf_visitor_id'),
+            user_id=session.get('user_id'),
+            guest_id=session.get('guest_id'),
+            email=email,
+            path=request.path,
+            extra=extra,
+            ip=get_client_ip(),
+            user_agent=request.headers.get('User-Agent', ''),
+        )
+    except Exception:
+        pass
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
@@ -92,6 +112,7 @@ def send_magic_link_email(email: str, link: str) -> None:
 
 @auth_bp.route('/signin')
 def signin():
+    _record_auth_funnel_event('signin_page_view')
     return render_template('signin.html')
 
 
@@ -100,8 +121,10 @@ def auth_start():
     from app import ADMIN_EMAILS, MAGIC_LINK_EXP_MINUTES, get_client_ip, is_ajax_request, rate_limited
 
     email = (request.form.get('email') or '').strip().lower()
+    _record_auth_funnel_event('auth_submit_attempt', email=email)
     csrf_token = request.form.get('csrf_token')
     if not csrf_token or csrf_token != session.get('csrf_token'):
+        _record_auth_funnel_event('auth_submit_invalid_csrf', email=email)
         message = 'Invalid request token. Please refresh and try again.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 400
@@ -109,6 +132,7 @@ def auth_start():
         return redirect(url_for('auth.signin'))
 
     if not email or '@' not in email:
+        _record_auth_funnel_event('auth_submit_invalid_email', email=email)
         message = 'Please enter a valid email address.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 400
@@ -116,6 +140,7 @@ def auth_start():
         return redirect(url_for('auth.signin'))
 
     if rate_limited(f"rate:auth_start:{get_client_ip()}:{email}", 5, 900):
+        _record_auth_funnel_event('auth_submit_rate_limited', email=email)
         message = 'Too many sign-in attempts. Please try again later.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 429
@@ -154,6 +179,7 @@ def auth_start():
 
         link = url_for('auth.auth_verify', token=token, _external=True)
         send_magic_link_email(email, link)
+        _record_auth_funnel_event('magic_link_sent', email=email)
 
         message = 'Check your email for your sign-in link.'
         if is_ajax_request():
@@ -161,6 +187,7 @@ def auth_start():
         flash(message, 'success')
         return redirect(url_for('auth.signin'))
     except Exception as e:
+        _record_auth_funnel_event('magic_link_failed', email=email, extra=str(e)[:500])
         message = f'Unable to send magic link: {str(e)}'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 500
@@ -174,6 +201,7 @@ def auth_verify():
 
     token = request.args.get('token', '')
     if not token:
+        _record_auth_funnel_event('login_failed', extra='missing_token')
         flash('Invalid or expired sign-in link.', 'error')
         return redirect(url_for('auth.signin'))
 
@@ -182,11 +210,13 @@ def auth_verify():
         with get_db_session() as db:
             auth_token = db.query(AuthToken).filter_by(token_hash=token_hash).first()
             if not auth_token or auth_token.used_at is not None or auth_token.expires_at < datetime.utcnow():
+                _record_auth_funnel_event('login_failed', extra='invalid_or_expired_token')
                 flash('Invalid or expired sign-in link.', 'error')
                 return redirect(url_for('auth.signin'))
 
             user = db.query(User).filter_by(id=auth_token.user_id).first()
             if not user or not user.is_active:
+                _record_auth_funnel_event('login_failed', extra='inactive_user')
                 flash('Account not available.', 'error')
                 return redirect(url_for('auth.signin'))
 
@@ -207,9 +237,11 @@ def auth_verify():
             session['plan_status'] = user.plan_status
             session['plan_id'] = user.plan_id
 
+        _record_auth_funnel_event('login_success', email=session.get('user_email', ''))
         flash('Signed in successfully.', 'success')
         return redirect(url_for('converter.dashboard'))
     except Exception:
+        _record_auth_funnel_event('login_failed', extra='exception')
         flash('Unable to verify sign-in link. Please try again.', 'error')
         return redirect(url_for('auth.signin'))
 
@@ -232,13 +264,24 @@ def account():
     monthly_limit = plan['monthly_conversions']
 
     monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     used_this_month = 0
     recent_jobs = []
 
     try:
         with get_db_session() as db:
             counter = get_usage_counter(db, user_id=user_id, guest_id=None, scope=monthly_scope)
-            used_this_month = counter.conversions_count if counter else 0
+            counter_count = counter.conversions_count if counter else 0
+            completed_job_count = (
+                db.query(Job)
+                .filter(
+                    Job.user_id == user_id,
+                    Job.created_at >= month_start,
+                    Job.status.like('completed%'),
+                )
+                .count()
+            )
+            used_this_month = max(counter_count, completed_job_count)
             recent_jobs = (
                 db.query(Job)
                 .filter_by(user_id=user_id)

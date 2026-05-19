@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from db import get_db_session
-from models import LoginEvent, SiteVisit
+from models import FunnelEvent, LoginEvent, SiteVisit
 
 
 VISITOR_COOKIE = "sf_visitor_id"
@@ -75,9 +75,37 @@ def record_page_view(
         ))
 
 
+def record_funnel_event(
+    *,
+    event_type: str,
+    visitor_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    guest_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    email: Optional[str] = None,
+    path: Optional[str] = None,
+    extra: Optional[str] = None,
+    ip: str = "",
+    user_agent: str = "",
+) -> None:
+    with get_db_session() as db:
+        db.add(FunnelEvent(
+            visitor_id=visitor_id,
+            user_id=user_id,
+            guest_id=guest_id,
+            job_id=job_id,
+            email=(email or "")[:255] if email else None,
+            event_type=event_type[:128],
+            path=(path or "")[:512],
+            extra=(extra or "")[:2000] if extra else None,
+            ip=(ip or "")[:128],
+            user_agent=(user_agent or "")[:512],
+        ))
+
+
 def cleanup_tracking_logs(retention_days: int) -> dict:
     if retention_days <= 0:
-        return {"site_visits": 0, "login_events": 0}
+        return {"site_visits": 0, "login_events": 0, "funnel_events": 0}
 
     cutoff = datetime.utcnow() - timedelta(days=retention_days)
     with get_db_session() as db:
@@ -91,4 +119,13 @@ def cleanup_tracking_logs(retention_days: int) -> dict:
             .filter(LoginEvent.created_at < cutoff)
             .delete(synchronize_session=False)
         )
-    return {"site_visits": site_deleted, "login_events": login_deleted}
+        funnel_deleted = (
+            db.query(FunnelEvent)
+            .filter(FunnelEvent.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+    return {
+        "site_visits": site_deleted,
+        "login_events": login_deleted,
+        "funnel_events": funnel_deleted,
+    }

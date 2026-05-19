@@ -6,6 +6,7 @@ Run with: python -m pytest tests/test_routes.py -v
 import os
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -103,6 +104,27 @@ class TestPublicRoutes:
         resp = client.get("/index")
         assert resp.status_code == 302
 
+    def test_track_event_records_allowed_funnel_event(self, client):
+        from db import get_db_session, init_db
+        from models import FunnelEvent
+
+        init_db()
+        resp = client.post("/track/event", json={
+            "event_type": "home_primary_cta_click",
+            "path": "/",
+        })
+
+        assert resp.status_code == 200
+        with get_db_session() as db:
+            event = (
+                db.query(FunnelEvent)
+                .filter_by(event_type="home_primary_cta_click", path="/")
+                .order_by(FunnelEvent.created_at.desc())
+                .first()
+            )
+            assert event is not None
+            db.delete(event)
+
 
 class TestAuthRoutes:
     """Test auth flow without actually sending emails."""
@@ -151,6 +173,45 @@ class TestProtectedRoutes:
     def test_account_requires_login(self, client):
         resp = client.get("/account")
         assert resp.status_code == 302  # redirect to signin
+
+    def test_account_usage_falls_back_to_completed_jobs(self, client):
+        from db import get_db_session, init_db
+        from models import Job, User
+
+        suffix = uuid.uuid4().hex
+        email = f"usage-{suffix}@example.com"
+        job_id = f"usage-job-{suffix}"
+        init_db()
+        with get_db_session() as db:
+            user = User(email=email)
+            db.add(user)
+            db.flush()
+            user_id = user.id
+            db.add(Job(
+                id=job_id,
+                user_id=user_id,
+                filename="statement.pdf",
+                status="completed",
+                created_at=datetime.utcnow(),
+            ))
+
+        try:
+            with client.session_transaction() as sess:
+                sess["user_id"] = user_id
+                sess["user_email"] = email
+                sess["plan_id"] = "free"
+                sess["plan_status"] = "free"
+            resp = client.get("/account")
+            assert resp.status_code == 200
+            assert b"1 / 5 conversions used" in resp.data
+        finally:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+                user = db.get(User, user_id)
+                if user:
+                    db.delete(user)
 
     def test_admin_requires_admin(self, client):
         resp = client.get("/admin")

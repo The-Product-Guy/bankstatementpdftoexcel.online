@@ -15,6 +15,7 @@
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_login_events') }}">Export Logins</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_site_visits') }}">Export Visits</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_daily_analytics', days=analytics_days) }}">Export Daily Analytics</a>
+        <a class="btn-secondary" href="{{ url_for('pages.admin_export_funnel_events', days=analytics_days) }}">Export Funnel</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_feedback', days=analytics_days) }}">Export Feedback</a>
         <form class="admin-range-form" action="{{ url_for('pages.admin_dashboard') }}" method="get">
             <label for="admin-days">Range</label>
@@ -29,55 +30,67 @@
     <div class="admin-stats">
         <div class="stat-card">
             <h3>{{ stats.users }}</h3>
-            <p>Users</p>
+            <p>Total Users</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.jobs }}</h3>
-            <p>Total Jobs</p>
+            <h3>{{ stats.range_users }}</h3>
+            <p>New Users {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.completed }}</h3>
-            <p>Completed</p>
+            <h3>{{ stats.range_unique_visitors }}</h3>
+            <p>Visitors {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.unique_visitors_24h }}</h3>
-            <p>Visitors 24h</p>
+            <h3>{{ stats.range_page_views }}</h3>
+            <p>Views {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.page_views_24h }}</h3>
-            <p>Views 24h</p>
+            <h3>{{ stats.range_cta_clicks }}</h3>
+            <p>CTA Clicks {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.unique_visitors_7d }}</h3>
-            <p>Visitors 7d</p>
+            <h3>{{ stats.range_signin_visits }}</h3>
+            <p>Signin Visits {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.page_views_7d }}</h3>
-            <p>Views 7d</p>
+            <h3>{{ stats.range_auth_attempts }}</h3>
+            <p>Email Submits {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.logins_24h }}</h3>
-            <p>Logins 24h</p>
+            <h3>{{ stats.range_magic_links }}</h3>
+            <p>Links {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.logins_7d }}</h3>
-            <p>Logins 7d</p>
+            <h3>{{ stats.range_magic_link_failures }}</h3>
+            <p>Link Failures {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.magic_links_7d }}</h3>
-            <p>Links 7d</p>
+            <h3>{{ stats.range_logins }}</h3>
+            <p>Logins {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.login_conversion_7d }}%</h3>
-            <p>Login Rate 7d</p>
+            <h3>{{ stats.range_login_conversion }}%</h3>
+            <p>Login Rate {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.feedback_24h }}</h3>
-            <p>Feedback 24h</p>
+            <h3>{{ stats.range_dashboard_visits }}</h3>
+            <p>Dashboard Visits {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
-            <h3>{{ stats.feedback_7d }}</h3>
-            <p>Feedback 7d</p>
+            <h3>{{ stats.range_conversion_starts }}</h3>
+            <p>Conversion Starts {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_conversion_completions }}</h3>
+            <p>Conversions Done {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_jobs }}</h3>
+            <p>Jobs {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_feedback }}</h3>
+            <p>Feedback {{ analytics_days }}d</p>
         </div>
     </div>
 
@@ -212,6 +225,43 @@
                         </tr>
                         {% else %}
                         <tr><td colspan="7">No feedback submitted yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="account-card account-card-full">
+        <div class="account-card-header">
+            <h2>Recent Funnel Events</h2>
+            <span class="muted">CTA, auth, dashboard, and conversion events</span>
+        </div>
+        <div class="account-card-body">
+            <div class="jobs-table-wrap">
+                <table class="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Event</th>
+                            <th>Email</th>
+                            <th>Path</th>
+                            <th>Job</th>
+                            <th>IP</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in recent_funnel_events %}
+                        <tr>
+                            <td>{{ event.event_type }}</td>
+                            <td>{{ event.email }}</td>
+                            <td>{{ event.path }}</td>
+                            <td style="font-family:monospace;font-size:12px;">{{ event.job_id[:12] ~ '...' if event.job_id else '-' }}</td>
+                            <td>{{ event.ip }}</td>
+                            <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M') if event.created_at else '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6">No funnel events recorded yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

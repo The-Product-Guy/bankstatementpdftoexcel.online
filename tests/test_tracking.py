@@ -77,7 +77,7 @@ def test_auth_verify_logs_successful_login():
 def test_admin_dashboard_shows_visit_and_login_metrics():
     from app import app
     from db import get_db_session, init_db
-    from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
+    from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
 
     suffix = uuid.uuid4().hex
     email = f"admin-{suffix}@example.com"
@@ -111,6 +111,12 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
             extraction_cols=6,
             quality_used="standard",
         ))
+        db.add(FunnelEvent(
+            user_id=user_id,
+            event_type="home_primary_cta_click",
+            path="/",
+            email=email,
+        ))
 
     app.config["TESTING"] = True
     with app.test_client() as client:
@@ -120,9 +126,11 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
         resp = client.get("/admin")
 
     assert resp.status_code == 200
-    assert b"Visitors 24h" in resp.data
+    assert b"Visitors 30d" in resp.data
     assert b"Daily Analytics" in resp.data
-    assert b"Login Rate 7d" in resp.data
+    assert b"Login Rate 30d" in resp.data
+    assert b"Recent Funnel Events" in resp.data
+    assert b"home_primary_cta_click" in resp.data
     assert b"Recent Users" in resp.data
     assert b"Login Events" in resp.data
     assert b"Recent Feedback" in resp.data
@@ -133,7 +141,7 @@ def test_admin_dashboard_shows_visit_and_login_metrics():
 def test_admin_exports_users_logins_and_visits():
     from app import app
     from db import get_db_session, init_db
-    from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
+    from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
 
     suffix = uuid.uuid4().hex
     email = f"export-admin-{suffix}@example.com"
@@ -161,6 +169,12 @@ def test_admin_exports_users_logins_and_visits():
             extraction_cols=5,
             quality_used="high",
         ))
+        db.add(FunnelEvent(
+            user_id=user_id,
+            event_type="auth_submit_attempt",
+            path="/auth/start",
+            email=email,
+        ))
 
     app.config["TESTING"] = True
     with app.test_client() as client:
@@ -171,27 +185,32 @@ def test_admin_exports_users_logins_and_visits():
         logins_resp = client.get("/admin/export/login-events.csv")
         visits_resp = client.get("/admin/export/site-visits.csv")
         daily_resp = client.get("/admin/export/analytics-daily.csv?days=7")
+        funnel_resp = client.get("/admin/export/funnel-events.csv?days=7")
         feedback_resp = client.get("/admin/export/feedback.csv?days=7")
 
     assert users_resp.status_code == 200
     assert logins_resp.status_code == 200
     assert visits_resp.status_code == 200
     assert daily_resp.status_code == 200
+    assert funnel_resp.status_code == 200
     assert feedback_resp.status_code == 200
     assert users_resp.mimetype == "text/csv"
     assert daily_resp.mimetype == "text/csv"
+    assert funnel_resp.mimetype == "text/csv"
     assert feedback_resp.mimetype == "text/csv"
     assert email.encode("utf-8") in users_resp.data
     assert email.encode("utf-8") in logins_resp.data
     assert b"/blogs" in visits_resp.data
     assert b"date_utc,unique_visitors,page_views,magic_link_requests,login_successes" in daily_resp.data
+    assert b"event_type" in funnel_resp.data
+    assert b"auth_submit_attempt" in funnel_resp.data
     assert b"feedback_type" in feedback_resp.data
     assert b"Columns shifted" in feedback_resp.data
 
 
 def test_tracking_cleanup_deletes_old_rows_only():
     from db import get_db_session, init_db
-    from models import LoginEvent, SiteVisit
+    from models import FunnelEvent, LoginEvent, SiteVisit
     from tracking import cleanup_tracking_logs
 
     old_visitor_id = str(uuid.uuid4())
@@ -212,10 +231,16 @@ def test_tracking_cleanup_deletes_old_rows_only():
             created_at=datetime.utcnow() - timedelta(days=400),
         ))
         db.add(LoginEvent(email=fresh_email, event_type="login_success"))
+        db.add(FunnelEvent(
+            visitor_id=old_visitor_id,
+            event_type="home_primary_cta_click",
+            created_at=datetime.utcnow() - timedelta(days=400),
+        ))
+        db.add(FunnelEvent(visitor_id=fresh_visitor_id, event_type="signin_page_view"))
 
     deleted = cleanup_tracking_logs(retention_days=180)
 
-    assert deleted == {"site_visits": 1, "login_events": 1}
+    assert deleted == {"site_visits": 1, "login_events": 1, "funnel_events": 1}
     with get_db_session() as db:
         assert db.query(SiteVisit).filter_by(visitor_id=old_visitor_id).first() is None
         assert db.query(SiteVisit).filter_by(visitor_id=fresh_visitor_id).first() is not None

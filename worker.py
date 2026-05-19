@@ -28,7 +28,7 @@ from parsers.universal_parser import create_universal_parser, UnsupportedLanguag
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
-from models import Job, UsageCounter
+from models import FunnelEvent, Job, UsageCounter
 import logging
 import pandas as pd
 
@@ -261,6 +261,23 @@ def _increment_usage(job_id):
                 counter.updated_at = datetime.utcnow()
     except Exception as e:
         logger.warning(f"DB usage update failed for {job_id}: {e}")
+
+
+def _record_worker_funnel_event(job_id: str, event_type: str, extra: str = "") -> None:
+    try:
+        with get_db_session() as db:
+            job = db.get(Job, job_id)
+            db.add(FunnelEvent(
+                user_id=job.user_id if job else None,
+                guest_id=job.guest_id if job else None,
+                job_id=job_id,
+                event_type=event_type,
+                path='worker',
+                extra=extra[:2000] if extra else None,
+            ))
+    except Exception as e:
+        logger.warning(f"DB funnel event update failed for {job_id}: {e}")
+
 
 def update_progress(job_id, current, total, status_message, percent_override=None, extra=None):
     """Publish progress update to Redis channel"""
@@ -831,6 +848,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             transaction_count=len(transactions)
         )
         _increment_usage(job_id)
+        _record_worker_funnel_event(job_id, 'conversion_completed', extra=status_msg)
 
         return {
             'status': 'success',
@@ -852,9 +870,11 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         if isinstance(e, UnsupportedLanguageError):
             _update_job(job_id, status="unsupported_language", finished_at=datetime.utcnow(), error=str(e))
             update_progress(job_id, 0, 0, f"Unsupported language: {str(e)}")
+            _record_worker_funnel_event(job_id, 'conversion_failed', extra=f"unsupported_language: {str(e)}")
         else:
             _update_job(job_id, status="failed", finished_at=datetime.utcnow(), error=str(e))
             update_progress(job_id, 0, 0, f"Error: {str(e)}")
+            _record_worker_funnel_event(job_id, 'conversion_failed', extra=str(e))
         return {
             'status': 'error',
             'job_id': job_id,

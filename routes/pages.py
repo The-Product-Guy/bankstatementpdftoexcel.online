@@ -10,8 +10,9 @@ from flask import Blueprint, Response, flash, jsonify, redirect, render_template
 from sqlalchemy import distinct, func
 
 from db import get_db_session
-from models import FeedbackSubmission, Job, LoginEvent, SiteVisit, User
+from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
 from parsers.universal_parser import UniversalBankParser
+from tracking import record_funnel_event
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,19 @@ def _admin_daily_metrics(db, days: int) -> list:
     return list(metrics_by_day.values())
 
 
+def _admin_count_funnel_events(db, cutoff: datetime, event_types) -> int:
+    if isinstance(event_types, str):
+        event_types = (event_types,)
+    return (
+        db.query(FunnelEvent)
+        .filter(
+            FunnelEvent.created_at >= cutoff,
+            FunnelEvent.event_type.in_(tuple(event_types)),
+        )
+        .count()
+    )
+
+
 def _require_admin():
     from app import is_admin_user
     return is_admin_user()
@@ -228,6 +242,41 @@ def home():
     cleanup_expired_s3_results()
     cleanup_first_party_analytics()
     return render_template('home.html')
+
+
+@pages_bp.route('/track/event', methods=['POST'])
+def track_event():
+    from app import get_client_ip, rate_limited
+
+    allowed_events = {
+        'home_primary_cta_click',
+        'home_secondary_cta_click',
+        'home_footer_cta_click',
+        'nav_signin_click',
+        'pricing_cta_click',
+    }
+    client_ip = get_client_ip()
+    if rate_limited(f"rate:track:{client_ip}", 120, 3600):
+        return jsonify({'status': 'error'}), 429
+
+    payload = request.get_json(silent=True) or request.form
+    event_type = (payload.get('event_type') or '').strip()
+    if event_type not in allowed_events:
+        return jsonify({'status': 'ignored'}), 202
+
+    try:
+        record_funnel_event(
+            event_type=event_type,
+            visitor_id=request.cookies.get('sf_visitor_id'),
+            user_id=session.get('user_id'),
+            guest_id=session.get('guest_id'),
+            path=(payload.get('path') or request.referrer or request.path),
+            ip=client_ip,
+            user_agent=request.headers.get('User-Agent', ''),
+        )
+    except Exception:
+        logger.warning("Unable to record funnel event", exc_info=True)
+    return jsonify({'status': 'ok'}), 200
 
 
 @pages_bp.route('/index')
@@ -301,10 +350,28 @@ def admin_dashboard():
         'login_conversion_7d': 0,
         'feedback_24h': 0,
         'feedback_7d': 0,
+        'range_days': 0,
+        'range_users': 0,
+        'range_jobs': 0,
+        'range_completed': 0,
+        'range_page_views': 0,
+        'range_unique_visitors': 0,
+        'range_signin_visits': 0,
+        'range_cta_clicks': 0,
+        'range_auth_attempts': 0,
+        'range_magic_links': 0,
+        'range_magic_link_failures': 0,
+        'range_logins': 0,
+        'range_login_conversion': 0,
+        'range_dashboard_visits': 0,
+        'range_conversion_starts': 0,
+        'range_conversion_completions': 0,
+        'range_feedback': 0,
     }
     daily_metrics = []
     recent_jobs = []
     recent_feedback = []
+    recent_funnel_events = []
     recent_logins = []
     recent_users = []
     top_paths = []
@@ -314,17 +381,34 @@ def admin_dashboard():
             day_ago = now - timedelta(days=1)
             week_ago = now - timedelta(days=7)
             analytics_cutoff = now - timedelta(days=analytics_days)
+            stats['range_days'] = analytics_days
             stats['users'] = db.query(User).count()
             stats['jobs'] = db.query(Job).count()
             stats['completed'] = db.query(Job).filter(Job.status.like('completed%')).count()
+            stats['range_users'] = db.query(User).filter(User.created_at >= analytics_cutoff).count()
+            stats['range_jobs'] = db.query(Job).filter(Job.created_at >= analytics_cutoff).count()
+            stats['range_completed'] = db.query(Job).filter(
+                Job.created_at >= analytics_cutoff,
+                Job.status.like('completed%'),
+            ).count()
             stats['feedback_24h'] = db.query(FeedbackSubmission).filter(
                 FeedbackSubmission.created_at >= day_ago,
             ).count()
             stats['feedback_7d'] = db.query(FeedbackSubmission).filter(
                 FeedbackSubmission.created_at >= week_ago,
             ).count()
+            stats['range_feedback'] = db.query(FeedbackSubmission).filter(
+                FeedbackSubmission.created_at >= analytics_cutoff,
+            ).count()
             stats['page_views_24h'] = db.query(SiteVisit).filter(SiteVisit.created_at >= day_ago).count()
             stats['page_views_7d'] = db.query(SiteVisit).filter(SiteVisit.created_at >= week_ago).count()
+            stats['range_page_views'] = db.query(SiteVisit).filter(
+                SiteVisit.created_at >= analytics_cutoff,
+            ).count()
+            stats['range_signin_visits'] = db.query(SiteVisit).filter(
+                SiteVisit.created_at >= analytics_cutoff,
+                SiteVisit.path == '/signin',
+            ).count()
             stats['unique_visitors_24h'] = (
                 db.query(func.count(distinct(SiteVisit.visitor_id)))
                 .filter(SiteVisit.created_at >= day_ago)
@@ -337,6 +421,12 @@ def admin_dashboard():
                 .scalar()
                 or 0
             )
+            stats['range_unique_visitors'] = (
+                db.query(func.count(distinct(SiteVisit.visitor_id)))
+                .filter(SiteVisit.created_at >= analytics_cutoff)
+                .scalar()
+                or 0
+            )
             stats['logins_24h'] = db.query(LoginEvent).filter(
                 LoginEvent.event_type == 'login_success',
                 LoginEvent.created_at >= day_ago,
@@ -344,6 +434,10 @@ def admin_dashboard():
             stats['logins_7d'] = db.query(LoginEvent).filter(
                 LoginEvent.event_type == 'login_success',
                 LoginEvent.created_at >= week_ago,
+            ).count()
+            stats['range_logins'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'login_success',
+                LoginEvent.created_at >= analytics_cutoff,
             ).count()
             stats['magic_links_24h'] = db.query(LoginEvent).filter(
                 LoginEvent.event_type == 'magic_link_requested',
@@ -353,9 +447,34 @@ def admin_dashboard():
                 LoginEvent.event_type == 'magic_link_requested',
                 LoginEvent.created_at >= week_ago,
             ).count()
+            stats['range_magic_links'] = db.query(LoginEvent).filter(
+                LoginEvent.event_type == 'magic_link_requested',
+                LoginEvent.created_at >= analytics_cutoff,
+            ).count()
+            stats['range_cta_clicks'] = _admin_count_funnel_events(
+                db,
+                analytics_cutoff,
+                (
+                    'home_primary_cta_click',
+                    'home_secondary_cta_click',
+                    'home_footer_cta_click',
+                    'nav_signin_click',
+                    'pricing_cta_click',
+                ),
+            )
+            stats['range_auth_attempts'] = _admin_count_funnel_events(db, analytics_cutoff, 'auth_submit_attempt')
+            stats['range_magic_link_failures'] = _admin_count_funnel_events(db, analytics_cutoff, 'magic_link_failed')
+            stats['range_dashboard_visits'] = _admin_count_funnel_events(db, analytics_cutoff, 'dashboard_visit')
+            stats['range_conversion_starts'] = _admin_count_funnel_events(db, analytics_cutoff, 'conversion_start')
+            stats['range_conversion_completions'] = _admin_count_funnel_events(db, analytics_cutoff, 'conversion_completed')
             if stats['magic_links_7d']:
                 stats['login_conversion_7d'] = round(
                     stats['logins_7d'] / stats['magic_links_7d'] * 100,
+                    1,
+                )
+            if stats['range_magic_links']:
+                stats['range_login_conversion'] = round(
+                    stats['range_logins'] / stats['range_magic_links'] * 100,
                     1,
                 )
             recent_user_rows = (
@@ -431,6 +550,23 @@ def admin_dashboard():
                 }
                 for event in recent_login_rows
             ]
+            recent_funnel_rows = (
+                db.query(FunnelEvent)
+                .order_by(FunnelEvent.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            recent_funnel_events = [
+                {
+                    'event_type': event.event_type,
+                    'email': event.email or '-',
+                    'path': event.path or '-',
+                    'job_id': event.job_id or '',
+                    'created_at': event.created_at,
+                    'ip': event.ip or '-',
+                }
+                for event in recent_funnel_rows
+            ]
             top_paths = [
                 {'path': path, 'views': views}
                 for path, views in (
@@ -451,6 +587,7 @@ def admin_dashboard():
         stats=stats,
         recent_jobs=recent_jobs,
         recent_feedback=recent_feedback,
+        recent_funnel_events=recent_funnel_events,
         recent_logins=recent_logins,
         recent_users=recent_users,
         top_paths=top_paths,
@@ -551,6 +688,47 @@ def admin_export_site_visits():
     return _admin_csv_response(
         'site-visits.csv',
         ['id', 'visitor_id', 'user_id', 'path', 'referrer', 'ip', 'user_agent', 'created_at'],
+        rows,
+    )
+
+
+@pages_bp.route('/admin/export/funnel-events.csv')
+def admin_export_funnel_events():
+    if not _require_admin():
+        return "Not found", 404
+
+    cutoff = datetime.utcnow() - timedelta(days=_admin_days_param())
+    with get_db_session() as db:
+        events = (
+            db.query(FunnelEvent)
+            .filter(FunnelEvent.created_at >= cutoff)
+            .order_by(FunnelEvent.created_at.desc())
+            .limit(10000)
+            .all()
+        )
+        rows = [
+            [
+                event.id,
+                event.visitor_id or '',
+                event.user_id or '',
+                event.guest_id or '',
+                event.job_id or '',
+                event.email or '',
+                event.event_type,
+                event.path or '',
+                event.extra or '',
+                event.ip or '',
+                event.user_agent or '',
+                event.created_at.isoformat() if event.created_at else '',
+            ]
+            for event in events
+        ]
+    return _admin_csv_response(
+        'funnel-events.csv',
+        [
+            'id', 'visitor_id', 'user_id', 'guest_id', 'job_id', 'email',
+            'event_type', 'path', 'extra', 'ip', 'user_agent', 'created_at',
+        ],
         rows,
     )
 

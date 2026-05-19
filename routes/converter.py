@@ -16,6 +16,26 @@ logger = logging.getLogger(__name__)
 converter_bp = Blueprint('converter', __name__)
 
 
+def _record_converter_funnel_event(event_type: str, job_id: str = "", extra: str = "") -> None:
+    try:
+        from app import get_client_ip
+        from tracking import record_funnel_event
+
+        record_funnel_event(
+            event_type=event_type,
+            visitor_id=request.cookies.get('sf_visitor_id'),
+            user_id=session.get('user_id'),
+            guest_id=session.get('guest_id'),
+            job_id=job_id or None,
+            path=request.path,
+            extra=extra,
+            ip=get_client_ip(),
+            user_agent=request.headers.get('User-Agent', ''),
+        )
+    except Exception:
+        pass
+
+
 @converter_bp.route('/dashboard')
 def dashboard():
     """Auth-gated converter page."""
@@ -27,6 +47,7 @@ def dashboard():
         flash('Please sign in to access the dashboard.', 'error')
         return redirect(url_for('auth.signin'))
 
+    _record_converter_funnel_event('dashboard_visit')
     return render_template(
         'dashboard.html',
         max_upload_mb=MAX_UPLOAD_MB,
@@ -172,6 +193,7 @@ def convert():
                     user_agent=request.headers.get('User-Agent', '')[:512]
                 )
                 db.add(job)
+            _record_converter_funnel_event('conversion_start', job_id=job_id)
         except Exception as e:
             logger.warning(f"Failed to record job: {e}")
 

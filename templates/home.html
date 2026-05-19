@@ -74,7 +74,7 @@
             Upload your PDF, get a formatted spreadsheet back. Our engine reads every transaction,
             strips out repeated page headers, and gives you one continuous table ready for pivot tables and analysis.
         </p>
-        <p class="hero-note">Works best with bank statements and tabular PDFs. Non-tabular documents may return an empty file.</p>
+        <p class="hero-note">Free to try. No credit card needed. Works best with bank statements and tabular PDFs.</p>
 
         <div class="hero-actions">
             {% if current_user_email %}
@@ -83,12 +83,12 @@
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
                 </a>
             {% else %}
-                <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large">
-                    Get Started Free
+                <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_primary_cta_click">
+                    Convert a PDF Free
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
                 </a>
             {% endif %}
-            <a href="#how-it-works" class="btn-secondary btn-large">See How It Works</a>
+            <a href="#how-it-works" class="btn-secondary btn-large" data-track-event="home_secondary_cta_click">See How It Works</a>
         </div>
     </div>
 
@@ -213,7 +213,7 @@
         {% if current_user_email %}
             <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">Go to Dashboard</a>
         {% else %}
-            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large">Get Started Free</a>
+            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_footer_cta_click">Convert a PDF Free</a>
         {% endif %}
         <a href="{{ url_for('pages.pricing') }}" class="btn-secondary btn-large">View Pricing</a>
     </div>
