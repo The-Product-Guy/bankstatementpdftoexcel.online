@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 
-{% block title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
+{% block title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block meta_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back. Free to start.{% endblock %}
+{% block meta_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a clean workbook for review, reconciliation, and analysis.{% endblock %}
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
 {% block canonical_url %}{{ url_for('pages.home', _external=True) }}{% endblock %}
 
-{% block og_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
+{% block og_title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block og_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back.{% endblock %}
+{% block og_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a clean workbook for review and analysis.{% endblock %}
 
-{% block twitter_title %}Statement Converter - Turn Bank Statement PDFs into Excel{% endblock %}
+{% block twitter_title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block twitter_description %}Convert bank statement PDFs to Excel. Built for text and scanned statement layouts. Upload your statement, get a clean spreadsheet back.{% endblock %}
+{% block twitter_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a clean workbook for review and analysis.{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">
@@ -32,10 +32,11 @@
     "priceCurrency": "USD"
   },
   "featureList": [
-    "Multi-Bank Support",
-    "OCR Processing",
+    "Bank Statement PDF to Excel",
+    "Text and Scanned PDF Processing",
+    "Dynamic Table Detection",
     "Secure File Handling",
-    "Fast Conversion"
+    "Excel Workbook Export"
   ]
 }
 </script>
@@ -52,7 +53,7 @@
 {% endblock %}
 
 {% block content %}
-<main class="main-content">
+<div class="home-page">
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
     <div class="flash-messages">
@@ -66,157 +67,228 @@
     {% endif %}
     {% endwith %}
 
-<section class="hero">
-    <div class="hero-content">
-        <span class="hero-tag">For accountants, auditors, and bookkeepers</span>
-        <h1>Turn multi-page bank statements into clean Excel files.</h1>
-        <p class="hero-subhead">
-            Upload your PDF, get a formatted spreadsheet back. Our engine reads every transaction,
-            strips out repeated page headers, and gives you one continuous table ready for pivot tables and analysis.
-        </p>
-        <p class="hero-note">Free to try. No credit card needed. Works best with bank statements and tabular PDFs.</p>
+    <main>
+        <section class="home-hero" aria-labelledby="homeHeroTitle">
+            <div class="home-hero-inner">
+                <div class="hero-copy" data-reveal>
+                    <span class="hero-kicker">For accountants, auditors, founders, and finance teams</span>
+                    <h1 id="homeHeroTitle">Bank statement PDF to Excel converter</h1>
+                    <p class="hero-subhead">
+                        Upload a statement and get a workbook for reconciliation:
+                        transaction rows, page-to-page continuity, source context, and review-friendly formatting.
+                    </p>
 
-        <div class="hero-actions">
-            {% if current_user_email %}
-                <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">
-                    Go to Dashboard
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-                </a>
-            {% else %}
-                <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_primary_cta_click">
-                    Convert a PDF Free
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-                </a>
-            {% endif %}
-            <a href="#how-it-works" class="btn-secondary btn-large" data-track-event="home_secondary_cta_click">See How It Works</a>
-        </div>
-    </div>
+                    <div class="hero-actions">
+                        {% if current_user_email %}
+                            <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">
+                                Open Converter
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+                            </a>
+                        {% else %}
+                            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_primary_cta_click">
+                                Convert a PDF Free
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+                            </a>
+                        {% endif %}
+                        <a href="#how-it-works" class="btn-secondary btn-large" data-track-event="home_secondary_cta_click">See Workflow</a>
+                    </div>
 
-    <div class="hero-visual">
-        <div class="visual-frame">
-            <img src="{{ url_for('static', filename='og-image.png') }}" alt="PDF to Excel conversion" />
-        </div>
-    </div>
-</section>
+                    <div class="hero-assurance" aria-label="Conversion assurances">
+                        <span>5 free conversions</span>
+                        <span>No credit card</span>
+                        <span>Short file retention</span>
+                    </div>
+                </div>
 
-<section class="trust-row">
-    <div class="trust-item">
-        <div class="trust-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2l6 3v4c0 4-2.5 7-6 9-3.5-2-6-5-6-9V5l6-3z"/></svg>
-        </div>
-        <div>
-            <p class="trust-title">Limited retention</p>
-            <p class="trust-desc">PDFs and Excel files expire automatically</p>
-        </div>
-    </div>
-    <div class="trust-item">
-        <div class="trust-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="10" width="3" height="7" rx="0.5"/><rect x="8.5" y="6" width="3" height="11" rx="0.5"/><rect x="14" y="3" width="3" height="14" rx="0.5"/></svg>
-        </div>
-        <div>
-            <p class="trust-title">Structured output</p>
-            <p class="trust-desc">Ready for pivot tables and audits</p>
-        </div>
-    </div>
-    <div class="trust-item">
-        <div class="trust-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M2 10h16M10 2c2.5 3 2.5 12 0 16M10 2c-2.5 3-2.5 12 0 16"/></svg>
-        </div>
-        <div>
-            <p class="trust-title">Flexible layouts</p>
-            <p class="trust-desc">Handles common multi-currency statements</p>
-        </div>
-    </div>
-</section>
+                <div class="conversion-workbench" aria-label="PDF to Excel conversion preview" data-reveal>
+                    <div class="workbench-topbar">
+                        <div class="window-controls" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <span class="workbench-title">statement-converter.app</span>
+                        <span class="workbench-status">Ready</span>
+                    </div>
 
-<section class="steps-section" id="how-it-works">
-    <div class="section-header">
-        <h2>How It Works</h2>
-        <p>Three steps from PDF to spreadsheet. No manual data entry.</p>
-    </div>
-    <div class="steps-grid">
-        <div class="step-card">
-            <div class="step-number">1</div>
-            <h3>Upload your PDF</h3>
-            <p>Sign in and drop your bank statement on the dashboard. We accept text-based and scanned PDFs up to 500 MB.</p>
-        </div>
-        <div class="step-card">
-            <div class="step-number">2</div>
-            <h3>We extract the data</h3>
-            <p>Our engine detects the bank format, reads every transaction, and removes repeated page headers automatically.</p>
-        </div>
-        <div class="step-card">
-            <div class="step-number">3</div>
-            <h3>Download your Excel</h3>
-            <p>Get a clean spreadsheet with two sheets: the raw statement and a normalized transaction table for easy analysis.</p>
-        </div>
-    </div>
-</section>
-</main>
+                    <div class="workbench-grid">
+                        <div class="statement-preview">
+                            <div class="preview-header">
+                                <span>PDF statement</span>
+                                <strong>2 pages</strong>
+                            </div>
+                            <div class="statement-sheet">
+                                <div class="statement-bank">Bank Statement</div>
+                                <div class="statement-meta">
+                                    <span>Account summary</span>
+                                    <span>16 Apr - 16 May</span>
+                                </div>
+                                <div class="statement-table">
+                                    <div>Date</div><div>Details</div><div>Debit</div><div>Credit</div><div>Balance</div>
+                                    <div>15/04</div><div>Brought forward</div><div></div><div></div><div>258.31</div>
+                                    <div>27/04</div><div>Transfer received</div><div></div><div>30,000.00</div><div>30,258.31</div>
+                                    <div>27/04</div><div>Card settlement</div><div>2,483.77</div><div></div><div>27,774.54</div>
+                                    <div>28/04</div><div>Vendor payment</div><div>25,000.00</div><div></div><div>1,158.50</div>
+                                </div>
+                            </div>
+                        </div>
 
-<section class="feature-section">
-    <div class="section-header">
-        <h2>Built for Financial Documents</h2>
-        <p>Not a generic PDF tool. Designed specifically for bank statements.</p>
-    </div>
-    <div class="feature-grid">
-        <div class="feature-card">
-            <div class="feature-icon">
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="16" height="16" rx="2"/><path d="M3 8h16M8 8v11"/></svg>
+                        <div class="conversion-rail" aria-hidden="true">
+                            <div class="rail-step active">
+                                <span></span>
+                                <p>Detect columns</p>
+                            </div>
+                            <div class="rail-line"></div>
+                            <div class="rail-step">
+                                <span></span>
+                                <p>Carry headers</p>
+                            </div>
+                            <div class="rail-line"></div>
+                            <div class="rail-step">
+                                <span></span>
+                                <p>Export workbook</p>
+                            </div>
+                        </div>
+
+                        <div class="excel-preview">
+                            <div class="preview-header">
+                                <span>Excel output</span>
+                                <strong>.xlsx</strong>
+                            </div>
+                            <div class="sheet-toolbar">
+                                <span class="sheet-tab active">Transactions</span>
+                                <span class="sheet-tab">Raw extract</span>
+                            </div>
+                            <div class="excel-grid">
+                                <div>Date</div><div>Description</div><div>Debit</div><div>Credit</div><div>Balance</div>
+                                <div>15/04/2026</div><div>Brought forward</div><div></div><div></div><div>258.31</div>
+                                <div>27/04/2026</div><div>Transfer received</div><div></div><div>30000.00</div><div>30258.31</div>
+                                <div>27/04/2026</div><div>Card settlement</div><div>2483.77</div><div></div><div>27774.54</div>
+                                <div>28/04/2026</div><div>Vendor payment</div><div>25000.00</div><div></div><div>1158.50</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="workbench-footer">
+                        <span>Text PDFs</span>
+                        <span>Scanned PDFs</span>
+                        <span>Multi-page tables</span>
+                    </div>
+                </div>
             </div>
-            <h3>Smart header removal</h3>
-            <p>Bank PDFs repeat headers on every page. We detect and strip them so you get one continuous table, not 20 fragmented ones.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon">
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8.5"/><path d="M3.5 11h17M11 2.5c3 3.5 3 13.5 0 17M11 2.5c-3 3.5-3 13.5 0 17"/></svg>
-            </div>
-            <h3>Universal statement parser</h3>
-            <p>Profile hints for known statement layouts with a universal fallback for other tabular bank PDFs.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon">
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2.5L3.5 6.5v5c0 4.5 3 8 7.5 10 4.5-2 7.5-5.5 7.5-10v-5L11 2.5z"/><path d="M8 11.5l2.5 2.5 4-4"/></svg>
-            </div>
-            <h3>Your data stays private</h3>
-            <p>Uploaded PDFs are deleted after processing unless you explicitly retain them for feedback. Results expire after a short download window.</p>
-        </div>
-    </div>
-</section>
+        </section>
 
-<main class="main-content">
-<section class="security-section">
-    <div class="security-content">
-        <h2>Your financial data is handled with short retention windows.</h2>
-        <p>
-            We delete uploaded PDFs after processing unless you choose to retain one for feedback. The Excel output is available
-            for a short download window, then it is permanently removed too.
-        </p>
-        <p>
-            All transfers happen over HTTPS. Each conversion runs in its own isolated process with no shared state between users.
-        </p>
-    </div>
-    <div class="security-visual">
-        <svg width="180" height="180" viewBox="0 0 180 180" fill="none">
-            <circle cx="90" cy="90" r="80" stroke="#e2e4e9" stroke-width="2"/>
-            <circle cx="90" cy="90" r="60" stroke="#e2e4e9" stroke-width="1.5"/>
-            <path d="M90 40l30 15v20c0 22-12 38-30 48-18-10-30-26-30-48V55l30-15z" stroke="#046bca" stroke-width="2" fill="#f0f6ff"/>
-            <path d="M80 92l7 7 14-14" stroke="#046bca" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-    </div>
-</section>
+        <section class="home-proof-strip" aria-label="Product highlights">
+            <div class="home-band-inner">
+                <div class="proof-item" data-reveal>
+                    <span class="proof-value">PDF</span>
+                    <p>Text-based and scanned statements</p>
+                </div>
+                <div class="proof-item" data-reveal>
+                    <span class="proof-value">XLSX</span>
+                    <p>Workbook output for reconciliation</p>
+                </div>
+                <div class="proof-item" data-reveal>
+                    <span class="proof-value">500 MB</span>
+                    <p>Large statement support on upload</p>
+                </div>
+                <div class="proof-item" data-reveal>
+                    <span class="proof-value">Private</span>
+                    <p>Files expire after processing windows</p>
+                </div>
+            </div>
+        </section>
 
-<section class="cta-section">
-    <h2>Ready to convert your first statement?</h2>
-    <p>Sign up for free. 5 conversions per month, no credit card needed.</p>
-    <div class="cta-actions">
-        {% if current_user_email %}
-            <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">Go to Dashboard</a>
-        {% else %}
-            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_footer_cta_click">Convert a PDF Free</a>
-        {% endif %}
-        <a href="{{ url_for('pages.pricing') }}" class="btn-secondary btn-large">View Pricing</a>
-    </div>
-</section>
-</main>
+        <section class="home-section workflow-section" id="how-it-works">
+            <div class="home-band-inner">
+                <div class="section-heading" data-reveal>
+                    <span class="section-kicker">Workflow</span>
+                    <h2>From PDF to spreadsheet in one focused flow.</h2>
+                    <p>Visitors should immediately understand what happens after sign-in. The product experience is built around one job: upload, process, download, review.</p>
+                </div>
+
+                <div class="workflow-list">
+                    <article class="workflow-item" data-reveal>
+                        <span class="workflow-number">01</span>
+                        <div>
+                            <h3>Upload the statement</h3>
+                            <p>Drop a bank statement PDF into the converter. Text-based PDFs and scanned PDFs use different extraction paths behind the scenes.</p>
+                        </div>
+                    </article>
+                    <article class="workflow-item" data-reveal>
+                        <span class="workflow-number">02</span>
+                        <div>
+                            <h3>Detect table structure</h3>
+                            <p>The parser reads the statement layout, identifies column geometry, removes repeated page furniture, and carries headers across pages.</p>
+                        </div>
+                    </article>
+                    <article class="workflow-item" data-reveal>
+                        <span class="workflow-number">03</span>
+                        <div>
+                            <h3>Download and review</h3>
+                            <p>The workbook includes structured transactions and raw context so users can check the extraction before relying on it.</p>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="home-section accuracy-section">
+            <div class="home-band-inner accuracy-grid">
+                <div class="accuracy-copy" data-reveal>
+                    <span class="section-kicker">Accuracy direction</span>
+                    <h2>Designed around table geometry, not one bank template.</h2>
+                    <p>
+                        Bank statements vary by country, language, and page layout. The extraction flow prioritizes document structure first, then text extraction, then reviewable workbook output.
+                    </p>
+                </div>
+
+                <div class="accuracy-points">
+                    <div class="accuracy-point" data-reveal>
+                        <h3>Dynamic headers</h3>
+                        <p>Column positions are read from the file and reused when later pages omit the header row.</p>
+                    </div>
+                    <div class="accuracy-point" data-reveal>
+                        <h3>Text before OCR</h3>
+                        <p>Native PDF text is used when available. OCR is reserved for scanned or image-heavy statements.</p>
+                    </div>
+                    <div class="accuracy-point" data-reveal>
+                        <h3>Review context</h3>
+                        <p>Raw extraction context stays available in the workbook so unclear rows can be checked instead of silently hidden.</p>
+                    </div>
+                    <div class="accuracy-point" data-reveal>
+                        <h3>Feedback loop</h3>
+                        <p>Users can report poor conversions after a job so the parser improves against real statement layouts.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="home-section security-band">
+            <div class="home-band-inner security-layout">
+                <div data-reveal>
+                    <span class="section-kicker">Security</span>
+                    <h2>Financial files need plain rules, not vague promises.</h2>
+                </div>
+                <div class="security-rules" data-reveal>
+                    <p>Uploaded PDFs are processed for conversion and expire automatically unless the user explicitly retains one for feedback.</p>
+                    <p>Excel outputs are available during the download window, then removed. Transfers use HTTPS and conversion jobs run independently.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="home-cta">
+            <div class="home-band-inner" data-reveal>
+                <h2>Convert your next bank statement into Excel.</h2>
+                <p>Start with 5 free conversions per month. No credit card needed.</p>
+                <div class="cta-actions">
+                    {% if current_user_email %}
+                        <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">Open Converter</a>
+                    {% else %}
+                        <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_footer_cta_click">Convert a PDF Free</a>
+                    {% endif %}
+                    <a href="{{ url_for('pages.pricing') }}" class="btn-secondary btn-large">View Pricing</a>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
 {% endblock %}

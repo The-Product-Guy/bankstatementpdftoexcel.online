@@ -17,17 +17,30 @@
     {% endif %}
     {% endwith %}
 
-    <section class="signin-section">
-        <div class="signin-card">
-            <h1>Convert your first PDF</h1>
-            <p>Get 5 free conversions per month. No credit card needed.</p>
+    <section class="signin-section signin-modern" aria-labelledby="signinTitle">
+        <div class="signin-copy" data-reveal>
+            <span class="section-kicker">One-time link</span>
+            <h1 id="signinTitle">Start converting statements without creating a password.</h1>
+            <p>Enter your email and we will send a secure sign-in link. Your free account includes 5 conversions per month.</p>
+            <div class="signin-checklist" aria-label="Sign in benefits">
+                <span>No credit card</span>
+                <span>No password to remember</span>
+                <span>Private file handling</span>
+            </div>
+        </div>
+
+        <div class="signin-card" data-reveal>
+            <div class="signin-card-header">
+                <h2>Email sign-in</h2>
+                <p>Use the same email each time to keep your conversion history.</p>
+            </div>
             <form method="POST" action="{{ url_for('auth.auth_start') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label for="email" class="form-label">Email address</label>
-                <input id="email" name="email" type="email" required class="signin-input" placeholder="you@example.com">
-                <button type="submit" class="btn-primary signin-btn">Send sign-in link</button>
+                <input id="email" name="email" type="email" required class="signin-input" placeholder="you@example.com" autocomplete="email">
+                <button type="submit" class="btn-primary signin-btn">Send secure link</button>
             </form>
-            <p class="signin-note">We'll email you a one-time sign-in link. No password needed.</p>
+            <p class="signin-note">The link expires automatically. No password is stored.</p>
         </div>
     </section>
 </main>
