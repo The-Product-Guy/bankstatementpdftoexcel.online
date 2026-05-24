@@ -86,7 +86,6 @@
             <div class="nav-links" id="navMenu">
                 <a href="{{ url_for('pages.home') }}#how-it-works">How it Works</a>
                 <a href="{{ url_for('pages.pricing') }}" {% if request.endpoint == 'pages.pricing' %}class="active"{% endif %}>Pricing</a>
-                <a href="{{ url_for('pages.blogs') }}" {% if request.endpoint == 'pages.blogs' %}class="active"{% endif %}>Blog</a>
             </div>
             <div class="nav-actions">
                 {% if current_user_email %}
@@ -99,7 +98,8 @@
                     <a href="{{ url_for('auth.account') }}" class="nav-signin">Account</a>
                     <a href="/signout" class="nav-signin">Sign Out</a>
                 {% else %}
-                    <a href="{{ url_for('auth.signin') }}" class="btn-primary" data-track-event="nav_signin_click">Sign In</a>
+                    <a href="{{ url_for('auth.signin') }}" class="nav-signin">Sign In</a>
+                    <a href="{{ url_for('converter.dashboard') }}" class="btn-primary" data-track-event="nav_convert_click">Convert PDF</a>
                 {% endif %}
             </div>
             <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-controls="navMenu" aria-expanded="false">

@@ -85,7 +85,7 @@
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
                             </a>
                         {% else %}
-                            <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_primary_cta_click">
+                            <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large" data-track-event="home_primary_cta_click">
                                 Convert a PDF Free
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
                             </a>
@@ -95,7 +95,7 @@
 
                     <div class="hero-assurance" aria-label="Conversion assurances">
                         <span>5 free conversions</span>
-                        <span>No credit card</span>
+                        <span>Email only at download</span>
                         <span>Short file retention</span>
                     </div>
                 </div>
@@ -283,7 +283,7 @@
                     {% if current_user_email %}
                         <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large">Open Converter</a>
                     {% else %}
-                        <a href="{{ url_for('auth.signin') }}" class="btn-primary btn-large" data-track-event="home_footer_cta_click">Convert a PDF Free</a>
+                        <a href="{{ url_for('converter.dashboard') }}" class="btn-primary btn-large" data-track-event="home_footer_cta_click">Convert a PDF Free</a>
                     {% endif %}
                     <a href="{{ url_for('pages.pricing') }}" class="btn-secondary btn-large">View Pricing</a>
                 </div>

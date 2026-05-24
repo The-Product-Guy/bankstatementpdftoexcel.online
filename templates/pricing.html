@@ -71,7 +71,7 @@
                 {% if current_user_email and current_plan == 'free' %}
                     <span class="pricing-button disabled">Current Plan</span>
                 {% else %}
-                    <a href="{{ url_for('auth.signin') }}" class="pricing-button">Get Started Free</a>
+                    <a href="{{ url_for('converter.dashboard') }}" class="pricing-button" data-track-event="pricing_cta_click">Get Started Free</a>
                 {% endif %}
             </div>
         </div>
@@ -179,7 +179,7 @@
     <div class="pricing-cta-section">
         <h2>Ready to get started?</h2>
         <p>Start converting bank statements today. No credit card needed for the free plan.</p>
-        <a href="{{ url_for('auth.signin') }}" class="cta-button-large">
+        <a href="{{ url_for('converter.dashboard') }}" class="cta-button-large" data-track-event="pricing_cta_click">
             Start Converting
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
         </a>

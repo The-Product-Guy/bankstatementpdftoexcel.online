@@ -32,7 +32,11 @@
 
     <div class="dashboard-header">
         <h1>Convert a Statement</h1>
+        {% if current_user_email %}
         <p>Upload a bank statement PDF and download a formatted Excel file.</p>
+        {% else %}
+        <p>Upload first. We only ask for your email when the Excel file is ready to download.</p>
+        {% endif %}
     </div>
 
     <div class="converter-card" id="convert">
@@ -122,6 +126,9 @@
             </button>
         </form>
         <p class="converter-note">Supports major bank statement layouts. Output files are available for a limited download window.</p>
+        {% if not current_user_email %}
+        <p class="converter-note subtle">No account is required to upload. Email is collected at download so we can link the result to you.</p>
+        {% endif %}
         {% if english_only_beta %}
         <p class="converter-note subtle">Current beta scope: English statement layouts.</p>
         {% endif %}
@@ -256,6 +263,29 @@
             <a class="btn-primary" href="https://smallpdfsplit.online/" target="_blank" rel="noopener">Split your PDF</a>
             <button type="button" class="btn-secondary" id="limitClose">Close</button>
         </div>
+    </div>
+</div>
+
+<div id="downloadEmailModal" class="feedback-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="downloadEmailTitle" aria-hidden="true" tabindex="-1">
+    <div class="feedback-content">
+        <h3 id="downloadEmailTitle">Your Excel file is ready</h3>
+        <p class="feedback-desc">Enter your email to download the converted file. No password is needed.</p>
+
+        <form id="downloadEmailForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="job_id" id="downloadEmailJobId">
+            <input type="hidden" name="filename" id="downloadEmailFilename">
+
+            <div class="feedback-field">
+                <label for="downloadEmailInput">Email address</label>
+                <input id="downloadEmailInput" name="email" type="email" required class="signin-input" placeholder="you@example.com" autocomplete="email">
+            </div>
+
+            <div class="feedback-actions">
+                <button type="button" class="btn-secondary" id="downloadEmailClose">Cancel</button>
+                <button type="submit" class="btn-primary" id="downloadEmailSubmitBtn">Download Excel</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}

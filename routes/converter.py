@@ -7,7 +7,7 @@ from flask import Blueprint, flash, jsonify, redirect, render_template, request,
 from werkzeug.utils import secure_filename
 
 from db import get_db_session
-from models import FeedbackSubmission, Job
+from models import FeedbackSubmission, Job, User
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import copy_file, generate_presigned_url, get_storage_config, upload_file
 
@@ -16,7 +16,12 @@ logger = logging.getLogger(__name__)
 converter_bp = Blueprint('converter', __name__)
 
 
-def _record_converter_funnel_event(event_type: str, job_id: str = "", extra: str = "") -> None:
+def _record_converter_funnel_event(
+    event_type: str,
+    job_id: str = "",
+    extra: str = "",
+    email: str = "",
+) -> None:
     try:
         from app import get_client_ip
         from tracking import record_funnel_event
@@ -27,6 +32,7 @@ def _record_converter_funnel_event(event_type: str, job_id: str = "", extra: str
             user_id=session.get('user_id'),
             guest_id=session.get('guest_id'),
             job_id=job_id or None,
+            email=email or None,
             path=request.path,
             extra=extra,
             ip=get_client_ip(),
@@ -36,16 +42,60 @@ def _record_converter_funnel_event(event_type: str, job_id: str = "", extra: str
         pass
 
 
+def _captured_download_emails() -> dict:
+    captured = session.get('download_email_jobs')
+    if not isinstance(captured, dict):
+        captured = {}
+        session['download_email_jobs'] = captured
+    return captured
+
+
+def _download_email_captured(job_id: str) -> bool:
+    return bool(_captured_download_emails().get(job_id))
+
+
+def _mark_download_email_captured(job_id: str, email: str) -> None:
+    captured = _captured_download_emails()
+    captured[job_id] = email
+    session['download_email_jobs'] = captured
+    session.modified = True
+
+
+def _job_access_allowed(job: Job) -> bool:
+    user_id = session.get('user_id')
+    guest_id = session.get('guest_id')
+    if user_id and job.user_id == user_id:
+        return True
+    if guest_id and job.guest_id == guest_id:
+        return True
+    return False
+
+
+def _job_requires_download_email(job: Job) -> bool:
+    return not session.get('user_id') and not _download_email_captured(job.id)
+
+
+def _job_download_filename(job: Job, fallback: str = "") -> str:
+    if job.output_storage_key:
+        return os.path.basename(job.output_storage_key)
+    if job.storage_key and job.storage_key.startswith("outputs/"):
+        return os.path.basename(job.storage_key)
+    return os.path.basename(fallback or "")
+
+
+def _job_local_output_path(job_id: str, filename: str) -> str:
+    processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', 'processed'
+    )
+    return os.path.join(processed_root, job_id, filename)
+
+
 @converter_bp.route('/dashboard')
 def dashboard():
-    """Auth-gated converter page."""
+    """Converter page. Guests can upload; email is requested before download."""
     from app import (
         BETA_MODE, ENGLISH_ONLY_BETA, FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
     )
-
-    if not session.get('user_id'):
-        flash('Please sign in to access the dashboard.', 'error')
-        return redirect(url_for('auth.signin'))
 
     _record_converter_funnel_event('dashboard_visit')
     return render_template(
@@ -68,10 +118,7 @@ def convert():
 
     try:
         if not session.get('user_id'):
-            if is_ajax_request():
-                return jsonify({'status': 'error', 'error': 'Please sign in to convert files.'}), 401
-            flash('Please sign in to convert files.', 'error')
-            return redirect(url_for('auth.signin'))
+            get_identity()
 
         user_id, guest_id = get_identity()
 
@@ -241,6 +288,13 @@ def job_status(job_id):
     if rate_limited(f"rate:status:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_STATUS', '120')), 60):
         return jsonify({'status': 'error', 'percent': 0, 'error': 'Too many status requests.'}), 429
 
+    with get_db_session() as db:
+        job = db.get(Job, job_id)
+        if not job or not _job_access_allowed(job):
+            return jsonify({'status': 'error', 'percent': 0, 'error': 'Job not found.'}), 404
+        requires_download_email = _job_requires_download_email(job)
+        output_filename = _job_download_filename(job)
+
     import redis
     redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
     r = redis.StrictRedis.from_url(redis_url)
@@ -253,18 +307,18 @@ def job_status(job_id):
 
             if data.get('percent') >= 100 or data.get('status') == 'Completed successfully':
                 if data.get('storage') == 's3' and data.get('download_key'):
-                    storage = get_storage_config()
-                    if storage:
-                        data['download_url'] = generate_presigned_url(storage, data['download_key'])
-                else:
-                    processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)), '..', 'processed'
+                    data['download_url'] = url_for(
+                        'converter.download_result',
+                        job_id=job_id,
+                        filename=os.path.basename(data['download_key'])
                     )
-                    processed_dir = os.path.join(processed_root, job_id)
+                else:
+                    processed_dir = os.path.dirname(_job_local_output_path(job_id, output_filename or 'placeholder.xlsx'))
                     if os.path.exists(processed_dir):
                         excel_files = [f for f in os.listdir(processed_dir) if f.endswith('.xlsx')]
                         if excel_files:
                             data['download_url'] = url_for('converter.download_result', job_id=job_id, filename=excel_files[0])
+                data['requires_download_email'] = bool(data.get('download_url') and requires_download_email)
 
             return jsonify(data)
         except Exception as e:
@@ -276,17 +330,95 @@ def job_status(job_id):
 @converter_bp.route('/download/<job_id>/<filename>')
 def download_result(job_id, filename):
     """Download processed file."""
-    processed_root = os.environ.get('SHARED_STORAGE_PATH') or os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), '..', 'processed'
-    )
-    directory = os.path.join(processed_root, job_id)
-    filepath = os.path.join(directory, filename)
+    safe_filename = os.path.basename(filename)
+    if safe_filename != filename:
+        flash('File not found. It may have expired.', 'error')
+        return redirect(url_for('converter.dashboard'))
+
+    with get_db_session() as db:
+        job = db.get(Job, job_id)
+        if not job or not _job_access_allowed(job):
+            flash('File not found. It may have expired.', 'error')
+            return redirect(url_for('converter.dashboard'))
+
+        if _job_requires_download_email(job):
+            _record_converter_funnel_event('download_email_required', job_id=job_id)
+            flash('Enter your email to download the converted Excel file.', 'warning')
+            return redirect(url_for('converter.dashboard'))
+
+        output_key = job.output_storage_key or (
+            job.storage_key if job.storage_key and job.storage_key.startswith("outputs/") else None
+        )
+
+    if output_key:
+        storage = get_storage_config()
+        if not storage:
+            flash('File storage is unavailable. Please try again later.', 'error')
+            return redirect(url_for('converter.dashboard'))
+        _record_converter_funnel_event('download_started', job_id=job_id)
+        return redirect(generate_presigned_url(storage, output_key))
+
+    filepath = _job_local_output_path(job_id, safe_filename)
 
     if not os.path.exists(filepath):
         flash('File not found. It may have expired.', 'error')
         return redirect(url_for('converter.dashboard'))
 
+    _record_converter_funnel_event('download_started', job_id=job_id)
     return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+@converter_bp.route('/download/email', methods=['POST'])
+def capture_download_email():
+    """Capture guest email immediately before allowing an Excel download."""
+    from app import get_client_ip, is_ajax_request, rate_limited
+
+    if rate_limited(f"rate:download_email:{get_client_ip()}", 10, 3600):
+        return jsonify({'status': 'error', 'error': 'Too many download attempts. Please try again later.'}), 429
+
+    job_id = (request.form.get('job_id') or '').strip()
+    filename = os.path.basename((request.form.get('filename') or '').strip())
+    email = (request.form.get('email') or '').strip().lower()
+    csrf_token = request.form.get('csrf_token')
+
+    _record_converter_funnel_event('download_email_submit_attempt', job_id=job_id, email=email)
+
+    if not csrf_token or csrf_token != session.get('csrf_token'):
+        return jsonify({'status': 'error', 'error': 'Invalid request token. Please refresh and try again.'}), 400
+    if not job_id or not filename:
+        return jsonify({'status': 'error', 'error': 'Download is not ready yet. Please try again.'}), 400
+    if not email or '@' not in email:
+        return jsonify({'status': 'error', 'error': 'Please enter a valid email address.'}), 400
+
+    try:
+        with get_db_session() as db:
+            job = db.get(Job, job_id)
+            if not job or not _job_access_allowed(job):
+                return jsonify({'status': 'error', 'error': 'Download is not available.'}), 404
+            if not (job.status or '').startswith('completed'):
+                return jsonify({'status': 'error', 'error': 'Conversion is not complete yet.'}), 409
+
+            user = db.query(User).filter_by(email=email).first()
+            if not user:
+                user = User(email=email)
+                db.add(user)
+                db.flush()
+
+            if not job.user_id:
+                job.user_id = user.id
+
+        _mark_download_email_captured(job_id, email)
+        _record_converter_funnel_event('download_email_submitted', job_id=job_id, email=email)
+        return jsonify({
+            'status': 'ok',
+            'download_url': url_for('converter.download_result', job_id=job_id, filename=filename)
+        }), 200
+    except Exception as e:
+        logger.warning(f"Download email capture failed: {e}")
+        if is_ajax_request():
+            return jsonify({'status': 'error', 'error': 'Unable to prepare the download. Please try again.'}), 500
+        flash('Unable to prepare the download. Please try again.', 'error')
+        return redirect(url_for('converter.dashboard'))
 
 
 @converter_bp.route('/feedback', methods=['POST'])

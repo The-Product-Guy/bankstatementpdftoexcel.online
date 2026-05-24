@@ -45,8 +45,16 @@
             <p>Views {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
+            <h3>{{ stats.range_home_views }}</h3>
+            <p>Home Views {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
             <h3>{{ stats.range_cta_clicks }}</h3>
             <p>CTA Clicks {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_home_cta_rate }}%</h3>
+            <p>CTA Rate {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
             <h3>{{ stats.range_signin_visits }}</h3>
@@ -81,8 +89,28 @@
             <p>Conversion Starts {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
+            <h3>{{ stats.range_upload_start_rate }}%</h3>
+            <p>Upload Rate {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
             <h3>{{ stats.range_conversion_completions }}</h3>
             <p>Conversions Done {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_download_email_submits }}</h3>
+            <p>Download Emails {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_download_email_rate }}%</h3>
+            <p>Email Capture Rate {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_downloads }}</h3>
+            <p>Downloads {{ analytics_days }}d</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ stats.range_download_rate }}%</h3>
+            <p>Download Rate {{ analytics_days }}d</p>
         </div>
         <div class="stat-card">
             <h3>{{ stats.range_jobs }}</h3>

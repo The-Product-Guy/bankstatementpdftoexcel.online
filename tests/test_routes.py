@@ -223,9 +223,10 @@ class TestProtectedRoutes:
         resp = client.get("/admin")
         assert resp.status_code == 404
 
-    def test_dashboard_requires_login(self, client):
+    def test_dashboard_allows_guest_uploads(self, client):
         resp = client.get("/dashboard")
-        assert resp.status_code == 302  # redirect to signin
+        assert resp.status_code == 200
+        assert b"Email is collected at download" in resp.data
 
     def test_convert_requires_file(self, client):
         with client.session_transaction() as sess:
@@ -235,6 +236,55 @@ class TestProtectedRoutes:
         })
         # Should fail gracefully (no file uploaded)
         assert resp.status_code in (302, 400, 500)
+
+    def test_download_email_capture_links_guest_job_to_user(self, client):
+        from db import get_db_session, init_db
+        from models import FunnelEvent, Job, User
+
+        suffix = uuid.uuid4().hex
+        guest_id = f"guest-{suffix}"
+        job_id = f"download-email-job-{suffix}"
+        email = f"download-{suffix}@example.com"
+        init_db()
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                guest_id=guest_id,
+                filename="statement.pdf",
+                status="completed",
+                created_at=datetime.utcnow(),
+            ))
+
+        try:
+            with client.session_transaction() as sess:
+                sess["guest_id"] = guest_id
+                sess["csrf_token"] = "test-token"
+            resp = client.post("/download/email", data={
+                "job_id": job_id,
+                "filename": "statement.xlsx",
+                "email": email,
+                "csrf_token": "test-token",
+            })
+
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["status"] == "ok"
+            assert f"/download/{job_id}/statement.xlsx" in data["download_url"]
+
+            with get_db_session() as db:
+                user = db.query(User).filter_by(email=email).first()
+                job = db.get(Job, job_id)
+                assert user is not None
+                assert job.user_id == user.id
+        finally:
+            with get_db_session() as db:
+                db.query(FunnelEvent).filter_by(job_id=job_id).delete(synchronize_session=False)
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+                user = db.query(User).filter_by(email=email).first()
+                if user:
+                    db.delete(user)
 
 
 class TestRateLimiting:

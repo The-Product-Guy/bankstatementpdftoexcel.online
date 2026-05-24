@@ -105,6 +105,14 @@ function setupEventListeners() {
     if (feedbackForm) {
         feedbackForm.addEventListener('submit', submitFeedback);
     }
+    const downloadEmailClose = document.getElementById('downloadEmailClose');
+    if (downloadEmailClose) {
+        downloadEmailClose.addEventListener('click', closeDownloadEmailModal);
+    }
+    const downloadEmailForm = document.getElementById('downloadEmailForm');
+    if (downloadEmailForm) {
+        downloadEmailForm.addEventListener('submit', submitDownloadEmail);
+    }
 
     // Prevent default drag behaviors on document
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -383,6 +391,7 @@ let activeJobId = null;
 let downloadTriggered = false;
 let completionPolls = 0;
 let lastJobData = null;
+let pendingDownload = null;
 
 function startStatusPolling(jobId) {
     activeJobId = jobId;
@@ -414,9 +423,8 @@ function pollJobStatus() {
                 activeJobId = null;
                 downloadTriggered = true;
                 lastJobData = data;
-                triggerDownload(data.download_url);
                 hideProgressModal();
-                showResultBanner(data, jobId);
+                handleDownloadReady(data.download_url, jobId, data);
                 return;
             }
 
@@ -447,6 +455,26 @@ function triggerDownload(url) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+}
+
+function handleDownloadReady(url, jobId, data) {
+    if (data.requires_download_email) {
+        openDownloadEmailModal(jobId, data, url);
+        return;
+    }
+    triggerDownload(url);
+    showResultBanner(data, jobId);
+}
+
+function getFilenameFromDownloadUrl(url) {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        return decodeURIComponent(parts[parts.length - 1] || '');
+    } catch (err) {
+        const parts = String(url || '').split('/').filter(Boolean);
+        return decodeURIComponent(parts[parts.length - 1] || '');
+    }
 }
 
 // ===== Result Banner =====
@@ -565,6 +593,67 @@ function retryWithHighQuality() {
         submitFormWithProgress();
     } else {
         showAlert('Please re-select your PDF file, then click Convert.', 'warning');
+    }
+}
+
+// ===== Download Email Modal =====
+
+function openDownloadEmailModal(jobId, data, downloadUrl) {
+    const modal = document.getElementById('downloadEmailModal');
+    if (!modal) {
+        triggerDownload(downloadUrl);
+        showResultBanner(data, jobId);
+        return;
+    }
+
+    pendingDownload = { jobId, data, downloadUrl };
+    document.getElementById('downloadEmailJobId').value = jobId || '';
+    document.getElementById('downloadEmailFilename').value = getFilenameFromDownloadUrl(downloadUrl);
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.focus();
+}
+
+function closeDownloadEmailModal() {
+    const modal = document.getElementById('downloadEmailModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function submitDownloadEmail(e) {
+    e.preventDefault();
+    const form = document.getElementById('downloadEmailForm');
+    const submitBtn = document.getElementById('downloadEmailSubmitBtn');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Preparing...';
+
+    try {
+        const response = await fetch('/download/email', {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            body: new FormData(form)
+        });
+        const result = await response.json();
+
+        if (result.status !== 'ok' || !result.download_url) {
+            throw new Error(result.error || 'Unable to prepare the download.');
+        }
+
+        closeDownloadEmailModal();
+        triggerDownload(result.download_url);
+        if (pendingDownload) {
+            showResultBanner(pendingDownload.data, pendingDownload.jobId);
+        }
+        pendingDownload = null;
+    } catch (err) {
+        showAlert(err.message || 'Unable to prepare the download. Please try again.', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Download Excel';
     }
 }
 

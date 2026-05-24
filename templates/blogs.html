@@ -84,6 +84,7 @@
                         <li><strong>Download your Excel</strong> - the result has two sheets: <em>Raw_Statement</em> (exactly as extracted) and <em>Normalized_Transactions</em> (standardized columns for pivot tables).</li>
                     </ol>
                     <p>Text PDFs usually take 10-30 seconds. Scanned documents take 1-3 minutes.</p>
+                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
                 </div>
             </div>
         </article>
@@ -105,6 +106,7 @@
                         <li><strong>Text-to-Columns</strong> - if a description field has multiple details separated by slashes, split them into separate columns.</li>
                         <li><strong>Freeze panes</strong> - freeze the header row (<em>View > Freeze Panes</em>) so column names stay visible when scrolling.</li>
                     </ol>
+                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
                 </div>
             </div>
         </article>
@@ -127,6 +129,7 @@
                         <li><strong>Isolated processing</strong> - each conversion runs in its own container with no shared state between users.</li>
                     </ul>
                     <p>We use transaction data only to produce your conversion result and do not keep it outside the stated retention windows. Read our full <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
+                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Try the Converter</a></p>
                 </div>
             </div>
         </article>
@@ -144,6 +147,7 @@
                     <p><strong>Text-based PDFs</strong> are generated digitally by your bank's online portal. The text is embedded in the PDF and can be copied. These convert the fastest and most accurately.</p>
                     <p><strong>Scanned PDFs</strong> are photographs of printed statements. The PDF contains images, not text. These need OCR (Optical Character Recognition) to extract the data, which takes longer but still gives accurate results.</p>
                     <p><strong>How to tell the difference:</strong> open the PDF and try to select text with your cursor. If you can highlight individual words, it's text-based. If the entire page selects as one image, it's scanned.</p>
+                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
                 </div>
             </div>
         </article>
@@ -163,6 +167,7 @@
                     <p><strong>Is my data safe?</strong><br>Files are processed with short retention windows. PDFs are deleted after processing unless you explicitly retain one for feedback. See our <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
                     <p><strong>What if the conversion result is wrong?</strong><br>Use the feedback button after conversion to let us know. You can also share the PDF so we can improve the parser for that format.</p>
                     <p><strong>Can I convert password-protected PDFs?</strong><br>Not yet. This is on our roadmap. For now, please remove the password before uploading.</p>
+                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
                 </div>
             </div>
         </article>
@@ -170,12 +175,8 @@
 
     <div class="blog-cta">
         <h3>Ready to convert your statements?</h3>
-        <p>Sign in and start converting bank statement PDFs to Excel. It's free to start.</p>
-        {% if current_user_email %}
-            <a href="{{ url_for('converter.dashboard') }}" class="cta-button">Go to Dashboard</a>
-        {% else %}
-            <a href="{{ url_for('auth.signin') }}" class="cta-button">Get Started Free</a>
-        {% endif %}
+        <p>Upload a PDF first. We ask for email only when the Excel file is ready to download.</p>
+        <a href="{{ url_for('converter.dashboard') }}" class="cta-button" data-track-event="blog_footer_cta_click">Convert a PDF Free</a>
     </div>
 </main>
 {% endblock %}

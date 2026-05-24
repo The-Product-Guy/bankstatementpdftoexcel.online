@@ -1392,6 +1392,21 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   font-size: 13px;
 }
 .blog-body a { color: var(--blue); }
+.blog-inline-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  margin-top: 8px;
+  background: var(--ink);
+  color: var(--white) !important;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 700;
+}
+.blog-inline-cta:hover {
+  background: #252c38;
+  color: var(--white) !important;
+}
 
 .blog-cta {
   text-align: center;
@@ -1423,6 +1438,10 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   text-decoration: none;
 }
 .blog-cta .cta-button:hover { background: var(--blue-hover); color: var(--white); }
+.blog-post-cta {
+  margin: 32px 0 24px;
+  padding: 32px;
+}
 
 /* ============================================================
    Sign In Page
@@ -2594,6 +2613,9 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   .nav-actions .btn-primary {
     padding: 8px 12px;
     font-size: 13px;
+  }
+  .nav-actions .nav-signin {
+    display: none;
   }
   .hero { padding: 40px 0 32px; }
   .hero h1 { font-size: 26px; }

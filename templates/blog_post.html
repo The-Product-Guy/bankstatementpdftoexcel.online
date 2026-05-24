@@ -85,6 +85,12 @@
     </section>
     {% endfor %}
 
+    <div class="blog-cta blog-post-cta">
+        <h3>Convert a bank statement now</h3>
+        <p>Upload your PDF first. Enter email only when the Excel file is ready.</p>
+        <a href="{{ url_for('converter.dashboard') }}" class="cta-button" data-track-event="blog_post_cta_click">Convert a PDF Free</a>
+    </div>
+
     <p><a href="{{ url_for('pages.blogs') }}">Back to all guides</a></p>
 </main>
 {% endblock %}

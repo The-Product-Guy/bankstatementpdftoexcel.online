@@ -253,6 +253,10 @@ def track_event():
         'home_secondary_cta_click',
         'home_footer_cta_click',
         'nav_signin_click',
+        'nav_convert_click',
+        'blog_inline_cta_click',
+        'blog_footer_cta_click',
+        'blog_post_cta_click',
         'pricing_cta_click',
     }
     client_ip = get_client_ip()
@@ -355,9 +359,11 @@ def admin_dashboard():
         'range_jobs': 0,
         'range_completed': 0,
         'range_page_views': 0,
+        'range_home_views': 0,
         'range_unique_visitors': 0,
         'range_signin_visits': 0,
         'range_cta_clicks': 0,
+        'range_home_cta_rate': 0,
         'range_auth_attempts': 0,
         'range_magic_links': 0,
         'range_magic_link_failures': 0,
@@ -365,7 +371,12 @@ def admin_dashboard():
         'range_login_conversion': 0,
         'range_dashboard_visits': 0,
         'range_conversion_starts': 0,
+        'range_upload_start_rate': 0,
         'range_conversion_completions': 0,
+        'range_download_email_submits': 0,
+        'range_downloads': 0,
+        'range_download_email_rate': 0,
+        'range_download_rate': 0,
         'range_feedback': 0,
     }
     daily_metrics = []
@@ -404,6 +415,10 @@ def admin_dashboard():
             stats['page_views_7d'] = db.query(SiteVisit).filter(SiteVisit.created_at >= week_ago).count()
             stats['range_page_views'] = db.query(SiteVisit).filter(
                 SiteVisit.created_at >= analytics_cutoff,
+            ).count()
+            stats['range_home_views'] = db.query(SiteVisit).filter(
+                SiteVisit.created_at >= analytics_cutoff,
+                SiteVisit.path == '/',
             ).count()
             stats['range_signin_visits'] = db.query(SiteVisit).filter(
                 SiteVisit.created_at >= analytics_cutoff,
@@ -459,6 +474,10 @@ def admin_dashboard():
                     'home_secondary_cta_click',
                     'home_footer_cta_click',
                     'nav_signin_click',
+                    'nav_convert_click',
+                    'blog_inline_cta_click',
+                    'blog_footer_cta_click',
+                    'blog_post_cta_click',
                     'pricing_cta_click',
                 ),
             )
@@ -467,6 +486,24 @@ def admin_dashboard():
             stats['range_dashboard_visits'] = _admin_count_funnel_events(db, analytics_cutoff, 'dashboard_visit')
             stats['range_conversion_starts'] = _admin_count_funnel_events(db, analytics_cutoff, 'conversion_start')
             stats['range_conversion_completions'] = _admin_count_funnel_events(db, analytics_cutoff, 'conversion_completed')
+            stats['range_download_email_submits'] = _admin_count_funnel_events(db, analytics_cutoff, 'download_email_submitted')
+            stats['range_downloads'] = _admin_count_funnel_events(db, analytics_cutoff, 'download_started')
+            if stats['range_home_views']:
+                stats['range_home_cta_rate'] = round(stats['range_cta_clicks'] / stats['range_home_views'] * 100, 1)
+            if stats['range_dashboard_visits']:
+                stats['range_upload_start_rate'] = round(
+                    stats['range_conversion_starts'] / stats['range_dashboard_visits'] * 100,
+                    1,
+                )
+            if stats['range_conversion_completions']:
+                stats['range_download_email_rate'] = round(
+                    stats['range_download_email_submits'] / stats['range_conversion_completions'] * 100,
+                    1,
+                )
+                stats['range_download_rate'] = round(
+                    stats['range_downloads'] / stats['range_conversion_completions'] * 100,
+                    1,
+                )
             if stats['magic_links_7d']:
                 stats['login_conversion_7d'] = round(
                     stats['logins_7d'] / stats['magic_links_7d'] * 100,
