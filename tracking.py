@@ -11,6 +11,39 @@ from models import FunnelEvent, LoginEvent, SiteVisit
 
 VISITOR_COOKIE = "sf_visitor_id"
 VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+BOT_USER_AGENT_KEYWORDS = (
+    "ahrefsbot",
+    "amazonbot",
+    "applebot",
+    "baiduspider",
+    "bingbot",
+    "bingpreview",
+    "bytespider",
+    "ccbot",
+    "chatgpt-user",
+    "claudebot",
+    "crawler",
+    "datadog",
+    "discordbot",
+    "dotbot",
+    "duckduckbot",
+    "facebookexternalhit",
+    "gptbot",
+    "googlebot",
+    "google-inspectiontool",
+    "linkedinbot",
+    "mj12bot",
+    "monitoring",
+    "petalbot",
+    "pingdom",
+    "perplexitybot",
+    "semrushbot",
+    "slurp",
+    "spider",
+    "uptimerobot",
+    "whatsapp",
+    "yandexbot",
+)
 IGNORED_EXACT_PATHS = {
     "/favicon.ico",
     "/health",
@@ -38,15 +71,25 @@ def normalize_visitor_id(raw_value: Optional[str]) -> str:
     return str(uuid.uuid4())
 
 
+def is_probable_bot(user_agent: Optional[str]) -> bool:
+    normalized = (user_agent or "").strip().lower()
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in BOT_USER_AGENT_KEYWORDS)
+
+
 def should_track_page_view(
     path: str,
     method: str,
     status_code: int,
     mimetype: Optional[str],
+    user_agent: Optional[str] = None,
 ) -> bool:
     if method != "GET":
         return False
     if status_code >= 400:
+        return False
+    if is_probable_bot(user_agent):
         return False
     if path in IGNORED_EXACT_PATHS:
         return False
@@ -64,6 +107,9 @@ def record_page_view(
     ip: str,
     user_agent: str,
 ) -> None:
+    if is_probable_bot(user_agent):
+        return
+
     with get_db_session() as db:
         db.add(SiteVisit(
             visitor_id=visitor_id,
@@ -88,6 +134,9 @@ def record_funnel_event(
     ip: str = "",
     user_agent: str = "",
 ) -> None:
+    if is_probable_bot(user_agent):
+        return
+
     with get_db_session() as db:
         db.add(FunnelEvent(
             visitor_id=visitor_id,
@@ -124,6 +173,18 @@ def cleanup_tracking_logs(retention_days: int) -> dict:
             .filter(FunnelEvent.created_at < cutoff)
             .delete(synchronize_session=False)
         )
+    return {
+        "site_visits": site_deleted,
+        "login_events": login_deleted,
+        "funnel_events": funnel_deleted,
+    }
+
+
+def clear_tracking_logs() -> dict:
+    with get_db_session() as db:
+        funnel_deleted = db.query(FunnelEvent).delete(synchronize_session=False)
+        login_deleted = db.query(LoginEvent).delete(synchronize_session=False)
+        site_deleted = db.query(SiteVisit).delete(synchronize_session=False)
     return {
         "site_visits": site_deleted,
         "login_events": login_deleted,

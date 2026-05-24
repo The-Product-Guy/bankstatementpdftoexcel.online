@@ -518,7 +518,14 @@ def add_security_headers(response):
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
     try:
-        if should_track_page_view(request.path, request.method, response.status_code, response.mimetype):
+        user_agent = request.headers.get('User-Agent', '')
+        if should_track_page_view(
+            request.path,
+            request.method,
+            response.status_code,
+            response.mimetype,
+            user_agent,
+        ):
             visitor_id = normalize_visitor_id(request.cookies.get(VISITOR_COOKIE))
             response.set_cookie(
                 VISITOR_COOKIE,
@@ -534,7 +541,7 @@ def add_security_headers(response):
                 path=request.path,
                 referrer=request.headers.get('Referer', ''),
                 ip=get_client_ip(),
-                user_agent=request.headers.get('User-Agent', ''),
+                user_agent=user_agent,
             )
     except Exception as exc:
         logger.warning(f"Page-view tracking failed: {exc}")

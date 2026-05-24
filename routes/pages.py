@@ -12,7 +12,7 @@ from sqlalchemy import distinct, func
 from db import get_db_session
 from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
 from parsers.universal_parser import UniversalBankParser
-from tracking import record_funnel_event
+from tracking import clear_tracking_logs, record_funnel_event
 
 logger = logging.getLogger(__name__)
 
@@ -632,6 +632,33 @@ def admin_dashboard():
         analytics_days=analytics_days,
         analytics_retention_days=FIRST_PARTY_ANALYTICS_RETENTION_DAYS,
     )
+
+
+@pages_bp.route('/admin/analytics/reset', methods=['POST'])
+def admin_reset_analytics():
+    if not _require_admin():
+        return "Not found", 404
+
+    csrf_token = request.form.get('csrf_token')
+    if not csrf_token or csrf_token != session.get('csrf_token'):
+        flash('Invalid request token. Please refresh and try again.', 'error')
+        return redirect(url_for('pages.admin_dashboard'))
+
+    if request.form.get('confirm') != 'RESET_TRAFFIC':
+        flash('Analytics reset was not confirmed.', 'error')
+        return redirect(url_for('pages.admin_dashboard'))
+
+    deleted = clear_tracking_logs()
+    flash(
+        (
+            "Traffic analytics cleared: "
+            f"{deleted.get('site_visits', 0)} visits, "
+            f"{deleted.get('funnel_events', 0)} funnel events, "
+            f"{deleted.get('login_events', 0)} login events."
+        ),
+        'success',
+    )
+    return redirect(url_for('pages.admin_dashboard'))
 
 
 @pages_bp.route('/admin/export/users.csv')

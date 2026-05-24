@@ -17,6 +17,11 @@
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_daily_analytics', days=analytics_days) }}">Export Daily Analytics</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_funnel_events', days=analytics_days) }}">Export Funnel</a>
         <a class="btn-secondary" href="{{ url_for('pages.admin_export_feedback', days=analytics_days) }}">Export Feedback</a>
+        <form class="admin-reset-form" action="{{ url_for('pages.admin_reset_analytics') }}" method="post" onsubmit="return confirm('Clear site visits, funnel events, and login-event analytics? Users, jobs, and feedback will be kept.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="confirm" value="RESET_TRAFFIC">
+            <button type="submit" class="btn-danger">Reset Traffic Data</button>
+        </form>
         <form class="admin-range-form" action="{{ url_for('pages.admin_dashboard') }}" method="get">
             <label for="admin-days">Range</label>
             <select id="admin-days" name="days" onchange="this.form.submit()">
