@@ -149,6 +149,15 @@ def convert():
             return redirect(url_for('converter.dashboard'))
 
         bank_code = request.form.get('bank', 'universal')
+        extraction_mode = (
+            request.form.get('extraction_mode')
+            or os.environ.get('DEFAULT_EXTRACTION_MODE', 'layout_replica')
+            or 'layout_replica'
+        ).strip().lower().replace('-', '_')
+        if extraction_mode in {'structured', 'structured_transactions', 'transactions'}:
+            extraction_mode = 'structured_transactions'
+        else:
+            extraction_mode = 'layout_replica'
         pdf_file = request.files['pdf_file']
 
         if pdf_file.filename == '':
@@ -216,13 +225,14 @@ def convert():
                 "type": "s3",
                 "key": object_key,
                 "retain_for_feedback": retain_for_feedback,
+                "extraction_mode": extraction_mode,
             }
             try:
                 os.remove(filepath)
             except Exception:
                 pass
         else:
-            file_ref = {"type": "local", "path": filepath}
+            file_ref = {"type": "local", "path": filepath, "extraction_mode": extraction_mode}
 
         try:
             with get_db_session() as db:

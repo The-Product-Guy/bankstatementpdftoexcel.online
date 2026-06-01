@@ -46,6 +46,7 @@
         </div>
         <form id="uploadForm" action="{{ url_for('converter.convert') }}" method="POST" enctype="multipart/form-data">
             <input type="hidden" name="bank" value="universal">
+            <input type="hidden" name="extraction_mode" value="layout_replica">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="file-upload-area" id="fileUploadArea">
@@ -91,7 +92,7 @@
                         <span class="quality-radio"></span>
                         <div class="quality-info">
                             <span class="quality-name">Standard</span>
-                            <span class="quality-desc">Fast, works for most statements</span>
+                            <span class="quality-desc">Fast, preserves visible PDF layout</span>
                         </div>
                     </label>
                     <label class="quality-option" data-quality="high">
@@ -99,7 +100,7 @@
                         <span class="quality-radio"></span>
                         <div class="quality-info">
                             <span class="quality-name">High Quality</span>
-                            <span class="quality-desc">Slower, better for faded or poor scans</span>
+                            <span class="quality-desc">Slower OCR for faded or poor scans</span>
                         </div>
                     </label>
                 </div>

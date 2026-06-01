@@ -24,6 +24,7 @@ from parsers.ledger_validation import (
 )
 from parsers.ledger_repair import LedgerRepairReport, repair_transactions_from_balance_deltas
 from parsers.statement_summary import extract_statement_summary_from_pdf
+from parsers.layout_replica_parser import create_layout_replica_parser
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
@@ -416,15 +417,20 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     f"(preset={execution_preset} -> paddleocr/img2table disabled)"
                 )
 
-        logger.info(f"Job {job_id}: execution_preset={execution_preset}, quality={quality}")
-        parser = create_universal_parser(
-            progress_callback=progress_callback,
-            # These override environment defaults - remove to use env vars fully
-            execution_preset=execution_preset,
-            use_paddleocr=runtime_use_paddleocr,
-            use_img2table=runtime_use_img2table,
-            use_pymupdf=runtime_use_pymupdf,
-            use_llm=runtime_use_llm,
+        requested_mode = file_ref.get("extraction_mode") if isinstance(file_ref, dict) else None
+        extraction_mode = (
+            requested_mode
+            or os.environ.get("DEFAULT_EXTRACTION_MODE", "layout_replica")
+            or "layout_replica"
+        ).strip().lower().replace("-", "_")
+        if extraction_mode in {"structured", "structured_transactions", "transactions"}:
+            extraction_mode = "structured_transactions"
+        else:
+            extraction_mode = "layout_replica"
+
+        logger.info(
+            f"Job {job_id}: execution_preset={execution_preset}, quality={quality}, "
+            f"extraction_mode={extraction_mode}"
         )
         
         # Determine output path using absolute paths
@@ -435,6 +441,109 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         os.makedirs(output_dir, exist_ok=True)
         
         update_progress(job_id, 0, 100, "Starting extraction...")
+
+        if extraction_mode == "layout_replica":
+            parser = create_layout_replica_parser(
+                progress_callback=progress_callback,
+                quality=quality,
+                use_ocr=runtime_use_paddleocr,
+            )
+            update_progress(job_id, 0, 100, "Recreating PDF layout...", percent_override=5)
+            parser.parse(file_path, original_filename)
+
+            excel_filename = f"{os.path.splitext(original_filename)[0]}_replica.xlsx"
+            excel_path = os.path.join(output_dir, excel_filename)
+            update_progress(job_id, 0, 1, "Generating Excel layout replica...", percent_override=95)
+            parser.write_excel(excel_path)
+
+            ext_meta = getattr(parser, "extraction_metadata", None)
+            quality_report = parser.get_quality_report() if hasattr(parser, "get_quality_report") else {}
+            has_data = bool(ext_meta and ext_meta.has_data)
+            result_extra = {
+                "quality_used": quality,
+                "execution_preset": execution_preset,
+                "extraction_mode": "layout_replica",
+                "runtime_use_paddleocr": runtime_use_paddleocr,
+                "runtime_use_img2table": False,
+                "chunk_orchestrated": False,
+                "statement_summary_found": False,
+                "ledger_repair_count": 0,
+            }
+            if ext_meta:
+                result_extra.update({
+                    "extraction_rows": ext_meta.row_count,
+                    "extraction_cols": ext_meta.col_count,
+                    "extraction_method": ext_meta.extraction_method,
+                    "confidence": ext_meta.confidence,
+                    "document_hint": ext_meta.document_hint,
+                    "quality_message": ext_meta.message,
+                })
+            if quality_report:
+                result_extra.update({
+                    "execution_preset_applied": execution_preset,
+                    "accuracy_proxy_pct": quality_report.get("accuracy_proxy_pct", 0.0),
+                    "quality_row_count": quality_report.get("row_count", 0),
+                    "layout_word_count": quality_report.get("word_count", 0),
+                    "ocr_page_count": quality_report.get("ocr_page_count", 0),
+                    "text_page_count": quality_report.get("text_page_count", 0),
+                    "ocr_confidence_avg": quality_report.get("ocr_confidence_avg", 0.0),
+                })
+
+            status_msg = (
+                "Completed successfully"
+                if has_data
+                else "Completed - no visible text extracted"
+            )
+
+            if storage:
+                output_storage_key = f"outputs/{job_id}/{excel_filename}"
+                upload_file(storage, excel_path, output_storage_key)
+                result_extra["storage"] = "s3"
+                result_extra["download_key"] = output_storage_key
+
+            update_progress(
+                job_id,
+                100,
+                100,
+                status_msg,
+                percent_override=100,
+                extra=result_extra,
+            )
+            _update_job(
+                job_id,
+                status="completed" if has_data else "completed_no_data",
+                finished_at=datetime.utcnow(),
+                output_storage_key=output_storage_key,
+                storage_key=output_storage_key,
+                transaction_count=ext_meta.row_count if ext_meta else 0,
+            )
+            _increment_usage(job_id)
+            _record_worker_funnel_event(job_id, 'conversion_completed', extra=status_msg)
+
+            return {
+                'status': 'success',
+                'job_id': job_id,
+                'excel_path': excel_path,
+                'transaction_count': ext_meta.row_count if ext_meta else 0,
+                'filename': excel_filename,
+                'confidence': ext_meta.confidence if ext_meta else 'unknown',
+                'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,
+                'ledger_valid': None,
+                'ledger_balance_consistency_pct': None,
+                'ledger_repair_count': 0,
+                'statement_summary_found': False,
+                'chunk_orchestrated': False,
+            }
+
+        parser = create_universal_parser(
+            progress_callback=progress_callback,
+            # These override environment defaults - remove to use env vars fully
+            execution_preset=execution_preset,
+            use_paddleocr=runtime_use_paddleocr,
+            use_img2table=runtime_use_img2table,
+            use_pymupdf=runtime_use_pymupdf,
+            use_llm=runtime_use_llm,
+        )
         chunk_orchestrated = False
 
         chunk_enabled = os.environ.get("CHUNK_ORCHESTRATION_ENABLED", "true").strip().lower() in {
