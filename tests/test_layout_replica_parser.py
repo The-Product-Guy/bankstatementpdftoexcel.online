@@ -61,14 +61,9 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
     parser.write_excel(str(output_path))
 
     wb = load_workbook(output_path)
-    assert wb.sheetnames[0] == "Table_Replica"
-    assert "Table_Index" in wb.sheetnames
-    assert "Replica_All" in wb.sheetnames
-    assert "Page_1" in wb.sheetnames
-    assert "Page_Index" in wb.sheetnames
-    assert "Text_Lines" in wb.sheetnames
+    assert wb.sheetnames == ["sheet1"]
 
-    table_sheet = wb["Table_Replica"]
+    table_sheet = wb["sheet1"]
     assert [table_sheet.cell(1, col).value for col in range(1, 6)] == [
         "Date",
         "Description",
@@ -84,20 +79,20 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
         "1,208.75 CR",
     ]
 
-    page_values = [
+    table_values = [
         cell.value
-        for row in wb["Page_1"].iter_rows()
+        for row in table_sheet.iter_rows()
         for cell in row
         if cell.value is not None
     ]
-    assert "1,234.50" in page_values
-    assert "25.75" in page_values
+    assert "1,234.50 CR" in table_values
+    assert "25.75" in table_values
 
-    amount_cell = next(cell for row in wb["Page_1"].iter_rows() for cell in row if cell.value == "1,234.50")
+    amount_cell = next(cell for row in table_sheet.iter_rows() for cell in row if cell.value == "25.75")
     assert amount_cell.number_format == "@"
 
 
-def test_layout_replica_workbook_has_line_audit_sheet(tmp_path):
+def test_layout_replica_workbook_exports_only_table_sheet(tmp_path):
     from parsers.layout_replica_parser import LayoutReplicaParser
 
     pdf_path = tmp_path / "statement.pdf"
@@ -109,13 +104,10 @@ def test_layout_replica_workbook_has_line_audit_sheet(tmp_path):
     parser.write_excel(str(output_path))
 
     wb = load_workbook(output_path)
-    lines_sheet = wb["Text_Lines"]
-    line_texts = [row[3].value for row in lines_sheet.iter_rows(min_row=2) if row[3].value]
-    assert any("CARD PAYMENT ABC-123" in text for text in line_texts)
-
-    index_sheet = wb["Page_Index"]
-    assert index_sheet["A2"].value == "1"
-    assert index_sheet["E2"].value == "ok"
+    assert wb.sheetnames == ["sheet1"]
+    sheet = wb["sheet1"]
+    assert sheet.max_column == 5
+    assert sheet.max_row == 3
 
 
 def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():

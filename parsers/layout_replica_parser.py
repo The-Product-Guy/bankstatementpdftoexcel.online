@@ -185,31 +185,12 @@ class LayoutReplicaParser(BaseParser):
         return self.transactions
 
     def write_excel(self, output_path: str) -> None:
-        """Write a coordinate-based workbook. All values are strings."""
+        """Write the inferred table replica workbook. All values are strings."""
         wb = Workbook()
         default_sheet = wb.active
         wb.remove(default_sheet)
 
         self._write_table_replica_sheet(wb)
-        combined = wb.create_sheet("Replica_All")
-        current_row = 1
-        for page in self.pages:
-            current_row = self._write_page_sheet_rows(
-                combined,
-                page,
-                start_row=current_row,
-                include_page_header=True,
-            )
-            current_row += 2
-
-        for page in self.pages:
-            sheet = wb.create_sheet(self._safe_sheet_title(f"Page_{page.page_number}"))
-            self._write_page_sheet_rows(sheet, page, start_row=1, include_page_header=False)
-
-        self._write_page_index_sheet(wb)
-        self._write_lines_sheet(wb)
-        self._write_table_index_sheet(wb)
-        self._write_metadata_sheet(wb)
         wb.save(output_path)
 
     def get_quality_report(self) -> Dict[str, Any]:
@@ -742,7 +723,7 @@ class LayoutReplicaParser(BaseParser):
         return " ".join(word.text for word in sorted(words, key=lambda item: item.x0)).strip()
 
     def _write_table_replica_sheet(self, wb: Workbook) -> None:
-        sheet = wb.create_sheet("Table_Replica")
+        sheet = wb.create_sheet("sheet1")
         headers = [column.header for column in self.table_columns]
         if not headers:
             headers = ["No table detected"]
