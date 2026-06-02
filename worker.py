@@ -208,8 +208,12 @@ def _warmup_ocr_models():
         _PADDLE_WARMUP_AVAILABLE = False
 
 
-# Warm up models at worker import time (before accepting tasks)
-_warmup_ocr_models()
+# Warm up models only inside the worker service. The web service must be able to
+# enqueue jobs without importing OCR models or paying Paddle startup cost.
+if os.environ.get("SERVICE_ROLE", "").strip().lower() != "web":
+    _warmup_ocr_models()
+else:
+    logger.info("Skipping OCR model warmup in web service role.")
 
 def _update_job(job_id, **fields):
     try:

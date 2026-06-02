@@ -5,6 +5,7 @@ Run with: python -m pytest tests/test_routes.py -v
 """
 import os
 import sys
+from io import BytesIO
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -236,6 +237,46 @@ class TestProtectedRoutes:
         })
         # Should fail gracefully (no file uploaded)
         assert resp.status_code in (302, 400, 500)
+
+    def test_convert_enqueues_without_importing_worker(self, client, monkeypatch):
+        from reportlab.pdfgen import canvas
+
+        sys.modules.pop("worker", None)
+        task_id = f"task-{uuid.uuid4().hex}"
+        mock_task = SimpleNamespace(id=task_id)
+        mock_send = MagicMock(return_value=mock_task)
+        fake_celery_config = SimpleNamespace(
+            celery_app=SimpleNamespace(send_task=mock_send)
+        )
+        monkeypatch.setitem(sys.modules, "celery_config", fake_celery_config)
+
+        pdf_buffer = BytesIO()
+        c = canvas.Canvas(pdf_buffer)
+        c.drawString(72, 720, "Test PDF")
+        c.save()
+        pdf_buffer.seek(0)
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+
+        resp = client.post(
+            "/convert",
+            data={
+                "csrf_token": "test-token",
+                "pdf_file": (pdf_buffer, "statement.pdf"),
+                "quality": "standard",
+                "extraction_mode": "layout_replica",
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 202
+        data = resp.get_json()
+        assert data["task_id"] == task_id
+        mock_send.assert_called_once()
+        assert mock_send.call_args.args[0] == "worker.process_pdf"
+        assert "worker" not in sys.modules
 
     def test_download_email_capture_links_guest_job_to_user(self, client):
         from db import get_db_session, init_db

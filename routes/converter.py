@@ -267,8 +267,11 @@ def convert():
         except Exception:
             pass
 
-        from worker import process_pdf_task
-        task = process_pdf_task.delay(file_ref, filename, job_id, api_key, quality)
+        from celery_config import celery_app
+        task = celery_app.send_task(
+            'worker.process_pdf',
+            args=[file_ref, filename, job_id, api_key, quality],
+        )
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return jsonify({
