@@ -116,3 +116,33 @@ def test_layout_replica_workbook_has_line_audit_sheet(tmp_path):
     index_sheet = wb["Page_Index"]
     assert index_sheet["A2"].value == "1"
     assert index_sheet["E2"].value == "ok"
+
+
+def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
+    from parsers.layout_replica_parser import LayoutReplicaParser
+
+    pdf_path = (
+        Path(__file__).parent
+        / "data"
+        / "india_v1"
+        / "KVB-CA-PART-03- 01.04.2019 TO 31.03.2020.pdf"
+    )
+
+    parser = LayoutReplicaParser(use_ocr=False)
+    parser.parse(str(pdf_path), pdf_path.name, page_start=1, page_end=2)
+
+    page_two_rows = [
+        row.values for row in parser.table_rows
+        if row.page == 2
+    ]
+    assert [
+        "13/04/19",
+        "13/04/19",
+        "1763",
+        "MPAY/UPI/FI Funds Trans-1",
+        "772108174541",
+        "8,600.00",
+        "",
+        "42,557.10",
+    ] in page_two_rows
+    assert not any("STATEMENT OF ACCOUNT" in " ".join(row) for row in page_two_rows)

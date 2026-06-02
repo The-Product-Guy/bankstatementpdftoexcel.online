@@ -446,7 +446,6 @@ class LayoutReplicaParser(BaseParser):
         for page in self.pages:
             header_line = self._detect_table_header_line(page)
             page_columns: List[TableColumn] = []
-            table_start_index = 1
 
             if header_line:
                 page_columns = self._columns_from_header_line(header_line, page.width)
@@ -457,7 +456,6 @@ class LayoutReplicaParser(BaseParser):
                             TableColumn(col.header, col.x0, col.x1, col.left, col.right)
                             for col in page_columns
                         ]
-                    table_start_index = header_line.index + 1
 
             if not active_columns:
                 self.table_page_summaries.append({
@@ -472,8 +470,6 @@ class LayoutReplicaParser(BaseParser):
             before_count = len(self.table_rows)
             saw_data_row = False
             for line in page.lines:
-                if line.index < table_start_index:
-                    continue
                 if self._is_separator_line(line):
                     continue
                 if header_line and line.index == header_line.index:
@@ -482,6 +478,8 @@ class LayoutReplicaParser(BaseParser):
                 values = self._assign_line_to_table_columns(line, active_columns)
                 populated = sum(1 for value in values if value)
                 if not populated:
+                    continue
+                if not self._is_table_relevant_row(line, values, active_columns, saw_data_row):
                     continue
 
                 # Continuation lines usually only populate the description-like
@@ -656,6 +654,68 @@ class LayoutReplicaParser(BaseParser):
 
         self._move_narrow_column_overflow(buckets, columns)
         return [self._join_words(words) for words in buckets]
+
+    def _is_table_relevant_row(
+        self,
+        line: LayoutLine,
+        values: List[str],
+        columns: List[TableColumn],
+        saw_data_row: bool,
+    ) -> bool:
+        text = line.text.strip()
+        if self._is_document_context_line(text):
+            return False
+
+        populated_indices = [idx for idx, value in enumerate(values) if value]
+        if not populated_indices:
+            return False
+
+        first_two_values = values[:2]
+        if any(self._looks_like_date_value(value) for value in first_two_values if value):
+            return True
+
+        amount_col_indices = [
+            idx for idx, column in enumerate(columns)
+            if self._is_amount_header(column.header)
+        ]
+        if any(
+            idx in amount_col_indices and self._contains_amount_value(values[idx])
+            for idx in populated_indices
+        ):
+            return True
+
+        if len(populated_indices) == 1 and saw_data_row:
+            column = columns[populated_indices[0]]
+            return self._is_wide_text_header(column.header)
+
+        return False
+
+    @staticmethod
+    def _is_document_context_line(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        if not normalized:
+            return True
+        context_patterns = (
+            r"^page\s*:",
+            r"statement of account",
+            r"account number",
+            r"period from",
+            r"period to",
+            r"nominee\s*:",
+            r"^branch\s*:",
+            r"\bindian rupees\b",
+            r"\bbank ltd\b",
+            r"\bbank limited\b",
+        )
+        return any(re.search(pattern, normalized) for pattern in context_patterns)
+
+    @staticmethod
+    def _is_amount_header(header: str) -> bool:
+        normalized = header.lower()
+        return any(token in normalized for token in ("debit", "credit", "balance", "amount", "withdraw", "deposit"))
+
+    def _contains_amount_value(self, text: str) -> bool:
+        return any(self._looks_like_amount_value(part) for part in str(text).split())
 
     @staticmethod
     def _table_column_index_for_word(word: LayoutWord, columns: List[TableColumn]) -> Optional[int]:
