@@ -483,6 +483,9 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                     "execution_preset_applied": execution_preset,
                     "accuracy_proxy_pct": quality_report.get("accuracy_proxy_pct", 0.0),
                     "quality_row_count": quality_report.get("row_count", 0),
+                    "table_row_count": quality_report.get("table_row_count", 0),
+                    "table_column_count": quality_report.get("table_column_count", 0),
+                    "table_page_count": quality_report.get("table_page_count", 0),
                     "layout_word_count": quality_report.get("word_count", 0),
                     "ocr_page_count": quality_report.get("ocr_page_count", 0),
                     "text_page_count": quality_report.get("text_page_count", 0),
@@ -515,7 +518,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 finished_at=datetime.utcnow(),
                 output_storage_key=output_storage_key,
                 storage_key=output_storage_key,
-                transaction_count=ext_meta.row_count if ext_meta else 0,
+                transaction_count=quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
             )
             _increment_usage(job_id)
             _record_worker_funnel_event(job_id, 'conversion_completed', extra=status_msg)
@@ -524,7 +527,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 'status': 'success',
                 'job_id': job_id,
                 'excel_path': excel_path,
-                'transaction_count': ext_meta.row_count if ext_meta else 0,
+                'transaction_count': quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
                 'filename': excel_filename,
                 'confidence': ext_meta.confidence if ext_meta else 'unknown',
                 'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,

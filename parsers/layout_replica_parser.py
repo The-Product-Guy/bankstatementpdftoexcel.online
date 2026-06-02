@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import statistics
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -84,6 +85,27 @@ class LayoutExtractionMetadata:
     message: str = ""
 
 
+@dataclass
+class TableColumn:
+    header: str
+    x0: float
+    x1: float
+    left: float
+    right: float
+
+    @property
+    def width(self) -> float:
+        return max(1.0, self.right - self.left)
+
+
+@dataclass
+class TableReplicaRow:
+    page: int
+    line: int
+    values: List[str]
+    source: str
+
+
 class LayoutReplicaParser(BaseParser):
     """Recreate visible PDF layout in Excel without transaction semantics."""
 
@@ -103,6 +125,9 @@ class LayoutReplicaParser(BaseParser):
         self.use_ocr = use_ocr
         self.pages: List[LayoutPage] = []
         self.raw_table: Optional[Dict[str, Any]] = None
+        self.table_columns: List[TableColumn] = []
+        self.table_rows: List[TableReplicaRow] = []
+        self.table_page_summaries: List[Dict[str, Any]] = []
         self.extraction_metadata = LayoutExtractionMetadata()
         self.quality_report: Dict[str, Any] = {}
         self.source_filename = ""
@@ -120,6 +145,9 @@ class LayoutReplicaParser(BaseParser):
         self.transactions = []
         self.pages = []
         self.raw_table = None
+        self.table_columns = []
+        self.table_rows = []
+        self.table_page_summaries = []
         self.quality_report = {}
 
         import pdfplumber
@@ -151,6 +179,7 @@ class LayoutReplicaParser(BaseParser):
                 ))
 
         self._build_raw_table()
+        self._build_table_replica()
         self._build_metadata()
         self.quality_report = self._build_quality_report()
         return self.transactions
@@ -161,6 +190,7 @@ class LayoutReplicaParser(BaseParser):
         default_sheet = wb.active
         wb.remove(default_sheet)
 
+        self._write_table_replica_sheet(wb)
         combined = wb.create_sheet("Replica_All")
         current_row = 1
         for page in self.pages:
@@ -178,6 +208,7 @@ class LayoutReplicaParser(BaseParser):
 
         self._write_page_index_sheet(wb)
         self._write_lines_sheet(wb)
+        self._write_table_index_sheet(wb)
         self._write_metadata_sheet(wb)
         wb.save(output_path)
 
@@ -409,6 +440,309 @@ class LayoutReplicaParser(BaseParser):
         for col_idx in range(1, max_col + 1):
             sheet.column_dimensions[get_column_letter(col_idx)].width = 1.6
 
+    def _build_table_replica(self) -> None:
+        """Build a table-first view using inferred table headers and columns."""
+        active_columns: List[TableColumn] = []
+        for page in self.pages:
+            header_line = self._detect_table_header_line(page)
+            page_columns: List[TableColumn] = []
+            table_start_index = 1
+
+            if header_line:
+                page_columns = self._columns_from_header_line(header_line, page.width)
+                if len(page_columns) >= 2:
+                    active_columns = page_columns
+                    if len(page_columns) > len(self.table_columns):
+                        self.table_columns = [
+                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
+                            for col in page_columns
+                        ]
+                    table_start_index = header_line.index + 1
+
+            if not active_columns:
+                self.table_page_summaries.append({
+                    "page": page.page_number,
+                    "header_line": "",
+                    "columns": 0,
+                    "rows": 0,
+                    "status": "no_table_header",
+                })
+                continue
+
+            before_count = len(self.table_rows)
+            saw_data_row = False
+            for line in page.lines:
+                if line.index < table_start_index:
+                    continue
+                if self._is_separator_line(line):
+                    continue
+                if header_line and line.index == header_line.index:
+                    continue
+
+                values = self._assign_line_to_table_columns(line, active_columns)
+                populated = sum(1 for value in values if value)
+                if not populated:
+                    continue
+
+                # Continuation lines usually only populate the description-like
+                # column. Keep them as table rows only after table data has begun.
+                if populated == 1 and not saw_data_row:
+                    continue
+                if populated >= 2:
+                    saw_data_row = True
+
+                self.table_rows.append(TableReplicaRow(
+                    page=page.page_number,
+                    line=line.index,
+                    values=values,
+                    source=page.source,
+                ))
+
+            self.table_page_summaries.append({
+                "page": page.page_number,
+                "header_line": str(header_line.index) if header_line else "",
+                "columns": len(active_columns),
+                "rows": len(self.table_rows) - before_count,
+                "status": "ok" if len(self.table_rows) > before_count else "no_table_rows",
+            })
+
+        if not self.table_columns and self.table_rows:
+            max_width = max(len(row.values) for row in self.table_rows)
+            self.table_columns = [
+                TableColumn(f"Column {idx}", 0.0, 0.0, 0.0, 0.0)
+                for idx in range(1, max_width + 1)
+            ]
+
+    def _detect_table_header_line(self, page: LayoutPage) -> Optional[LayoutLine]:
+        best_line: Optional[LayoutLine] = None
+        best_score = 0.0
+        lines_by_index = {line.index: line for line in page.lines}
+
+        for line in page.lines:
+            if len(line.words) < 3 or self._is_separator_line(line):
+                continue
+
+            words = [word.text.strip() for word in line.words if word.text.strip()]
+            if not words:
+                continue
+
+            alpha_words = sum(1 for word in words if re.search(r"[A-Za-z_]", word))
+            numeric_words = sum(1 for word in words if re.search(r"\d", word))
+            date_like_words = sum(1 for word in words if self._looks_like_date_value(word))
+            amount_like_words = sum(1 for word in words if self._looks_like_amount_value(word))
+            if alpha_words < 2 or numeric_words >= alpha_words:
+                continue
+            if date_like_words or amount_like_words >= 2:
+                continue
+
+            previous_separator = any(
+                self._is_separator_line(lines_by_index[idx])
+                for idx in range(max(1, line.index - 2), line.index)
+                if idx in lines_by_index
+            )
+            next_separator = any(
+                self._is_separator_line(lines_by_index[idx])
+                for idx in range(line.index + 1, line.index + 3)
+                if idx in lines_by_index
+            )
+            word_span = max(word.x1 for word in line.words) - min(word.x0 for word in line.words)
+            uppercaseish = sum(
+                1 for word in words
+                if not re.search(r"[a-z]", word) or "_" in word
+            )
+
+            score = len(words) + alpha_words + (word_span / 120.0) + (uppercaseish / 2.0)
+            if previous_separator:
+                score += 4.0
+            if next_separator:
+                score += 5.0
+
+            if score > best_score:
+                best_score = score
+                best_line = line
+
+        return best_line if best_score >= 8.0 else None
+
+    @staticmethod
+    def _looks_like_date_value(text: str) -> bool:
+        return bool(re.fullmatch(r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}", text.strip()))
+
+    @staticmethod
+    def _looks_like_amount_value(text: str) -> bool:
+        value = text.strip().replace(",", "")
+        return bool(re.fullmatch(r"\d+(?:\.\d{1,4})?", value))
+
+    @staticmethod
+    def _is_separator_line(line: LayoutLine) -> bool:
+        text = "".join(word.text for word in line.words).strip()
+        if len(text) < 12:
+            return False
+        separator_chars = sum(1 for ch in text if ch in "-_=—–.")
+        return separator_chars / max(len(text), 1) >= 0.85
+
+    def _columns_from_header_line(self, header_line: LayoutLine, page_width: float) -> List[TableColumn]:
+        groups: List[List[LayoutWord]] = []
+        current: List[LayoutWord] = []
+        char_widths = [
+            word.width / max(len(word.text), 1)
+            for word in header_line.words
+            if word.text
+        ]
+        median_char_width = statistics.median(char_widths) if char_widths else 5.0
+        merge_gap = max(5.5, min(8.5, median_char_width * 1.45))
+
+        for word in sorted(header_line.words, key=lambda item: item.x0):
+            if not current:
+                current = [word]
+                continue
+            gap = word.x0 - current[-1].x1
+            if gap <= merge_gap:
+                current.append(word)
+            else:
+                groups.append(current)
+                current = [word]
+        if current:
+            groups.append(current)
+
+        header_cells = []
+        for group in groups:
+            text = " ".join(word.text.strip() for word in group if word.text.strip())
+            if not text:
+                continue
+            header_cells.append({
+                "header": text,
+                "x0": min(word.x0 for word in group),
+                "x1": max(word.x1 for word in group),
+            })
+
+        columns: List[TableColumn] = []
+        for idx, cell in enumerate(header_cells):
+            if idx == 0:
+                left = max(0.0, cell["x0"] - 8.0)
+            else:
+                prev = header_cells[idx - 1]
+                left = (prev["x1"] + cell["x0"]) / 2.0
+
+            if idx == len(header_cells) - 1:
+                right = min(page_width, cell["x1"] + 20.0)
+            else:
+                nxt = header_cells[idx + 1]
+                if self._is_wide_text_header(str(cell["header"])):
+                    right = max(cell["x1"], nxt["x0"] - 2.0)
+                else:
+                    right = (cell["x1"] + nxt["x0"]) / 2.0
+
+            columns.append(TableColumn(
+                header=str(cell["header"]),
+                x0=float(cell["x0"]),
+                x1=float(cell["x1"]),
+                left=float(left),
+                right=float(right),
+            ))
+        return columns
+
+    @staticmethod
+    def _is_wide_text_header(header: str) -> bool:
+        normalized = header.lower()
+        tokens = ("description", "details", "narration", "particular", "remarks", "reference", "ref")
+        return any(token in normalized for token in tokens)
+
+    def _assign_line_to_table_columns(self, line: LayoutLine, columns: List[TableColumn]) -> List[str]:
+        buckets: List[List[LayoutWord]] = [[] for _ in columns]
+        for word in sorted(line.words, key=lambda item: item.x0):
+            col_idx = self._table_column_index_for_word(word, columns)
+            if col_idx is not None:
+                buckets[col_idx].append(word)
+
+        self._move_narrow_column_overflow(buckets, columns)
+        return [self._join_words(words) for words in buckets]
+
+    @staticmethod
+    def _table_column_index_for_word(word: LayoutWord, columns: List[TableColumn]) -> Optional[int]:
+        center = (word.x0 + word.x1) / 2.0
+        for idx, column in enumerate(columns):
+            if column.left <= center < column.right:
+                return idx
+        if columns and center >= columns[-1].right and word.x0 <= columns[-1].right + 16.0:
+            return len(columns) - 1
+        return None
+
+    @staticmethod
+    def _move_narrow_column_overflow(buckets: List[List[LayoutWord]], columns: List[TableColumn]) -> None:
+        for idx, column in enumerate(columns[:-1]):
+            if column.width >= 45.0 or len(buckets[idx]) <= 1:
+                continue
+            keep = buckets[idx][:1]
+            overflow = buckets[idx][1:]
+            buckets[idx] = keep
+            buckets[idx + 1] = sorted(overflow + buckets[idx + 1], key=lambda item: item.x0)
+
+    @staticmethod
+    def _join_words(words: List[LayoutWord]) -> str:
+        return " ".join(word.text for word in sorted(words, key=lambda item: item.x0)).strip()
+
+    def _write_table_replica_sheet(self, wb: Workbook) -> None:
+        sheet = wb.create_sheet("Table_Replica")
+        headers = [column.header for column in self.table_columns]
+        if not headers:
+            headers = ["No table detected"]
+
+        for col_idx, header in enumerate(headers, 1):
+            cell = sheet.cell(row=1, column=col_idx, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="EAF2F8")
+            cell.number_format = "@"
+            sheet.column_dimensions[get_column_letter(col_idx)].width = self._table_column_width(header)
+
+        for row_idx, row in enumerate(self.table_rows, 2):
+            values = row.values[:len(headers)]
+            if len(values) < len(headers):
+                values += [""] * (len(headers) - len(values))
+            for col_idx, value in enumerate(values, 1):
+                cell = sheet.cell(row=row_idx, column=col_idx, value=str(value) if value else "")
+                cell.number_format = "@"
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+
+    @staticmethod
+    def _table_column_width(header: str) -> float:
+        normalized = header.lower()
+        if any(token in normalized for token in ("description", "details", "narration", "particular")):
+            return 42
+        if any(token in normalized for token in ("reference", "ref", "remarks")):
+            return 24
+        if any(token in normalized for token in ("balance", "debit", "credit", "amount")):
+            return 16
+        if any(token in normalized for token in ("date", "dt")):
+            return 13
+        return max(10, min(22, len(header) + 4))
+
+    def _write_table_index_sheet(self, wb: Workbook) -> None:
+        sheet = wb.create_sheet("Table_Index")
+        headers = ["Page", "Header Line", "Columns", "Rows", "Status"]
+        for col_idx, header in enumerate(headers, 1):
+            cell = sheet.cell(row=1, column=col_idx, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="EAF2F8")
+
+        for row_idx, summary in enumerate(self.table_page_summaries, 2):
+            values = [
+                str(summary.get("page", "")),
+                str(summary.get("header_line", "")),
+                str(summary.get("columns", "")),
+                str(summary.get("rows", "")),
+                str(summary.get("status", "")),
+            ]
+            for col_idx, value in enumerate(values, 1):
+                cell = sheet.cell(row=row_idx, column=col_idx, value=value)
+                cell.number_format = "@"
+
+        widths = [10, 14, 12, 10, 18]
+        for col_idx, width in enumerate(widths, 1):
+            sheet.column_dimensions[get_column_letter(col_idx)].width = width
+
     def _write_lines_sheet(self, wb: Workbook) -> None:
         sheet = wb.create_sheet("Text_Lines")
         headers = ["Page", "Line", "Source", "Text"]
@@ -460,6 +794,8 @@ class LayoutReplicaParser(BaseParser):
             ("Mode", "layout_replica"),
             ("Source file", self.source_filename),
             ("Pages", str(len(self.pages))),
+            ("Table rows", str(len(self.table_rows))),
+            ("Table columns", str(len(self.table_columns))),
             ("Visual lines", str(self.extraction_metadata.row_count)),
             ("Approx. layout columns", str(self.extraction_metadata.col_count)),
             ("PDF type", self.extraction_metadata.pdf_type),
@@ -538,6 +874,9 @@ class LayoutReplicaParser(BaseParser):
             "pdf_type": self.extraction_metadata.pdf_type,
             "total_pages": len(self.pages),
             "row_count": self.extraction_metadata.row_count,
+            "table_row_count": len(self.table_rows),
+            "table_column_count": len(self.table_columns),
+            "table_page_count": sum(1 for summary in self.table_page_summaries if summary.get("rows", 0)),
             "word_count": word_count,
             "ocr_page_count": sum(1 for page in self.pages if page.source == "ocr"),
             "text_page_count": sum(1 for page in self.pages if page.source == "pdf-text"),

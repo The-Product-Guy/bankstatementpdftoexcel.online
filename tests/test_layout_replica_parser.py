@@ -38,6 +38,20 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
     assert parser.extraction_metadata.extraction_method == "layout_replica"
     assert parser.extraction_metadata.pdf_type == "text"
     assert parser.raw_table is not None
+    assert [column.header for column in parser.table_columns] == [
+        "Date",
+        "Description",
+        "Debit",
+        "Credit",
+        "Balance",
+    ]
+    assert parser.table_rows[1].values == [
+        "02/01/2026",
+        "CARD PAYMENT ABC-123",
+        "25.75",
+        "",
+        "1,208.75 CR",
+    ]
 
     raw_lines = [" ".join(row) for row in parser.raw_table["rows"]]
     assert any("Statement Details" in line for line in raw_lines)
@@ -47,10 +61,28 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
     parser.write_excel(str(output_path))
 
     wb = load_workbook(output_path)
+    assert wb.sheetnames[0] == "Table_Replica"
+    assert "Table_Index" in wb.sheetnames
     assert "Replica_All" in wb.sheetnames
     assert "Page_1" in wb.sheetnames
     assert "Page_Index" in wb.sheetnames
     assert "Text_Lines" in wb.sheetnames
+
+    table_sheet = wb["Table_Replica"]
+    assert [table_sheet.cell(1, col).value for col in range(1, 6)] == [
+        "Date",
+        "Description",
+        "Debit",
+        "Credit",
+        "Balance",
+    ]
+    assert [table_sheet.cell(3, col).value for col in range(1, 6)] == [
+        "02/01/2026",
+        "CARD PAYMENT ABC-123",
+        "25.75",
+        None,
+        "1,208.75 CR",
+    ]
 
     page_values = [
         cell.value
