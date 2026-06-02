@@ -138,3 +138,86 @@ def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
         "42,557.10",
     ] in page_two_rows
     assert not any("STATEMENT OF ACCOUNT" in " ".join(row) for row in page_two_rows)
+
+
+def test_table_replica_infers_columns_when_header_is_missing():
+    from parsers.layout_replica_parser import LayoutLine, LayoutPage, LayoutReplicaParser, LayoutWord
+
+    def make_line(index, words):
+        layout_words = [
+            LayoutWord(
+                text=text,
+                x0=x0,
+                x1=x1,
+                top=index * 10.0,
+                bottom=index * 10.0 + 8.0,
+                page=1,
+                source="ocr",
+            )
+            for text, x0, x1 in words
+        ]
+        return LayoutLine(
+            page=1,
+            index=index,
+            top=index * 10.0,
+            bottom=index * 10.0 + 8.0,
+            center_y=index * 10.0 + 4.0,
+            words=layout_words,
+            text=" ".join(word.text for word in layout_words),
+        )
+
+    parser = LayoutReplicaParser(use_ocr=False)
+    parser.pages = [
+        LayoutPage(
+            page_number=1,
+            width=600,
+            height=800,
+            source="ocr",
+            words=[],
+            lines=[
+                make_line(1, [("From", 5, 25), (":", 28, 32), ("01/04/2018", 40, 90)]),
+                make_line(2, [
+                    ("29/01/25", 6, 41),
+                    ("UPI-SELVI", 47, 176),
+                    ("0000024036557328", 266, 332),
+                    ("29/01/25", 338, 370),
+                    ("72.00", 426, 449),
+                    ("0.00", 508, 526),
+                    ("1,523.00", 570, 596),
+                ]),
+                make_line(3, [("PTY-YESB0MCHUPI-024036557328-PAYMENT", 47, 218)]),
+                make_line(4, [("Closing balance includes funds earmarked for hold", 47, 300)]),
+            ],
+        )
+    ]
+
+    parser._build_table_replica()
+
+    assert [column.header for column in parser.table_columns] == [
+        "Column 1",
+        "Column 2",
+        "Column 3",
+        "Column 4",
+        "Column 5",
+        "Column 6",
+        "Column 7",
+    ]
+    assert parser.table_rows[0].values == [
+        "29/01/25",
+        "UPI-SELVI",
+        "0000024036557328",
+        "29/01/25",
+        "72.00",
+        "0.00",
+        "1,523.00",
+    ]
+    assert parser.table_rows[1].values == [
+        "",
+        "PTY-YESB0MCHUPI-024036557328-PAYMENT",
+        "",
+        "",
+        "",
+        "",
+        "",
+    ]
+    assert len(parser.table_rows) == 2

@@ -401,6 +401,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             if not (execution_preset == "local-low-mem" and not railway_detected and not env_preset):
                 execution_preset = "prod-high-accuracy"
 
+        runtime_use_ocr = os.environ.get('USE_OCR', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
         runtime_use_paddleocr = True
         runtime_use_img2table = True
         runtime_use_pymupdf = os.environ.get('USE_PYMUPDF', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
@@ -446,7 +447,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             parser = create_layout_replica_parser(
                 progress_callback=progress_callback,
                 quality=quality,
-                use_ocr=runtime_use_paddleocr,
+                use_ocr=runtime_use_ocr,
             )
             update_progress(job_id, 0, 100, "Recreating PDF layout...", percent_override=5)
             parser.parse(file_path, original_filename)
@@ -463,6 +464,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 "quality_used": quality,
                 "execution_preset": execution_preset,
                 "extraction_mode": "layout_replica",
+                "runtime_use_ocr": runtime_use_ocr,
                 "runtime_use_paddleocr": runtime_use_paddleocr,
                 "runtime_use_img2table": False,
                 "chunk_orchestrated": False,

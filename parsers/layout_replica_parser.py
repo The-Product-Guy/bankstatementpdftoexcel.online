@@ -259,17 +259,47 @@ class LayoutReplicaParser(BaseParser):
         page_height: float,
     ) -> List[LayoutWord]:
         try:
-            from .paddleocr_processor import PaddleOCRProcessor
-
             image = self._render_page_image(pdf_path, page_num)
-            processor = PaddleOCRProcessor(use_table_structure=False)
-            results = processor.extract_with_coordinates(image, confidence_threshold=0.35)
         except Exception as exc:
-            logger.warning("OCR layout extraction failed on page %s: %s", page_num, exc)
+            logger.warning("Unable to render page %s for OCR: %s", page_num, exc)
             return []
 
-        scale_x = page_width / max(float(image.width), 1.0)
-        scale_y = page_height / max(float(image.height), 1.0)
+        try:
+            from .paddleocr_processor import PaddleOCRProcessor
+
+            processor = PaddleOCRProcessor(use_table_structure=False)
+            results = processor.extract_with_coordinates(image, confidence_threshold=0.35)
+            words = self._ocr_results_to_layout_words(
+                results,
+                page_num,
+                page_width,
+                page_height,
+                image.width,
+                image.height,
+                source="ocr",
+            )
+            if words:
+                return words
+        except Exception as exc:
+            logger.warning("PaddleOCR layout extraction failed on page %s: %s", page_num, exc)
+
+        words = self._extract_tesseract_words(image, page_num, page_width, page_height)
+        if not words:
+            logger.warning("OCR layout extraction returned no words on page %s", page_num)
+        return words
+
+    def _ocr_results_to_layout_words(
+        self,
+        results: List[Dict[str, Any]],
+        page_num: int,
+        page_width: float,
+        page_height: float,
+        image_width: int,
+        image_height: int,
+        source: str,
+    ) -> List[LayoutWord]:
+        scale_x = page_width / max(float(image_width), 1.0)
+        scale_y = page_height / max(float(image_height), 1.0)
         words: List[LayoutWord] = []
         for item in results:
             text = str(item.get("text") or "").strip()
@@ -285,12 +315,81 @@ class LayoutReplicaParser(BaseParser):
                     top=top * scale_y,
                     bottom=bottom * scale_y,
                     page=page_num,
-                    source="ocr",
+                    source=source,
                     confidence=float(item.get("confidence", 0.0)),
                 ))
             except (TypeError, ValueError):
                 continue
         return words
+
+    def _extract_tesseract_words(
+        self,
+        image,
+        page_num: int,
+        page_width: float,
+        page_height: float,
+    ) -> List[LayoutWord]:
+        try:
+            import pytesseract
+        except ImportError:
+            logger.warning("Tesseract OCR fallback unavailable; pytesseract is not installed.")
+            return []
+
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        scale_x = page_width / max(float(image.width), 1.0)
+        scale_y = page_height / max(float(image.height), 1.0)
+        configs = (
+            "--psm 6 -c preserve_interword_spaces=1",
+            "--psm 11",
+        )
+
+        for config in configs:
+            try:
+                data = pytesseract.image_to_data(
+                    image,
+                    output_type=pytesseract.Output.DICT,
+                    config=config,
+                )
+            except Exception as exc:
+                logger.warning("Tesseract OCR failed on page %s with %s: %s", page_num, config, exc)
+                continue
+
+            words: List[LayoutWord] = []
+            texts = data.get("text", [])
+            for idx, raw_text in enumerate(texts):
+                text = str(raw_text or "").strip()
+                if not text:
+                    continue
+                try:
+                    confidence = float(data.get("conf", [0])[idx])
+                except (TypeError, ValueError, IndexError):
+                    confidence = 0.0
+                if confidence >= 0 and confidence < 30:
+                    continue
+                try:
+                    left = float(data["left"][idx])
+                    top = float(data["top"][idx])
+                    width = float(data["width"][idx])
+                    height = float(data["height"][idx])
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                if width <= 0 or height <= 0:
+                    continue
+                words.append(LayoutWord(
+                    text=text,
+                    x0=left * scale_x,
+                    x1=(left + width) * scale_x,
+                    top=top * scale_y,
+                    bottom=(top + height) * scale_y,
+                    page=page_num,
+                    source="ocr-tesseract",
+                    confidence=confidence / 100 if confidence > 1 else confidence,
+                ))
+            if words:
+                return words
+        return []
 
     def _render_page_image(self, pdf_path: str, page_num: int):
         try:
@@ -427,11 +526,13 @@ class LayoutReplicaParser(BaseParser):
         for page in self.pages:
             header_line = self._detect_table_header_line(page)
             page_columns: List[TableColumn] = []
+            column_status = "carried"
 
             if header_line:
                 page_columns = self._columns_from_header_line(header_line, page.width)
                 if len(page_columns) >= 2:
                     active_columns = page_columns
+                    column_status = "header"
                     if len(page_columns) > len(self.table_columns):
                         self.table_columns = [
                             TableColumn(col.header, col.x0, col.x1, col.left, col.right)
@@ -439,47 +540,48 @@ class LayoutReplicaParser(BaseParser):
                         ]
 
             if not active_columns:
-                self.table_page_summaries.append({
-                    "page": page.page_number,
-                    "header_line": "",
-                    "columns": 0,
-                    "rows": 0,
-                    "status": "no_table_header",
-                })
-                continue
+                inferred_columns = self._columns_from_transaction_lines(page)
+                if inferred_columns:
+                    active_columns = inferred_columns
+                    column_status = "inferred"
+                    if len(inferred_columns) > len(self.table_columns):
+                        self.table_columns = [
+                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
+                            for col in inferred_columns
+                        ]
+                else:
+                    self.table_page_summaries.append({
+                        "page": page.page_number,
+                        "header_line": "",
+                        "columns": 0,
+                        "rows": 0,
+                        "status": "no_table_header",
+                    })
+                    continue
 
             before_count = len(self.table_rows)
-            saw_data_row = False
-            for line in page.lines:
-                if self._is_separator_line(line):
-                    continue
-                if header_line and line.index == header_line.index:
-                    continue
+            page_rows = self._table_rows_from_page(page, active_columns, header_line)
 
-                values = self._assign_line_to_table_columns(line, active_columns)
-                populated = sum(1 for value in values if value)
-                if not populated:
-                    continue
-                if not self._is_table_relevant_row(line, values, active_columns, saw_data_row):
-                    continue
+            if not page_rows:
+                inferred_columns = self._columns_from_transaction_lines(page)
+                if inferred_columns:
+                    inferred_rows = self._table_rows_from_page(page, inferred_columns, None)
+                    if inferred_rows:
+                        active_columns = inferred_columns
+                        column_status = "inferred"
+                        header_line = None
+                        page_rows = inferred_rows
+                        if len(inferred_columns) > len(self.table_columns):
+                            self.table_columns = [
+                                TableColumn(col.header, col.x0, col.x1, col.left, col.right)
+                                for col in inferred_columns
+                            ]
 
-                # Continuation lines usually only populate the description-like
-                # column. Keep them as table rows only after table data has begun.
-                if populated == 1 and not saw_data_row:
-                    continue
-                if populated >= 2:
-                    saw_data_row = True
-
-                self.table_rows.append(TableReplicaRow(
-                    page=page.page_number,
-                    line=line.index,
-                    values=values,
-                    source=page.source,
-                ))
+            self.table_rows.extend(page_rows)
 
             self.table_page_summaries.append({
                 "page": page.page_number,
-                "header_line": str(header_line.index) if header_line else "",
+                "header_line": str(header_line.index) if header_line and column_status == "header" else column_status,
                 "columns": len(active_columns),
                 "rows": len(self.table_rows) - before_count,
                 "status": "ok" if len(self.table_rows) > before_count else "no_table_rows",
@@ -491,6 +593,42 @@ class LayoutReplicaParser(BaseParser):
                 TableColumn(f"Column {idx}", 0.0, 0.0, 0.0, 0.0)
                 for idx in range(1, max_width + 1)
             ]
+
+    def _table_rows_from_page(
+        self,
+        page: LayoutPage,
+        columns: List[TableColumn],
+        header_line: Optional[LayoutLine],
+    ) -> List[TableReplicaRow]:
+        rows: List[TableReplicaRow] = []
+        saw_data_row = False
+        for line in page.lines:
+            if self._is_separator_line(line):
+                continue
+            if header_line and line.index == header_line.index:
+                continue
+
+            values = self._assign_line_to_table_columns(line, columns)
+            populated = sum(1 for value in values if value)
+            if not populated:
+                continue
+            if not self._is_table_relevant_row(line, values, columns, saw_data_row):
+                continue
+
+            # Continuation lines usually only populate the description-like
+            # column. Keep them as table rows only after table data has begun.
+            if populated == 1 and not saw_data_row:
+                continue
+            if populated >= 2:
+                saw_data_row = True
+
+            rows.append(TableReplicaRow(
+                page=page.page_number,
+                line=line.index,
+                values=values,
+                source=page.source,
+            ))
+        return rows
 
     def _detect_table_header_line(self, page: LayoutPage) -> Optional[LayoutLine]:
         best_line: Optional[LayoutLine] = None
@@ -541,6 +679,57 @@ class LayoutReplicaParser(BaseParser):
                 best_line = line
 
         return best_line if best_score >= 8.0 else None
+
+    def _columns_from_transaction_lines(self, page: LayoutPage) -> List[TableColumn]:
+        candidates = [
+            line for line in page.lines
+            if len(line.words) >= 4 and self._line_starts_with_date(line)
+        ]
+        if not candidates:
+            return []
+
+        candidate = max(
+            candidates,
+            key=lambda line: (
+                len(line.words),
+                max(word.x1 for word in line.words) - min(word.x0 for word in line.words),
+            ),
+        )
+        words = sorted(candidate.words, key=lambda item: item.x0)
+        if len(words) < 4:
+            return []
+
+        columns: List[TableColumn] = []
+        for idx, word in enumerate(words):
+            if idx == 0:
+                left = max(0.0, word.x0 - 6.0)
+            else:
+                previous = words[idx - 1]
+                left = (previous.x1 + word.x0) / 2.0
+
+            if idx == len(words) - 1:
+                right = min(page.width, word.x1 + 18.0)
+            else:
+                nxt = words[idx + 1]
+                if idx == 1:
+                    right = max(word.x1, nxt.x0 - 2.0)
+                else:
+                    right = (word.x1 + nxt.x0) / 2.0
+
+            columns.append(TableColumn(
+                header=f"Column {idx + 1}",
+                x0=word.x0,
+                x1=word.x1,
+                left=left,
+                right=right,
+            ))
+        return columns
+
+    def _line_starts_with_date(self, line: LayoutLine) -> bool:
+        if not line.words:
+            return False
+        first_word = sorted(line.words, key=lambda item: item.x0)[0].text
+        return self._looks_like_date_value(first_word)
 
     @staticmethod
     def _looks_like_date_value(text: str) -> bool:
@@ -667,7 +856,7 @@ class LayoutReplicaParser(BaseParser):
 
         if len(populated_indices) == 1 and saw_data_row:
             column = columns[populated_indices[0]]
-            return self._is_wide_text_header(column.header)
+            return self._is_wide_text_header(column.header) or populated_indices[0] in {1, 2}
 
         return False
 
@@ -687,6 +876,13 @@ class LayoutReplicaParser(BaseParser):
             r"\bindian rupees\b",
             r"\bbank ltd\b",
             r"\bbank limited\b",
+            r"closing balance includes",
+            r"\bgstn\b",
+            r"\bgstin\b",
+            r"https?://",
+            r"registered office",
+            r"computer generated",
+            r"system generated",
         )
         return any(re.search(pattern, normalized) for pattern in context_patterns)
 
