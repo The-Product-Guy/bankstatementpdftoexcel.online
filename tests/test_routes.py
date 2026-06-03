@@ -238,6 +238,45 @@ class TestProtectedRoutes:
         # Should fail gracefully (no file uploaded)
         assert resp.status_code in (302, 400, 500)
 
+    def test_convert_preflight_accepts_valid_request(self, client):
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+
+        resp = client.post("/convert/preflight", data={
+            "csrf_token": "test-token",
+        })
+
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ok"
+
+    def test_convert_preflight_rejects_quota_before_upload(self, client, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(
+            app_module,
+            "check_conversion_quota",
+            lambda user_id, guest_id: (
+                False,
+                {
+                    "error": "You have reached your 5 conversions this month. Please upgrade to continue.",
+                    "error_code": "USER_LIMIT_EXCEEDED",
+                },
+            ),
+        )
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+            sess["user_id"] = 123
+
+        resp = client.post("/convert/preflight", data={
+            "csrf_token": "test-token",
+        })
+
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert data["error_code"] == "USER_LIMIT_EXCEEDED"
+        assert "conversions this month" in data["error"]
+
     def test_convert_enqueues_without_importing_worker(self, client, monkeypatch):
         from reportlab.pdfgen import canvas
 

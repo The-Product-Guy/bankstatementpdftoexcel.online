@@ -108,6 +108,39 @@ def dashboard():
     )
 
 
+@converter_bp.route('/convert/preflight', methods=['POST'])
+def convert_preflight():
+    """Lightweight validation before uploading a potentially large PDF body."""
+    from app import (
+        check_conversion_quota, get_client_ip, get_identity, rate_limited,
+    )
+
+    if rate_limited(f"rate:convert_preflight:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_CONVERT', '15')), 3600):
+        return jsonify({
+            'status': 'error',
+            'error': 'Too many conversion requests. Please try again later.',
+            'error_code': 'RATE_LIMITED',
+        }), 429
+
+    csrf_token = request.form.get('csrf_token')
+    if not csrf_token or csrf_token != session.get('csrf_token'):
+        return jsonify({
+            'status': 'error',
+            'error': 'Invalid request token. Please refresh and try again.',
+            'error_code': 'INVALID_CSRF',
+        }), 400
+
+    if not session.get('user_id'):
+        get_identity()
+
+    user_id, guest_id = get_identity()
+    allowed, quota_error = check_conversion_quota(user_id, guest_id)
+    if not allowed:
+        return jsonify({'status': 'error', **quota_error}), 403
+
+    return jsonify({'status': 'ok'}), 200
+
+
 @converter_bp.route('/convert', methods=['POST'])
 def convert():
     """Handle PDF conversion."""

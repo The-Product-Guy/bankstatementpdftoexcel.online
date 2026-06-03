@@ -282,6 +282,67 @@ function handleFormSubmit(e) {
     submitFormWithProgress();
 }
 
+function showConversionRequestError(data, fallbackMessage = 'Request failed.') {
+    const errorCode = data?.error_code || '';
+    if (errorCode === 'FILE_TOO_LARGE') {
+        showLimitModal('FILE_TOO_LARGE', data.max_mb);
+        return;
+    }
+    if (errorCode === 'PAGE_LIMIT_EXCEEDED') {
+        showLimitModal('PAGE_LIMIT_EXCEEDED', data.max_pages, data.page_count);
+        return;
+    }
+    if (errorCode === 'GUEST_LIMIT_EXCEEDED') {
+        showAlert(data.error || 'Free limit reached. Please sign in to continue.', 'warning');
+        return;
+    }
+    if (errorCode === 'USER_LIMIT_EXCEEDED') {
+        showAlert(data.error || 'You have reached your conversion limit for this month.', 'warning');
+        return;
+    }
+    if (errorCode === 'RATE_LIMITED') {
+        showAlert(data.error || 'Too many conversion requests. Please try again later.', 'warning');
+        return;
+    }
+    if (errorCode === 'INVALID_CSRF') {
+        showAlert(data.error || 'Your session expired. Please refresh and try again.', 'error');
+        return;
+    }
+    showAlert(data?.error || fallbackMessage, 'error');
+}
+
+async function runConvertPreflight() {
+    const csrfInput = uploadForm.querySelector('input[name="csrf_token"]');
+    const formData = new FormData();
+    if (csrfInput) {
+        formData.append('csrf_token', csrfInput.value);
+    }
+
+    const response = await fetch('/convert/preflight', {
+        method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: formData
+    });
+
+    if (response.ok) {
+        return true;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+        const data = await response.json();
+        hideProgressModal();
+        showConversionRequestError(data, `HTTP ${response.status}: ${response.statusText}`);
+        return false;
+    }
+
+    hideProgressModal();
+    showAlert(`HTTP ${response.status}: ${response.statusText}`, 'error');
+    return false;
+}
+
 // Show progress modal
 function showProgressModal() {
     progressModal.style.display = 'flex';
@@ -771,6 +832,11 @@ async function submitQuickFeedback(jobId, data, feedbackType, button) {
 // Submit form with progress tracking
 async function submitFormWithProgress() {
     try {
+        const preflightOk = await runConvertPreflight();
+        if (!preflightOk) {
+            return;
+        }
+
         const formData = new FormData(uploadForm);
 
         const response = await fetch(uploadForm.action, {
@@ -827,22 +893,9 @@ async function submitFormWithProgress() {
             const contentType = response.headers.get('content-type') || '';
             if (contentType.includes('application/json')) {
                 const data = await response.json();
-                if (data.error_code === 'FILE_TOO_LARGE') {
-                    hideProgressModal();
-                    showLimitModal('FILE_TOO_LARGE', data.max_mb);
-                    return;
-                }
-                if (data.error_code === 'PAGE_LIMIT_EXCEEDED') {
-                    hideProgressModal();
-                    showLimitModal('PAGE_LIMIT_EXCEEDED', data.max_pages, data.page_count);
-                    return;
-                }
-                if (data.error_code === 'GUEST_LIMIT_EXCEEDED') {
-                    hideProgressModal();
-                    showAlert('Free limit reached. Please sign in to continue.', 'warning');
-                    return;
-                }
-                throw new Error(data.error || 'Request failed.');
+                hideProgressModal();
+                showConversionRequestError(data, 'Request failed.');
+                return;
             }
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
