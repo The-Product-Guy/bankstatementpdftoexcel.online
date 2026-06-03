@@ -111,17 +111,112 @@ def test_layout_replica_workbook_exports_only_table_sheet(tmp_path):
 
 
 def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
-    from parsers.layout_replica_parser import LayoutReplicaParser
+    from parsers.layout_replica_parser import LayoutLine, LayoutPage, LayoutReplicaParser, LayoutWord
 
-    pdf_path = (
-        Path(__file__).parent
-        / "data"
-        / "india_v1"
-        / "KVB-CA-PART-03- 01.04.2019 TO 31.03.2020.pdf"
-    )
+    def make_line(page_num, index, words):
+        layout_words = [
+            LayoutWord(
+                text=text,
+                x0=x0,
+                x1=x1,
+                top=index * 10.0,
+                bottom=index * 10.0 + 8.0,
+                page=page_num,
+                source="pdf-text",
+            )
+            for text, x0, x1 in words
+        ]
+        return LayoutLine(
+            page=page_num,
+            index=index,
+            top=index * 10.0,
+            bottom=index * 10.0 + 8.0,
+            center_y=index * 10.0 + 4.0,
+            words=layout_words,
+            text=" ".join(word.text for word in layout_words),
+        )
+
+    def make_page(page_num, lines):
+        return LayoutPage(
+            page_number=page_num,
+            width=620,
+            height=800,
+            source="pdf-text",
+            words=[word for line in lines for word in line.words],
+            lines=lines,
+        )
+
+    separator = [("-" * 100, 16.6, 597.2)]
+    header = [
+        ("TXN", 16.6, 32.4),
+        ("DT", 37.7, 48.2),
+        ("VALUE_DT", 64.1, 106.3),
+        ("BRN", 116.9, 132.7),
+        ("DESCRIPTION", 169.6, 227.7),
+        ("REFERENCE", 280.5, 328.0),
+        ("DEBITS", 380.8, 412.5),
+        ("CREDITS", 454.7, 491.6),
+        ("BALANCE", 560.3, 597.2),
+    ]
+    first_page_lines = [
+        make_line(1, 1, separator),
+        make_line(1, 2, header),
+        make_line(1, 3, separator),
+        make_line(1, 4, [
+            ("01/04/19", 16.6, 58.8),
+            ("01/04/19", 64.1, 106.3),
+            ("1763", 111.6, 132.7),
+            ("OPENING", 143.2, 183.0),
+            ("BALANCE", 187.0, 227.0),
+            ("1,00,000.00", 533.9, 591.9),
+        ]),
+    ]
+    second_page_lines = [
+        make_line(2, 1, [
+            ("13/04/19", 16.6, 58.8),
+            ("13/04/19", 64.1, 106.3),
+            ("1763", 111.6, 132.7),
+            ("MPAY/UPI/FI", 143.2, 206.0),
+            ("Funds", 210.0, 240.0),
+            ("Trans-1", 244.0, 275.2),
+            ("772108174541", 280.5, 343.8),
+            ("8,600.00", 375.5, 423.0),
+            ("42,557.10", 533.9, 591.9),
+        ]),
+        make_line(2, 2, [("684155000075893", 143.2, 217.0)]),
+        make_line(2, 3, separator),
+        make_line(2, 4, [("page", 280.0, 302.0), (":", 306.0, 310.0), ("2", 316.0, 322.0)]),
+        make_line(2, 5, [
+            ("STATEMENT", 170.0, 220.0),
+            ("OF", 225.0, 238.0),
+            ("ACCOUNT", 243.0, 285.0),
+        ]),
+        make_line(2, 6, [
+            ("Account", 280.0, 315.0),
+            ("Number", 320.0, 355.0),
+            ("1684135000012107", 360.0, 450.0),
+        ]),
+        make_line(2, 7, separator),
+        make_line(2, 8, header),
+        make_line(2, 9, separator),
+        make_line(2, 10, [
+            ("15/04/19", 16.6, 58.8),
+            ("15/04/19", 64.1, 106.3),
+            ("1763", 111.6, 132.7),
+            ("ATM", 143.2, 162.0),
+            ("Withdrawal", 166.0, 222.0),
+            ("123456789012", 280.5, 343.8),
+            ("2,000.00", 375.5, 423.0),
+            ("40,557.10", 533.9, 591.9),
+        ]),
+    ]
 
     parser = LayoutReplicaParser(use_ocr=False)
-    parser.parse(str(pdf_path), pdf_path.name, page_start=1, page_end=2)
+    parser.pages = [
+        make_page(1, first_page_lines),
+        make_page(2, second_page_lines),
+    ]
+    parser._build_table_replica()
 
     page_two_rows = [
         row.values for row in parser.table_rows
@@ -138,6 +233,7 @@ def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
         "42,557.10",
     ] in page_two_rows
     assert not any("STATEMENT OF ACCOUNT" in " ".join(row) for row in page_two_rows)
+    assert not any("Account Number" in " ".join(row) for row in page_two_rows)
 
 
 def test_table_replica_infers_columns_when_header_is_missing():
