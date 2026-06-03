@@ -87,6 +87,18 @@ PLAN_CONFIG = {
     'enterprise': {'monthly_conversions': None, 'max_upload_mb': 500, 'stripe_price_id': os.environ.get('STRIPE_ENTERPRISE_PRICE_ID')},
 }
 
+
+def unlimited_quota_emails():
+    return {
+        email.strip().lower()
+        for email in os.environ.get('UNLIMITED_QUOTA_EMAILS', '').split(',')
+        if email.strip()
+    }
+
+
+def has_unlimited_quota_email(email: str = '') -> bool:
+    return bool(email and email.strip().lower() in unlimited_quota_emails())
+
 # Allow up to Enterprise max; per-plan size check happens in route logic
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -232,6 +244,8 @@ def check_conversion_quota(user_id, guest_id):
         with get_db_session() as db:
             if user_id:
                 user = db.query(User).filter_by(id=user_id).first()
+                if user and has_unlimited_quota_email(user.email):
+                    return True, None
                 plan_id = (user.plan_id if user else None) or 'free'
                 plan_status = (user.plan_status if user else None) or 'free'
                 plan = PLAN_CONFIG.get(plan_id, PLAN_CONFIG['free'])

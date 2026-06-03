@@ -250,7 +250,7 @@ def auth_verify():
 def account():
     """Account dashboard -- plan, usage, and recent conversions."""
     import os
-    from app import PLAN_CONFIG, get_usage_counter, sync_session_plan
+    from app import PLAN_CONFIG, get_usage_counter, has_unlimited_quota_email, sync_session_plan
 
     user_id = session.get('user_id')
     if not user_id:
@@ -262,6 +262,8 @@ def account():
     plan_status = session.get('plan_status', 'free')
     plan = PLAN_CONFIG.get(plan_id, PLAN_CONFIG['free'])
     monthly_limit = plan['monthly_conversions']
+    if has_unlimited_quota_email(session.get('user_email', '')):
+        monthly_limit = None
 
     monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
     month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)

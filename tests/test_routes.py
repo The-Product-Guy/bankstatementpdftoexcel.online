@@ -277,6 +277,52 @@ class TestProtectedRoutes:
         assert data["error_code"] == "USER_LIMIT_EXCEEDED"
         assert "conversions this month" in data["error"]
 
+    def test_unlimited_quota_email_bypasses_monthly_limit(self, client, monkeypatch):
+        from db import get_db_session, init_db
+        from models import Job, User
+
+        suffix = uuid.uuid4().hex
+        email = f"owner-{suffix}@example.com"
+        monkeypatch.setenv("UNLIMITED_QUOTA_EMAILS", email)
+        init_db()
+
+        with get_db_session() as db:
+            user = User(email=email, plan_id="free", plan_status="free")
+            db.add(user)
+            db.flush()
+            user_id = user.id
+            for index in range(5):
+                db.add(Job(
+                    id=f"quota-bypass-{suffix}-{index}",
+                    user_id=user_id,
+                    filename=f"statement-{index}.pdf",
+                    status="completed",
+                    created_at=datetime.utcnow(),
+                ))
+
+        try:
+            with client.session_transaction() as sess:
+                sess["csrf_token"] = "test-token"
+                sess["user_id"] = user_id
+                sess["user_email"] = email
+                sess["plan_id"] = "free"
+                sess["plan_status"] = "free"
+
+            preflight_resp = client.post("/convert/preflight", data={
+                "csrf_token": "test-token",
+            })
+            assert preflight_resp.status_code == 200
+
+            account_resp = client.get("/account")
+            assert account_resp.status_code == 200
+            assert b"conversions used (unlimited)" in account_resp.data
+        finally:
+            with get_db_session() as db:
+                db.query(Job).filter(Job.id.like(f"quota-bypass-{suffix}-%")).delete(synchronize_session=False)
+                user = db.get(User, user_id)
+                if user:
+                    db.delete(user)
+
     def test_convert_enqueues_without_importing_worker(self, client, monkeypatch):
         from reportlab.pdfgen import canvas
 
