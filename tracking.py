@@ -48,11 +48,17 @@ IGNORED_EXACT_PATHS = {
     "/favicon.ico",
     "/health",
     "/health/detailed",
+    "/humans.txt",
+    "/indexnow-key.txt",
+    "/llms.txt",
     "/robots.txt",
+    "/security.txt",
     "/sitemap.xml",
+    "/sitemap.txt",
     "/signout",
 }
 IGNORED_PATH_PREFIXES = (
+    "/.well-known/",
     "/admin",
     "/auth/verify",
     "/download/",

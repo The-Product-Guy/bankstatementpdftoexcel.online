@@ -503,6 +503,24 @@ def inject_csrf_token():
 def inject_user_context():
     user_email = session.get('user_email')
     normalized_email = (user_email or '').lower()
+
+    def site_base_url():
+        configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+        if configured:
+            return configured.rstrip('/')
+        return request.url_root.rstrip('/')
+
+    def public_url_for(endpoint, **values):
+        anchor = values.pop('_anchor', None)
+        values.pop('_external', None)
+        path = url_for(endpoint, **values)
+        if anchor:
+            path = f"{path}#{anchor}"
+        return f"{site_base_url()}{path}"
+
+    def canonical_current_url():
+        return f"{site_base_url()}{request.path}"
+
     return {
         'current_user_email': user_email,
         'current_user_is_admin': bool(
@@ -510,6 +528,9 @@ def inject_user_context():
             and (normalized_email in ADMIN_EMAILS or session.get('role') == 'admin')
         ),
         'now': datetime.utcnow,
+        'site_base_url': site_base_url,
+        'public_url_for': public_url_for,
+        'canonical_current_url': canonical_current_url,
     }
 
 @app.after_request
@@ -517,11 +538,13 @@ def add_security_headers(response):
     csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdnjs.cloudflare.com "
-        "https://www.googletagmanager.com https://www.google-analytics.com; "
+        "https://www.googletagmanager.com https://www.google-analytics.com "
+        "https://umami-production-9269.up.railway.app; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com; "
+        "img-src 'self' data: blob: https://www.google-analytics.com; "
+        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com "
+        "https://umami-production-9269.up.railway.app; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "object-src 'none'"
@@ -531,6 +554,34 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    if IS_PRODUCTION:
+        response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    noindex_exact_paths = {
+        '/account',
+        '/billing/portal',
+        '/checkout/create',
+        '/checkout/success',
+        '/convert',
+        '/convert/preflight',
+        '/dashboard',
+        '/download/email',
+        '/feedback',
+        '/health',
+        '/health/detailed',
+        '/signin',
+        '/signout',
+        '/stripe/webhook',
+        '/track/event',
+    }
+    noindex_prefixes = (
+        '/admin',
+        '/auth/',
+        '/download/',
+        '/socket.io/',
+        '/status/',
+    )
+    if request.path in noindex_exact_paths or any(request.path.startswith(prefix) for prefix in noindex_prefixes):
+        response.headers.setdefault('X-Robots-Tag', 'noindex, nofollow')
     try:
         user_agent = request.headers.get('User-Agent', '')
         if should_track_page_view(

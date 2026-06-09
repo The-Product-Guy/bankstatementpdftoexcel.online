@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 
 {% block title %}Sign In | Statement Converter{% endblock %}
+{% block robots %}noindex, follow{% endblock %}
+{% block canonical_url %}{{ public_url_for('auth.signin') }}{% endblock %}
 
 {% block content %}
 <main class="main-content">

@@ -62,14 +62,26 @@ All pages include:
 ### 4. Robots.txt
 - Accessible at `/robots.txt`
 - Allows search engine crawling
-- Disallows private directories (uploads, processed)
-- References sitemap location
+- Disallows private/runtime routes and query variants
+- References XML and plain-text sitemap locations
 
-### 5. Navigation Structure
+### 5. AI and Answer-Engine Discovery
+- `/llms.txt` provides a concise product summary, limitations, policy links, and canonical guide URLs
+- `/sitemap.txt` provides a simple one-URL-per-line discovery file
+- Pricing includes visible FAQ content with matching `FAQPage` JSON-LD
+- Runtime routes include `X-Robots-Tag: noindex, nofollow`
+
+### 6. Navigation Structure
 - Fixed navigation bar with all main pages
 - Mobile-responsive hamburger menu
 - Active page highlighting
 - Semantic HTML structure
+
+### 7. Distribution Metadata
+- `/static/site.webmanifest` advertises app name, colors, and install icons
+- `/.well-known/security.txt` exposes a vulnerability contact and policy URL
+- `/humans.txt` identifies product ownership and site purpose
+- `/indexnow-key.txt` is available when `INDEXNOW_KEY` is configured
 
 ## Page Structure
 
@@ -110,6 +122,12 @@ Use these tools:
 - Visit `https://yourdomain.com/robots.txt`
 - Verify correct directives
 - Check sitemap reference
+
+### 5. Test AI Discovery Files
+- Visit `https://yourdomain.com/llms.txt`
+- Visit `https://yourdomain.com/sitemap.txt`
+- Visit `https://yourdomain.com/.well-known/security.txt`
+- Confirm all URLs use the production domain from `PUBLIC_BASE_URL` or `CANONICAL_BASE_URL`
 
 ## Monitoring & Analytics
 

@@ -9,8 +9,11 @@
     <meta name="description" content="{% block meta_description %}Convert bank statement PDFs to Excel format. Built for tabular statement layouts with OCR support.{% endblock %}">
     <meta name="keywords" content="{% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction{% endblock %}">
     <meta name="author" content="Ambion Softwares">
-    <meta name="robots" content="{% block robots %}index, follow{% endblock %}">
-    <link rel="canonical" href="{% block canonical_url %}{{ request.url }}{% endblock %}">
+    <meta name="application-name" content="Statement Converter">
+    <meta name="theme-color" content="#046bca">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="robots" content="{% block robots %}index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1{% endblock %}">
+    <link rel="canonical" href="{% block canonical_url %}{{ canonical_current_url() }}{% endblock %}">
 
     {# Fonts #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,23 +22,32 @@
 
     {# Open Graph / Facebook #}
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">
-    <meta property="og:url" content="{% block og_url %}{{ request.url }}{% endblock %}">
+    <meta property="og:url" content="{% block og_url %}{{ canonical_current_url() }}{% endblock %}">
     <meta property="og:title" content="{% block og_title %}{{ self.title()|striptags }}{% endblock %}">
     <meta property="og:description" content="{% block og_description %}{{ self.meta_description()|striptags }}{% endblock %}">
-    <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='og-image.png', _external=True) }}{% endblock %}">
+    <meta property="og:image" content="{% block og_image %}{{ site_base_url() }}{{ url_for('static', filename='og-image.png') }}{% endblock %}">
+    <meta property="og:image:secure_url" content="{% block og_image_secure %}{{ self.og_image()|striptags }}{% endblock %}">
+    <meta property="og:image:width" content="1344">
+    <meta property="og:image:height" content="768">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:alt" content="{% block og_image_alt %}Statement Converter PDF to Excel workbook preview{% endblock %}">
+    <meta property="og:locale" content="en_US">
     <meta property="og:site_name" content="Statement Converter">
 
     {# Twitter #}
     <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="{% block twitter_url %}{{ request.url }}{% endblock %}">
+    <meta property="twitter:url" content="{% block twitter_url %}{{ canonical_current_url() }}{% endblock %}">
     <meta property="twitter:title" content="{% block twitter_title %}{{ self.title()|striptags }}{% endblock %}">
     <meta property="twitter:description" content="{% block twitter_description %}{{ self.meta_description()|striptags }}{% endblock %}">
-    <meta property="twitter:image" content="{% block twitter_image %}{{ url_for('static', filename='og-image.png', _external=True) }}{% endblock %}">
+    <meta property="twitter:image" content="{% block twitter_image %}{{ self.og_image()|striptags }}{% endblock %}">
+    <meta property="twitter:image:alt" content="{% block twitter_image_alt %}{{ self.og_image_alt()|striptags }}{% endblock %}">
 
     {# Favicon #}
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
 
     {# Stylesheets #}
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">

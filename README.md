@@ -195,6 +195,8 @@ Generated workbooks include validation sheets when normalized transactions are a
 | `FEEDBACK_RETENTION_DAYS` | No | Retention window for feedback submissions and copied source/output files. | `30` |
 | `FIRST_PARTY_ANALYTICS_RETENTION_DAYS` | No | Retention window for internal page-view and login-event logs shown in the admin portal. | `180` |
 | `FIRST_PARTY_ANALYTICS_SWEEP_MINS` | No | Minimum interval between analytics cleanup sweeps. | `1440` |
+| `SECURITY_CONTACT` | No | Public vulnerability contact used in `/.well-known/security.txt`. Use a `mailto:` or HTTPS URL. | Privacy policy URL |
+| `INDEXNOW_KEY` | No | Enables `/indexnow-key.txt` for IndexNow ownership verification when configured. | Disabled |
 | `USE_PYMUPDF` | No | Enables the optional PyMuPDF table-detection fallback for extraction. | `false` |
 | `VALIDATION_SUMMARY_OCR` | No | Allows the worker to OCR sampled first/last pages when native text does not provide a complete statement summary. | `true` |
 | `VALIDATION_SUMMARY_SAMPLE_PAGES` | No | Number of pages sampled from the beginning and end for opening/closing balance and total extraction. | `2` |

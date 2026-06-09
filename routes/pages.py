@@ -20,12 +20,41 @@ pages_bp = Blueprint('pages', __name__)
 
 
 LASTMOD = {
-    'home': '2026-05-15',
-    'blogs': '2026-05-15',
-    'pricing': '2026-05-15',
-    'privacy': '2026-05-15',
-    'terms': '2026-05-15',
+    'home': '2026-06-10',
+    'blogs': '2026-06-10',
+    'pricing': '2026-06-10',
+    'privacy': '2026-06-10',
+    'terms': '2026-06-10',
 }
+
+PRIVATE_ROBOTS_PATHS = [
+    '/admin',
+    '/account',
+    '/auth/',
+    '/billing/',
+    '/checkout/',
+    '/convert',
+    '/download/',
+    '/feedback',
+    '/health',
+    '/processed/',
+    '/socket.io/',
+    '/status/',
+    '/stripe/',
+    '/track/',
+    '/uploads/',
+    '/*?*',
+]
+
+AI_CRAWLER_USER_AGENTS = [
+    'GPTBot',
+    'OAI-SearchBot',
+    'ChatGPT-User',
+    'ClaudeBot',
+    'Claude-SearchBot',
+    'PerplexityBot',
+    'Google-Extended',
+]
 
 BLOG_POSTS = [
     {
@@ -33,7 +62,7 @@ BLOG_POSTS = [
         'title': 'How to Convert Bank Statements to Excel',
         'category': 'Tutorial',
         'description': 'A practical guide to converting text-based and scanned bank statement PDFs into Excel.',
-        'lastmod': '2026-05-15',
+        'lastmod': '2026-06-10',
         'sections': [
             {
                 'heading': 'Conversion workflow',
@@ -57,7 +86,7 @@ BLOG_POSTS = [
         'title': 'Excel Tips for Working with Converted Statements',
         'category': 'Tips',
         'description': 'Useful Excel checks and formulas after converting a bank statement PDF.',
-        'lastmod': '2026-05-15',
+        'lastmod': '2026-06-10',
         'sections': [
             {
                 'heading': 'Recommended checks',
@@ -75,7 +104,7 @@ BLOG_POSTS = [
         'title': 'How Financial Data Is Handled',
         'category': 'Security',
         'description': 'How Statement Converter handles temporary files, conversion results, and feedback PDFs.',
-        'lastmod': '2026-05-15',
+        'lastmod': '2026-06-10',
         'sections': [
             {
                 'heading': 'Retention model',
@@ -93,7 +122,7 @@ BLOG_POSTS = [
         'title': 'Text-Based vs Scanned Bank Statement PDFs',
         'category': 'Guide',
         'description': 'How to tell whether a bank statement PDF is text-based or scanned and why it affects extraction quality.',
-        'lastmod': '2026-05-15',
+        'lastmod': '2026-06-10',
         'sections': [
             {
                 'heading': 'How to tell the difference',
@@ -109,7 +138,7 @@ BLOG_POSTS = [
         'title': 'Bank Statement Conversion FAQ',
         'category': 'FAQ',
         'description': 'Answers about supported statement layouts, upload limits, privacy, and password-protected PDFs.',
-        'lastmod': '2026-05-15',
+        'lastmod': '2026-06-10',
         'sections': [
             {
                 'heading': 'Common questions',
@@ -132,6 +161,30 @@ def _public_base_url() -> str:
     if configured:
         return configured.rstrip('/')
     return request.url_root.rstrip('/')
+
+
+def _public_url(path: str) -> str:
+    if not path.startswith('/'):
+        path = f'/{path}'
+    return f"{_public_base_url()}{path}"
+
+
+def _sitemap_urls():
+    urls = [
+        ('/', LASTMOD['home']),
+        ('/blogs', LASTMOD['blogs']),
+        ('/pricing', LASTMOD['pricing']),
+        ('/privacy', LASTMOD['privacy']),
+        ('/terms', LASTMOD['terms']),
+    ]
+    urls.extend((f"/blogs/{post['slug']}", post['lastmod']) for post in BLOG_POSTS)
+    return urls
+
+
+def _robots_rules() -> str:
+    rules = ["Allow: /", "Allow: /static/"]
+    rules.extend(f"Disallow: {path}" for path in PRIVATE_ROBOTS_PATHS)
+    return "\n".join(rules)
 
 
 def _admin_csv_response(filename: str, headers, rows) -> Response:
@@ -944,27 +997,12 @@ def detailed_health():
 
 @pages_bp.route('/sitemap.xml')
 def sitemap():
-    base_url = _public_base_url()
-    urls = [
-        ('/', LASTMOD['home'], 'weekly', '1.0'),
-        ('/blogs', LASTMOD['blogs'], 'weekly', '0.8'),
-        ('/pricing', LASTMOD['pricing'], 'monthly', '0.9'),
-        ('/privacy', LASTMOD['privacy'], 'monthly', '0.3'),
-        ('/terms', LASTMOD['terms'], 'monthly', '0.3'),
-    ]
-    urls.extend(
-        (f"/blogs/{post['slug']}", post['lastmod'], 'monthly', '0.7')
-        for post in BLOG_POSTS
-    )
-
     entries = []
-    for path, lastmod, changefreq, priority in urls:
+    for path, lastmod in _sitemap_urls():
         entries.append(
             "    <url>\n"
-            f"        <loc>{escape(base_url + path)}</loc>\n"
+            f"        <loc>{escape(_public_url(path))}</loc>\n"
             f"        <lastmod>{lastmod}</lastmod>\n"
-            f"        <changefreq>{changefreq}</changefreq>\n"
-            f"        <priority>{priority}</priority>\n"
             "    </url>"
         )
     sitemap_content = (
@@ -979,16 +1017,96 @@ def sitemap():
 @pages_bp.route('/robots.txt')
 def robots():
     base_url = _public_base_url()
-    robots_content = f"""User-agent: *
-Allow: /
-Allow: /blogs
-Allow: /pricing
-Allow: /privacy
-Allow: /terms
-Disallow: /uploads/
-Disallow: /processed/
-Disallow: /status/
-Disallow: /download/
-
-Sitemap: {base_url}/sitemap.xml"""
+    groups = [f"User-agent: *\n{_robots_rules()}"]
+    groups.extend(f"User-agent: {agent}\n{_robots_rules()}" for agent in AI_CRAWLER_USER_AGENTS)
+    robots_content = (
+        "\n\n".join(groups)
+        + f"\n\nSitemap: {base_url}/sitemap.xml\n"
+        + f"Sitemap: {base_url}/sitemap.txt"
+    )
     return Response(robots_content, mimetype='text/plain')
+
+
+@pages_bp.route('/sitemap.txt')
+def sitemap_txt():
+    content = "\n".join(_public_url(path) for path, _lastmod in _sitemap_urls())
+    return Response(f"{content}\n", mimetype='text/plain')
+
+
+@pages_bp.route('/llms.txt')
+def llms_txt():
+    base_url = _public_base_url()
+    blog_links = "\n".join(
+        f"- [{post['title']}]({_public_url('/blogs/' + post['slug'])}): {post['description']}"
+        for post in BLOG_POSTS
+    )
+    content = f"""# Statement Converter
+
+> Statement Converter is a web application from Ambion Softwares that converts bank statement PDF files into Excel workbooks for review, reconciliation, and analysis.
+
+## Product
+- Primary use case: convert text-based and scanned bank statement PDFs into Excel workbooks.
+- Audience: accountants, auditors, founders, small businesses, and finance teams.
+- Supported input: PDF bank statements with tabular transaction layouts.
+- Output: XLSX workbook with reviewable extracted rows and source context.
+- Data handling: uploaded PDFs and generated workbooks are temporary; feedback copies are retained only when a user opts in.
+
+## Canonical Pages
+- [Home]({base_url}/)
+- [Pricing]({base_url}/pricing)
+- [Blog and guides]({base_url}/blogs)
+- [Privacy Policy]({base_url}/privacy)
+- [Terms of Service]({base_url}/terms)
+
+## Key Guides
+{blog_links}
+
+## Common Questions
+- What does Statement Converter do? It converts bank statement PDFs into Excel workbooks.
+- Does it support scanned PDFs? Yes, scanned statements use OCR and table-structure detection.
+- Is every conversion guaranteed? No. Users should review dates, amounts, balances, and ambiguous rows before accounting or audit use.
+- Are files stored permanently? No. Files are processed temporarily and expire after the configured retention windows unless feedback sharing is explicitly selected.
+
+## Machine-Readable Discovery
+- XML sitemap: {base_url}/sitemap.xml
+- Plain text sitemap: {base_url}/sitemap.txt
+- Robots policy: {base_url}/robots.txt
+"""
+    return Response(content, mimetype='text/plain')
+
+
+@pages_bp.route('/humans.txt')
+def humans_txt():
+    content = f"""/* TEAM */
+Company: Ambion Softwares
+Product: Statement Converter
+Site: {_public_base_url()}
+
+/* SITE */
+Purpose: Bank statement PDF to Excel conversion
+Language: English
+Standards: HTML5, CSS, JavaScript, Flask
+"""
+    return Response(content, mimetype='text/plain')
+
+
+@pages_bp.route('/.well-known/security.txt')
+@pages_bp.route('/security.txt')
+def security_txt():
+    contact = os.environ.get('SECURITY_CONTACT') or f"{_public_base_url()}/privacy"
+    expires = (datetime.utcnow() + timedelta(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    content = f"""Contact: {contact}
+Policy: {_public_base_url()}/privacy
+Preferred-Languages: en
+Canonical: {_public_base_url()}/.well-known/security.txt
+Expires: {expires}
+"""
+    return Response(content, mimetype='text/plain')
+
+
+@pages_bp.route('/indexnow-key.txt')
+def indexnow_key():
+    key = (os.environ.get('INDEXNOW_KEY') or '').strip()
+    if not key:
+        return "Not found", 404
+    return Response(f"{key}\n", mimetype='text/plain')

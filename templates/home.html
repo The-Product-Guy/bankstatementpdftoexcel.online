@@ -6,7 +6,7 @@
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
-{% block canonical_url %}{{ url_for('pages.home', _external=True) }}{% endblock %}
+{% block canonical_url %}{{ public_url_for('pages.home') }}{% endblock %}
 
 {% block og_title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
@@ -22,10 +22,23 @@
   "@context": "https://schema.org",
   "@type": "WebApplication",
   "name": "Statement Converter",
-  "description": "Convert bank statement PDFs to Excel format.",
-  "url": "{{ url_for('pages.home', _external=True) }}",
+  "alternateName": "Bank Statement PDF to Excel Converter",
+  "description": "Convert bank statement PDFs to Excel format with support for text-based and scanned statement layouts.",
+  "url": "{{ public_url_for('pages.home') }}",
   "applicationCategory": "UtilityApplication",
+  "applicationSubCategory": "Financial data conversion",
   "operatingSystem": "Web",
+  "browserRequirements": "Requires a modern web browser with JavaScript enabled.",
+  "image": "{{ site_base_url() }}{{ url_for('static', filename='og-image.png') }}",
+  "publisher": {
+    "@type": "Organization",
+    "name": "Ambion Softwares",
+    "url": "{{ public_url_for('pages.home') }}",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "{{ site_base_url() }}{{ url_for('static', filename='ambion-logo.svg') }}"
+    }
+  },
   "offers": {
     "@type": "Offer",
     "price": "0",
@@ -45,9 +58,25 @@
   "@context": "https://schema.org",
   "@type": "Organization",
   "name": "Ambion Softwares",
-  "url": "{{ url_for('pages.home', _external=True) }}",
-  "logo": "{{ url_for('static', filename='ambion-logo.svg', _external=True) }}",
-  "description": "Bank statement PDF to Excel conversion service"
+  "url": "{{ public_url_for('pages.home') }}",
+  "logo": "{{ site_base_url() }}{{ url_for('static', filename='ambion-logo.svg') }}",
+  "description": "Bank statement PDF to Excel conversion service",
+  "brand": {
+    "@type": "Brand",
+    "name": "Statement Converter"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Statement Converter",
+  "url": "{{ public_url_for('pages.home') }}",
+  "publisher": {
+    "@type": "Organization",
+    "name": "Ambion Softwares"
+  }
 }
 </script>
 {% endblock %}

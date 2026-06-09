@@ -36,12 +36,14 @@ class TestPublicRoutes:
         resp = client.get("/")
         assert resp.status_code == 200
         assert b"Statement Converter" in resp.data
+        assert b'<link rel="canonical" href="http://localhost/">' in resp.data
 
     def test_pricing(self, client):
         resp = client.get("/pricing")
         assert resp.status_code == 200
         assert b"Pricing" in resp.data
         assert b"<h1>Simple, Transparent Pricing</h1>" in resp.data
+        assert b"FAQPage" in resp.data
 
     def test_blogs(self, client):
         resp = client.get("/blogs")
@@ -94,12 +96,50 @@ class TestPublicRoutes:
         assert b"/privacy" in resp.data
         assert b"/terms" in resp.data
         assert b"/blogs/how-to-convert-bank-statements-to-excel" in resp.data
-        assert b"<lastmod>2026-05-15</lastmod>" in resp.data
+        assert b"<lastmod>2026-06-10</lastmod>" in resp.data
+        assert b"<changefreq>" not in resp.data
+        assert b"<priority>" not in resp.data
 
     def test_robots(self, client):
         resp = client.get("/robots.txt")
         assert resp.status_code == 200
         assert b"Sitemap:" in resp.data
+        assert b"User-agent: GPTBot" in resp.data
+        assert b"Disallow: /admin" in resp.data
+        assert b"Disallow: /*?*" in resp.data
+
+    def test_sitemap_txt(self, client):
+        resp = client.get("/sitemap.txt")
+        assert resp.status_code == 200
+        assert b"http://localhost/blogs/how-to-convert-bank-statements-to-excel" in resp.data
+
+    def test_llms_txt(self, client):
+        resp = client.get("/llms.txt")
+        assert resp.status_code == 200
+        assert b"# Statement Converter" in resp.data
+        assert b"Machine-Readable Discovery" in resp.data
+
+    def test_security_txt(self, client):
+        resp = client.get("/.well-known/security.txt")
+        assert resp.status_code == 200
+        assert b"Contact:" in resp.data
+        assert b"Canonical: http://localhost/.well-known/security.txt" in resp.data
+
+    def test_indexnow_key_is_404_until_configured(self, client):
+        resp = client.get("/indexnow-key.txt")
+        assert resp.status_code == 404
+
+    def test_public_base_url_drives_canonical_and_sitemap(self, client, monkeypatch):
+        monkeypatch.setenv("PUBLIC_BASE_URL", "https://statement.example")
+        home = client.get("/")
+        sitemap = client.get("/sitemap.xml")
+        assert b'<link rel="canonical" href="https://statement.example/">' in home.data
+        assert b"<loc>https://statement.example/</loc>" in sitemap.data
+
+    def test_noindex_header_on_functional_routes(self, client):
+        resp = client.get("/dashboard")
+        assert resp.status_code == 200
+        assert resp.headers["X-Robots-Tag"] == "noindex, nofollow"
 
     def test_index_redirects(self, client):
         resp = client.get("/index")
