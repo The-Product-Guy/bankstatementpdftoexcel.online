@@ -185,12 +185,13 @@ class LayoutReplicaParser(BaseParser):
         return self.transactions
 
     def write_excel(self, output_path: str) -> None:
-        """Write the inferred table replica workbook. All values are strings."""
+        """Write the table replica plus a Full_Text sheet with every visual line."""
         wb = Workbook()
         default_sheet = wb.active
         wb.remove(default_sheet)
 
         self._write_table_replica_sheet(wb)
+        self._write_lines_sheet(wb)
         wb.save(output_path)
 
     def get_quality_report(self) -> Dict[str, Any]:
@@ -1028,7 +1029,7 @@ class LayoutReplicaParser(BaseParser):
             sheet.column_dimensions[get_column_letter(col_idx)].width = width
 
     def _write_lines_sheet(self, wb: Workbook) -> None:
-        sheet = wb.create_sheet("Text_Lines")
+        sheet = wb.create_sheet("Full_Text")
         headers = ["Page", "Line", "Source", "Text"]
         for col_idx, header in enumerate(headers, 1):
             cell = sheet.cell(row=1, column=col_idx, value=header)

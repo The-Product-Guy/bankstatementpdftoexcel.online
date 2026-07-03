@@ -61,7 +61,7 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
     parser.write_excel(str(output_path))
 
     wb = load_workbook(output_path)
-    assert wb.sheetnames == ["sheet1"]
+    assert wb.sheetnames == ["sheet1", "Full_Text"]
 
     table_sheet = wb["sheet1"]
     assert [table_sheet.cell(1, col).value for col in range(1, 6)] == [
@@ -92,7 +92,7 @@ def test_layout_replica_parser_preserves_visible_lines_and_strings(tmp_path):
     assert amount_cell.number_format == "@"
 
 
-def test_layout_replica_workbook_exports_only_table_sheet(tmp_path):
+def test_layout_replica_workbook_exports_table_and_full_text_sheets(tmp_path):
     from parsers.layout_replica_parser import LayoutReplicaParser
 
     pdf_path = tmp_path / "statement.pdf"
@@ -104,10 +104,24 @@ def test_layout_replica_workbook_exports_only_table_sheet(tmp_path):
     parser.write_excel(str(output_path))
 
     wb = load_workbook(output_path)
-    assert wb.sheetnames == ["sheet1"]
+    assert wb.sheetnames == ["sheet1", "Full_Text"]
     sheet = wb["sheet1"]
     assert sheet.max_column == 5
     assert sheet.max_row == 3
+
+    full_text = wb["Full_Text"]
+    assert [full_text.cell(1, col).value for col in range(1, 5)] == [
+        "Page", "Line", "Source", "Text",
+    ]
+    total_lines = sum(len(page.lines) for page in parser.pages)
+    assert full_text.max_row == total_lines + 1  # header + every visual line
+
+    texts = [full_text.cell(row, 4).value for row in range(2, full_text.max_row + 1)]
+    # content the table sheet drops must still be in the workbook
+    assert any("Example Bank" in (t or "") for t in texts)
+    assert any("Statement Details" in (t or "") for t in texts)
+    # table content appears too (reading order, untouched)
+    assert any("CARD PAYMENT ABC-123" in (t or "") for t in texts)
 
 
 def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
