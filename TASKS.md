@@ -1,6 +1,29 @@
 # StatementFlow - Pending Tasks
 
-Last updated: 2026-03-08
+Last updated: 2026-07-03
+
+---
+
+## 2026-07-03 — Exact-Copy Fidelity Round (PR #1)
+
+Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/columns, nothing silently dropped, users delete unwanted content themselves). Spec: `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`. PR: https://github.com/The-Product-Guy/bankstatementpdftoexcel.online/pull/1 (merge = Railway deploy).
+
+### Shipped
+
+- [x] **One Excel row per PDF transaction** — wrapped continuation lines merge into their parent row (KVB PART-03: 4,491 rows → 2,281; 2,148 dated = actual transaction count).
+- [x] **`Full_Text` sheet** — every visual line of every page; no-loss invariant (account info, headers, footers all recoverable).
+- [x] **Multi-token OCR boxes split per token** — poor scans no longer dump date+branch into one column (PART-02: dated rows 17 → 303, orphans 542 → 168).
+- [x] **Header-detected columns outrank positional inference** — one noisy page can't override real bank headers.
+- [x] **Marketing honesty**: free-tier copy matches code (guest = 1, free account = 5/mo); removed fake "API access" from pricing; removed third-party smallpdfsplit.online link; "Retry in high quality" reuses the selected file.
+- [x] 152 tests green; full OCR verification on both KVB sample statements.
+
+### Open follow-ups
+
+- [ ] **Column drift on very poor scans** — proportional token split occasionally places a boundary word one column over (PART-02 rows like "03/09/18 1763 ATM" bleeding into VALUE DT). Candidate fix: snap tokens to the column containing most of their width.
+- [ ] **Pricing still claims "Unlimited batch processing"** (enterprise) — no batch upload exists; same honesty issue as the removed API claim. Needs owner call.
+- [ ] **Quota gating silently disables when `RESEND_API_KEY` is missing** (app.py) — a misconfigured deploy turns off all limits.
+- [ ] **SEO content round** (biggest distribution lever): only ~10 indexable pages; no per-bank landing pages ("HDFC statement to Excel", …); `/blogs` listing duplicates and out-contents its own post pages; 1.4 MB og-image; socket.io CDN loaded on every marketing page.
+- [ ] **UI trust round**: hero preview is fake static data — replace with real sample output + downloadable sample file.
 
 ---
 

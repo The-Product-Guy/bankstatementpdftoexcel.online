@@ -43,7 +43,7 @@ python tools/run_accuracy_gates.py --dry-run        # Show configured accuracy g
 ### Request Flow
 ```
 Browser → Flask (app.py) → /convert POST → creates Job in DB → dispatches Celery task
-Celery worker (worker.py) → process_pdf_task → UniversalBankParser → Excel → S3 → presigned URL
+Celery worker (worker.py) → process_pdf_task → LayoutReplicaParser (default) → Excel (table + Full_Text) → S3 → presigned URL
 Browser polls /status/<job_id> or receives WebSocket updates via Flask-SocketIO
 ```
 
@@ -55,14 +55,18 @@ The app runs as **two separate processes** sharing Redis + Postgres:
 In production (Railway), these are separate services (`SERVICE_ROLE=web` vs `SERVICE_ROLE=worker`) configured in `entrypoint.sh`. Scale by adding worker replicas.
 
 ### Parser Pipeline (`parsers/`)
-The extraction pipeline in `universal_parser.py` follows this strategy cascade:
-1. **Text extraction** (pdfplumber) — fast, free, works for text-based PDFs
-2. **Optional header hints** (`bank_profiles.py`) — matches conservative filename/text signatures for known samples and provides header aliases, without replacing the universal parser path
-3. **Template detection** (`template_extractor.py`) — uses Claude Haiku to detect column layout once from first 2 pages, reuses for all pages (reduces LLM calls from N to 1)
-4. **img2table + PaddleOCR** (`img2table_extractor.py`) — for scanned PDFs: OpenCV/RLSA finds table structure, PaddleOCR reads cell text
-5. **LLM fallback** (`llm_table_extractor.py`) — OpenAI for edge cases where heuristics fail
 
-For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks processed independently then merged.
+**Product direction (2026-07): the Excel output is an exact copy of the PDF** — the bank's own rows and columns, nothing silently dropped. Users delete unwanted content themselves. No normalization.
+
+**Default mode — `layout_replica`** (`layout_replica_parser.py`, see `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`):
+1. Extract words with coordinates (pdfplumber for text PDFs; PaddleOCR for scans, multi-token OCR boxes split proportionally per token)
+2. Group words into visual lines; detect the bank's header row; derive column x-ranges (header-detected columns always outrank positional inference)
+3. One Excel row per PDF table row — wrapped continuation lines merge into their parent row's cells
+4. Workbook = `sheet1` (the table, bank's own headers) + `Full_Text` (every visual line of every page — the no-loss invariant: every extracted line appears in the workbook at least once)
+
+**Dormant mode — `structured_transactions`** (`universal_parser.py`, env-var only, no UI): the old normalize-to-9-columns cascade (bank profiles → template detection via Claude Haiku → img2table+PaddleOCR → LLM fallback). Produced unusable output on scanned statements; kept for reference, do not extend. img2table was also evaluated as a replica engine and rejected on evidence (missed pages, split wraps, column misassignment).
+
+For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks processed independently then merged (structured mode only).
 
 ### Key Modules
 - `app.py`: Flask app setup, shared config/utilities, context processors, middleware. Routes split into Blueprints:
@@ -70,7 +74,7 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
   - `routes/billing.py`: Stripe checkout, webhooks, billing portal
   - `routes/converter.py`: `/dashboard` (auth-gated converter UI), PDF upload, status polling, download, feedback
   - `routes/pages.py`: public pages, SEO (sitemap/robots), health checks, admin
-- `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs parser, builds Excel (2 sheets: transactions + summary), uploads result
+- `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs the layout replica parser, uploads the workbook (table sheet + `Full_Text`)
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
 - `db.py`: Engine/session management. Falls back to `sqlite:///local.db` when `DATABASE_URL` is unset
 - `storage_utils.py`: Thin S3 wrapper (upload/download/presign/delete)
@@ -93,5 +97,5 @@ Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_K
 - Auth is magic-link email via Resend SDK (no passwords)
 - Plans: free (5 conversions/month), pro (50), enterprise (unlimited) — managed via Stripe subscriptions
 - Worker communicates progress to web via Redis keys; web pushes to browser via SocketIO
-- Transaction output format is standardized: Date, Description, Reference_Number, Withdrawal_Amount, Deposit_Amount, Transaction_Amount, Closing_Balance, Source_File, Page_Line
+- Output format is the PDF's own table: the bank's header row becomes the Excel header, one row per PDF table row, all values as strings; `Full_Text` sheet carries every visual line. (The standardized 9-column format only exists in the dormant `structured_transactions` mode.)
 - The `tools/` directory contains standalone diagnostic/debugging scripts (not imported by the app)
