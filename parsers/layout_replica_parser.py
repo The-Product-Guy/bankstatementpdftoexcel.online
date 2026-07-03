@@ -612,11 +612,15 @@ class LayoutReplicaParser(BaseParser):
             populated = sum(1 for value in values if value)
             if not populated:
                 continue
+
+            # Wrapped cell text belongs to the previous row, not a new one.
+            if self._is_continuation_row(line, values, columns, rows):
+                self._merge_continuation_row(rows[-1], values)
+                continue
+
             if not self._is_table_relevant_row(line, values, columns, saw_data_row):
                 continue
 
-            # Continuation lines usually only populate the description-like
-            # column. Keep them as table rows only after table data has begun.
             if populated == 1 and not saw_data_row:
                 continue
             if populated >= 2:
@@ -917,6 +921,49 @@ class LayoutReplicaParser(BaseParser):
     @staticmethod
     def _join_words(words: List[LayoutWord]) -> str:
         return " ".join(word.text for word in sorted(words, key=lambda item: item.x0)).strip()
+
+    def _is_continuation_row(
+        self,
+        line: LayoutLine,
+        values: List[str],
+        columns: List[TableColumn],
+        page_rows: List[TableReplicaRow],
+    ) -> bool:
+        """A wrapped fragment of the previous row: no date, no amounts, and
+        every populated cell sits in a text-ish column."""
+        if not page_rows:
+            return False
+        if self._is_document_context_line(line.text.strip()):
+            return False
+        populated = [idx for idx, value in enumerate(values) if value]
+        if not populated:
+            return False
+        if any(self._looks_like_date_value(value) for value in values[:2] if value):
+            return False
+        for idx in populated:
+            if self._is_amount_header(columns[idx].header) and self._contains_amount_value(values[idx]):
+                return False
+            if not self._is_text_column(columns[idx], idx):
+                return False
+        return True
+
+    def _is_text_column(self, column: TableColumn, idx: int) -> bool:
+        header = column.header.lower()
+        if self._is_wide_text_header(column.header):
+            return True
+        if any(token in header for token in ("reference", "ref", "remarks")):
+            return True
+        if header.startswith("column"):
+            # positional layouts: description/reference usually sit at index 1-2
+            return idx in {1, 2}
+        return False
+
+    @staticmethod
+    def _merge_continuation_row(parent: TableReplicaRow, values: List[str]) -> None:
+        for idx, value in enumerate(values):
+            if not value or idx >= len(parent.values):
+                continue
+            parent.values[idx] = f"{parent.values[idx]} {value}".strip()
 
     def _write_table_replica_sheet(self, wb: Workbook) -> None:
         sheet = wb.create_sheet("sheet1")

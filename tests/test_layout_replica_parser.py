@@ -226,7 +226,7 @@ def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
         "13/04/19",
         "13/04/19",
         "1763",
-        "MPAY/UPI/FI Funds Trans-1",
+        "MPAY/UPI/FI Funds Trans-1 684155000075893",
         "772108174541",
         "8,600.00",
         "",
@@ -234,6 +234,8 @@ def test_table_replica_keeps_rows_before_repeated_header_on_same_pdf_page():
     ] in page_two_rows
     assert not any("STATEMENT OF ACCOUNT" in " ".join(row) for row in page_two_rows)
     assert not any("Account Number" in " ".join(row) for row in page_two_rows)
+    # continuation line must no longer be its own row
+    assert not any(row[0] == "" and "684155000075893" in " ".join(row) for row in page_two_rows)
 
 
 def test_table_replica_infers_columns_when_header_is_missing():
@@ -300,20 +302,107 @@ def test_table_replica_infers_columns_when_header_is_missing():
     ]
     assert parser.table_rows[0].values == [
         "29/01/25",
-        "UPI-SELVI",
+        "UPI-SELVI PTY-YESB0MCHUPI-024036557328-PAYMENT",
         "0000024036557328",
         "29/01/25",
         "72.00",
         "0.00",
         "1,523.00",
     ]
-    assert parser.table_rows[1].values == [
-        "",
-        "PTY-YESB0MCHUPI-024036557328-PAYMENT",
-        "",
-        "",
-        "",
-        "",
-        "",
+    assert len(parser.table_rows) == 1
+
+
+def test_continuation_merges_into_description_and_reference_columns():
+    from parsers.layout_replica_parser import LayoutLine, LayoutPage, LayoutReplicaParser, LayoutWord
+
+    def make_line(page_num, index, words):
+        layout_words = [
+            LayoutWord(text=text, x0=x0, x1=x1, top=index * 10.0,
+                       bottom=index * 10.0 + 8.0, page=page_num, source="pdf-text")
+            for text, x0, x1 in words
+        ]
+        return LayoutLine(page=page_num, index=index, top=index * 10.0,
+                          bottom=index * 10.0 + 8.0, center_y=index * 10.0 + 4.0,
+                          words=layout_words,
+                          text=" ".join(word.text for word in layout_words))
+
+    separator = [("-" * 100, 16.6, 597.2)]
+    header = [
+        ("TXN", 16.6, 32.4), ("DT", 37.7, 48.2), ("VALUE_DT", 64.1, 106.3),
+        ("BRN", 116.9, 132.7), ("DESCRIPTION", 169.6, 227.7),
+        ("REFERENCE", 280.5, 328.0), ("DEBITS", 380.8, 412.5),
+        ("CREDITS", 454.7, 491.6), ("BALANCE", 560.3, 597.2),
     ]
+    lines = [
+        make_line(1, 1, separator),
+        make_line(1, 2, header),
+        make_line(1, 3, separator),
+        make_line(1, 4, [
+            ("03/04/19", 16.6, 58.8), ("03/04/19", 64.1, 106.3), ("1763", 111.6, 132.7),
+            ("IMPS", 143.2, 168.0), ("DR-1763308", 172.0, 227.0),
+            ("909223247145", 280.5, 343.8), ("5,000.00", 375.5, 423.0),
+            ("1,66,685.70", 533.9, 591.9),
+        ]),
+        # wraps into DESCRIPTION and REFERENCE columns, no date, no amounts
+        make_line(1, 5, [("HDFC0000240-3017FA", 143.2, 230.0), ("835", 280.5, 300.0)]),
+    ]
+    parser = LayoutReplicaParser(use_ocr=False)
+    parser.pages = [LayoutPage(page_number=1, width=620, height=800, source="pdf-text",
+                               words=[w for line in lines for w in line.words], lines=lines)]
+    parser._build_table_replica()
+
+    assert len(parser.table_rows) == 1
+    # 8 columns: "TXN" and "DT" merge into one header cell, so
+    # idx 3 = DESCRIPTION, idx 4 = REFERENCE, idx 5 = DEBITS
+    row = parser.table_rows[0].values
+    assert row[3] == "IMPS DR-1763308 HDFC0000240-3017FA"
+    assert row[4] == "909223247145 835"
+    assert row[5] == "5,000.00"
+
+
+def test_date_starting_line_is_never_merged_as_continuation():
+    from parsers.layout_replica_parser import LayoutLine, LayoutPage, LayoutReplicaParser, LayoutWord
+
+    def make_line(page_num, index, words):
+        layout_words = [
+            LayoutWord(text=text, x0=x0, x1=x1, top=index * 10.0,
+                       bottom=index * 10.0 + 8.0, page=page_num, source="pdf-text")
+            for text, x0, x1 in words
+        ]
+        return LayoutLine(page=page_num, index=index, top=index * 10.0,
+                          bottom=index * 10.0 + 8.0, center_y=index * 10.0 + 4.0,
+                          words=layout_words,
+                          text=" ".join(word.text for word in layout_words))
+
+    separator = [("-" * 100, 16.6, 597.2)]
+    header = [
+        ("TXN", 16.6, 32.4), ("DT", 37.7, 48.2), ("VALUE_DT", 64.1, 106.3),
+        ("BRN", 116.9, 132.7), ("DESCRIPTION", 169.6, 227.7),
+        ("REFERENCE", 280.5, 328.0), ("DEBITS", 380.8, 412.5),
+        ("CREDITS", 454.7, 491.6), ("BALANCE", 560.3, 597.2),
+    ]
+    lines = [
+        make_line(1, 1, separator),
+        make_line(1, 2, header),
+        make_line(1, 3, separator),
+        make_line(1, 4, [
+            ("01/04/19", 16.6, 58.8), ("01/04/19", 64.1, 106.3), ("1763", 111.6, 132.7),
+            ("ATM", 143.2, 162.0), ("CSW", 166.0, 190.0),
+            ("909110624882", 280.5, 343.8), ("10,000.00", 375.5, 423.0),
+            ("1,43,265.70", 533.9, 591.9),
+        ]),
+        make_line(1, 5, [
+            ("01/04/19", 16.6, 58.8), ("01/04/19", 64.1, 106.3), ("1763", 111.6, 132.7),
+            ("CA", 143.2, 155.0), ("ATM", 159.0, 178.0), ("TXN", 182.0, 200.0),
+            ("909110624882", 280.5, 343.8), ("20.00", 375.5, 423.0),
+            ("1,43,245.70", 533.9, 591.9),
+        ]),
+    ]
+    parser = LayoutReplicaParser(use_ocr=False)
+    parser.pages = [LayoutPage(page_number=1, width=620, height=800, source="pdf-text",
+                               words=[w for line in lines for w in line.words], lines=lines)]
+    parser._build_table_replica()
+
     assert len(parser.table_rows) == 2
+    assert parser.table_rows[0].values[5] == "10,000.00"
+    assert parser.table_rows[1].values[5] == "20.00"
