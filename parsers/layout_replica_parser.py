@@ -545,6 +545,24 @@ class LayoutReplicaParser(BaseParser):
     def _build_table_replica(self) -> None:
         """Build a table-first view using inferred table headers and columns."""
         active_columns: List[TableColumn] = []
+        table_columns_status = ""
+
+        def adopt_workbook_columns(columns: List[TableColumn], status: str) -> None:
+            # Real header rows always outrank positional inference; a single
+            # noisy page must not replace detected bank headers just because
+            # its word clusters produced more columns.
+            nonlocal table_columns_status
+            if table_columns_status == "header" and status != "header":
+                return
+            if status != "header" or table_columns_status == "header":
+                if len(columns) <= len(self.table_columns):
+                    return
+            self.table_columns = [
+                TableColumn(col.header, col.x0, col.x1, col.left, col.right)
+                for col in columns
+            ]
+            table_columns_status = status
+
         for page in self.pages:
             header_line = self._detect_table_header_line(page)
             page_columns: List[TableColumn] = []
@@ -555,22 +573,14 @@ class LayoutReplicaParser(BaseParser):
                 if len(page_columns) >= 2:
                     active_columns = page_columns
                     column_status = "header"
-                    if len(page_columns) > len(self.table_columns):
-                        self.table_columns = [
-                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                            for col in page_columns
-                        ]
+                    adopt_workbook_columns(page_columns, "header")
 
             if not active_columns:
                 inferred_columns = self._columns_from_transaction_lines(page)
                 if inferred_columns:
                     active_columns = inferred_columns
                     column_status = "inferred"
-                    if len(inferred_columns) > len(self.table_columns):
-                        self.table_columns = [
-                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                            for col in inferred_columns
-                        ]
+                    adopt_workbook_columns(inferred_columns, "inferred")
                 else:
                     self.table_page_summaries.append({
                         "page": page.page_number,
@@ -593,11 +603,7 @@ class LayoutReplicaParser(BaseParser):
                         column_status = "inferred"
                         header_line = None
                         page_rows = inferred_rows
-                        if len(inferred_columns) > len(self.table_columns):
-                            self.table_columns = [
-                                TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                                for col in inferred_columns
-                            ]
+                        adopt_workbook_columns(inferred_columns, "inferred")
 
             self.table_rows.extend(page_rows)
 

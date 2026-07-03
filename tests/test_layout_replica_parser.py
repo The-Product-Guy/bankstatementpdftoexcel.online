@@ -451,3 +451,55 @@ def test_multi_token_ocr_boxes_are_split_per_token():
     # untouched single-token box
     assert (single.x0, single.x1) == (400.0, 440.0)
     assert all(w.confidence == 0.9 for w in (d1, d2, brn))
+
+
+def test_header_columns_outrank_wider_inferred_columns():
+    from parsers.layout_replica_parser import LayoutLine, LayoutPage, LayoutReplicaParser, LayoutWord
+
+    def make_line(page_num, index, words):
+        layout_words = [
+            LayoutWord(text=text, x0=x0, x1=x1, top=index * 10.0,
+                       bottom=index * 10.0 + 8.0, page=page_num, source="pdf-text")
+            for text, x0, x1 in words
+        ]
+        return LayoutLine(page=page_num, index=index, top=index * 10.0,
+                          bottom=index * 10.0 + 8.0, center_y=index * 10.0 + 4.0,
+                          words=layout_words,
+                          text=" ".join(word.text for word in layout_words))
+
+    def make_page(page_num, lines):
+        return LayoutPage(page_number=page_num, width=620, height=800, source="ocr",
+                          words=[w for line in lines for w in line.words], lines=lines)
+
+    # page 1: no header, transactions only -> positional inference (wide)
+    inferred_page = make_page(1, [
+        make_line(1, 1, [
+            ("29/01/25", 40, 82), ("UPI-SELVI", 100, 160), ("PAY", 170, 195),
+            ("REF-991", 210, 255), ("0000024036557328", 270, 360), ("29/01/25", 380, 422),
+            ("72.00", 450, 478), ("0.00", 508, 526), ("1,523.00", 570, 596),
+        ]),
+        make_line(1, 2, [
+            ("30/01/25", 40, 82), ("UPI-KUMAR", 100, 160), ("PAY", 170, 195),
+            ("REF-992", 210, 255), ("0000024036557329", 270, 360), ("30/01/25", 380, 422),
+            ("80.00", 450, 478), ("0.00", 508, 526), ("1,443.00", 570, 596),
+        ]),
+    ])
+    # page 2: proper header with FEWER columns than page 1's inference
+    header_page = make_page(2, [
+        make_line(2, 1, [
+            ("Date", 40, 70), ("Description", 120, 180),
+            ("Debit", 330, 360), ("Credit", 410, 445), ("Balance", 500, 545),
+        ]),
+        make_line(2, 2, [
+            ("02/02/25", 40, 82), ("CARD PAYMENT", 120, 200),
+            ("25.75", 330, 358), ("1,417.25", 500, 545),
+        ]),
+    ])
+
+    parser = LayoutReplicaParser(use_ocr=False)
+    parser.pages = [inferred_page, header_page]
+    parser._build_table_replica()
+
+    assert [column.header for column in parser.table_columns] == [
+        "Date", "Description", "Debit", "Credit", "Balance",
+    ]
