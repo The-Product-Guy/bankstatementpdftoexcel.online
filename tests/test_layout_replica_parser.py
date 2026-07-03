@@ -420,3 +420,34 @@ def test_date_starting_line_is_never_merged_as_continuation():
     assert len(parser.table_rows) == 2
     assert parser.table_rows[0].values[5] == "10,000.00"
     assert parser.table_rows[1].values[5] == "20.00"
+
+
+def test_multi_token_ocr_boxes_are_split_per_token():
+    from parsers.layout_replica_parser import LayoutReplicaParser
+
+    parser = LayoutReplicaParser(use_ocr=False)
+    words = parser._ocr_results_to_layout_words(
+        [
+            # one Paddle det box spanning three table cells
+            {"text": "03/09/18 03/09/18 1763", "bbox": [100.0, 10.0, 330.0, 22.0], "confidence": 0.9},
+            {"text": "single", "bbox": [400.0, 10.0, 440.0, 22.0], "confidence": 0.8},
+        ],
+        page_num=1,
+        page_width=612.0,
+        page_height=792.0,
+        image_width=612,
+        image_height=792,
+        source="ocr",
+    )
+
+    assert [w.text for w in words] == ["03/09/18", "03/09/18", "1763", "single"]
+    d1, d2, brn, single = words
+    # tokens keep left-to-right order inside the original box
+    assert 100.0 == d1.x0 and d1.x1 < d2.x0 and d2.x1 < brn.x0
+    assert abs(brn.x1 - 330.0) < 1e-6
+    # widths proportional to character counts (8/8/4 chars + 2 gaps)
+    assert abs((d1.x1 - d1.x0) - (d2.x1 - d2.x0)) < 1e-6
+    assert (d1.x1 - d1.x0) > (brn.x1 - brn.x0)
+    # untouched single-token box
+    assert (single.x0, single.x1) == (400.0, 440.0)
+    assert all(w.confidence == 0.9 for w in (d1, d2, brn))

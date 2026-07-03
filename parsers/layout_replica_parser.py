@@ -309,19 +309,40 @@ class LayoutReplicaParser(BaseParser):
                 continue
             try:
                 x0, top, x1, bottom = [float(value) for value in bbox]
+                confidence = float(item.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                continue
+            for token, token_x0, token_x1 in self._split_ocr_tokens(text, x0 * scale_x, x1 * scale_x):
                 words.append(LayoutWord(
-                    text=text,
-                    x0=x0 * scale_x,
-                    x1=x1 * scale_x,
+                    text=token,
+                    x0=token_x0,
+                    x1=token_x1,
                     top=top * scale_y,
                     bottom=bottom * scale_y,
                     page=page_num,
                     source=source,
-                    confidence=float(item.get("confidence", 0.0)),
+                    confidence=confidence,
                 ))
-            except (TypeError, ValueError):
-                continue
         return words
+
+    @staticmethod
+    def _split_ocr_tokens(text: str, x0: float, x1: float) -> List[Tuple[str, float, float]]:
+        """Split a multi-token OCR box into per-token boxes, width allocated
+        proportionally by character count. Paddle detection boxes often span
+        several table cells on tight scans; kept whole, one box centered on the
+        wrong column drags every token in it into that column."""
+        tokens = text.split()
+        if len(tokens) <= 1:
+            return [(text, x0, x1)]
+        total_chars = sum(len(token) for token in tokens) + (len(tokens) - 1)
+        per_char = max(x1 - x0, 1.0) / total_chars
+        result = []
+        cursor = x0
+        for token in tokens:
+            token_width = len(token) * per_char
+            result.append((token, cursor, cursor + token_width))
+            cursor += token_width + per_char
+        return result
 
     def _extract_tesseract_words(
         self,
