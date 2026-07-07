@@ -236,7 +236,7 @@ def sync_session_plan():
         logger.warning(f"sync_session_plan failed: {e}")
 
 def check_conversion_quota(user_id, guest_id):
-    if DISABLE_QUOTAS or not os.environ.get('RESEND_API_KEY'):
+    if DISABLE_QUOTAS:
         return True, None
     try:
         monthly_scope = f"monthly:{datetime.utcnow().strftime('%Y-%m')}"
