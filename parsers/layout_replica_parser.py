@@ -929,6 +929,19 @@ class LayoutReplicaParser(BaseParser):
     @staticmethod
     def _table_column_index_for_word(word: LayoutWord, columns: List[TableColumn]) -> Optional[int]:
         center = (word.x0 + word.x1) / 2.0
+        best_idx = None
+        best_key = None
+        for idx, column in enumerate(columns):
+            overlap = min(word.x1, column.right) - max(word.x0, column.left)
+            if overlap <= 0:
+                continue
+            # Snap to the column holding most of the word's width; on exact
+            # ties keep the column containing the word's center.
+            key = (overlap, 1 if column.left <= center < column.right else 0)
+            if best_key is None or key > best_key:
+                best_idx, best_key = idx, key
+        if best_idx is not None:
+            return best_idx
         for idx, column in enumerate(columns):
             if column.left <= center < column.right:
                 return idx
