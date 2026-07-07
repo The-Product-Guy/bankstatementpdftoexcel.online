@@ -85,3 +85,4 @@ input/
 
 # Test PDF files
 *.pdf
+.serena/
