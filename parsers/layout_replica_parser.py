@@ -185,12 +185,13 @@ class LayoutReplicaParser(BaseParser):
         return self.transactions
 
     def write_excel(self, output_path: str) -> None:
-        """Write the inferred table replica workbook. All values are strings."""
+        """Write the table replica plus a Full_Text sheet with every visual line."""
         wb = Workbook()
         default_sheet = wb.active
         wb.remove(default_sheet)
 
         self._write_table_replica_sheet(wb)
+        self._write_lines_sheet(wb)
         wb.save(output_path)
 
     def get_quality_report(self) -> Dict[str, Any]:
@@ -308,19 +309,40 @@ class LayoutReplicaParser(BaseParser):
                 continue
             try:
                 x0, top, x1, bottom = [float(value) for value in bbox]
+                confidence = float(item.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                continue
+            for token, token_x0, token_x1 in self._split_ocr_tokens(text, x0 * scale_x, x1 * scale_x):
                 words.append(LayoutWord(
-                    text=text,
-                    x0=x0 * scale_x,
-                    x1=x1 * scale_x,
+                    text=token,
+                    x0=token_x0,
+                    x1=token_x1,
                     top=top * scale_y,
                     bottom=bottom * scale_y,
                     page=page_num,
                     source=source,
-                    confidence=float(item.get("confidence", 0.0)),
+                    confidence=confidence,
                 ))
-            except (TypeError, ValueError):
-                continue
         return words
+
+    @staticmethod
+    def _split_ocr_tokens(text: str, x0: float, x1: float) -> List[Tuple[str, float, float]]:
+        """Split a multi-token OCR box into per-token boxes, width allocated
+        proportionally by character count. Paddle detection boxes often span
+        several table cells on tight scans; kept whole, one box centered on the
+        wrong column drags every token in it into that column."""
+        tokens = text.split()
+        if len(tokens) <= 1:
+            return [(text, x0, x1)]
+        total_chars = sum(len(token) for token in tokens) + (len(tokens) - 1)
+        per_char = max(x1 - x0, 1.0) / total_chars
+        result = []
+        cursor = x0
+        for token in tokens:
+            token_width = len(token) * per_char
+            result.append((token, cursor, cursor + token_width))
+            cursor += token_width + per_char
+        return result
 
     def _extract_tesseract_words(
         self,
@@ -523,6 +545,24 @@ class LayoutReplicaParser(BaseParser):
     def _build_table_replica(self) -> None:
         """Build a table-first view using inferred table headers and columns."""
         active_columns: List[TableColumn] = []
+        table_columns_status = ""
+
+        def adopt_workbook_columns(columns: List[TableColumn], status: str) -> None:
+            # Real header rows always outrank positional inference; a single
+            # noisy page must not replace detected bank headers just because
+            # its word clusters produced more columns.
+            nonlocal table_columns_status
+            if table_columns_status == "header" and status != "header":
+                return
+            if status != "header" or table_columns_status == "header":
+                if len(columns) <= len(self.table_columns):
+                    return
+            self.table_columns = [
+                TableColumn(col.header, col.x0, col.x1, col.left, col.right)
+                for col in columns
+            ]
+            table_columns_status = status
+
         for page in self.pages:
             header_line = self._detect_table_header_line(page)
             page_columns: List[TableColumn] = []
@@ -533,22 +573,14 @@ class LayoutReplicaParser(BaseParser):
                 if len(page_columns) >= 2:
                     active_columns = page_columns
                     column_status = "header"
-                    if len(page_columns) > len(self.table_columns):
-                        self.table_columns = [
-                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                            for col in page_columns
-                        ]
+                    adopt_workbook_columns(page_columns, "header")
 
             if not active_columns:
                 inferred_columns = self._columns_from_transaction_lines(page)
                 if inferred_columns:
                     active_columns = inferred_columns
                     column_status = "inferred"
-                    if len(inferred_columns) > len(self.table_columns):
-                        self.table_columns = [
-                            TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                            for col in inferred_columns
-                        ]
+                    adopt_workbook_columns(inferred_columns, "inferred")
                 else:
                     self.table_page_summaries.append({
                         "page": page.page_number,
@@ -571,11 +603,7 @@ class LayoutReplicaParser(BaseParser):
                         column_status = "inferred"
                         header_line = None
                         page_rows = inferred_rows
-                        if len(inferred_columns) > len(self.table_columns):
-                            self.table_columns = [
-                                TableColumn(col.header, col.x0, col.x1, col.left, col.right)
-                                for col in inferred_columns
-                            ]
+                        adopt_workbook_columns(inferred_columns, "inferred")
 
             self.table_rows.extend(page_rows)
 
@@ -612,11 +640,15 @@ class LayoutReplicaParser(BaseParser):
             populated = sum(1 for value in values if value)
             if not populated:
                 continue
+
+            # Wrapped cell text belongs to the previous row, not a new one.
+            if self._is_continuation_row(line, values, columns, rows):
+                self._merge_continuation_row(rows[-1], values)
+                continue
+
             if not self._is_table_relevant_row(line, values, columns, saw_data_row):
                 continue
 
-            # Continuation lines usually only populate the description-like
-            # column. Keep them as table rows only after table data has begun.
             if populated == 1 and not saw_data_row:
                 continue
             if populated >= 2:
@@ -918,6 +950,49 @@ class LayoutReplicaParser(BaseParser):
     def _join_words(words: List[LayoutWord]) -> str:
         return " ".join(word.text for word in sorted(words, key=lambda item: item.x0)).strip()
 
+    def _is_continuation_row(
+        self,
+        line: LayoutLine,
+        values: List[str],
+        columns: List[TableColumn],
+        page_rows: List[TableReplicaRow],
+    ) -> bool:
+        """A wrapped fragment of the previous row: no date, no amounts, and
+        every populated cell sits in a text-ish column."""
+        if not page_rows:
+            return False
+        if self._is_document_context_line(line.text.strip()):
+            return False
+        populated = [idx for idx, value in enumerate(values) if value]
+        if not populated:
+            return False
+        if any(self._looks_like_date_value(value) for value in values[:2] if value):
+            return False
+        for idx in populated:
+            if self._is_amount_header(columns[idx].header) and self._contains_amount_value(values[idx]):
+                return False
+            if not self._is_text_column(columns[idx], idx):
+                return False
+        return True
+
+    def _is_text_column(self, column: TableColumn, idx: int) -> bool:
+        header = column.header.lower()
+        if self._is_wide_text_header(column.header):
+            return True
+        if any(token in header for token in ("reference", "ref", "remarks")):
+            return True
+        if header.startswith("column"):
+            # positional layouts: description/reference usually sit at index 1-2
+            return idx in {1, 2}
+        return False
+
+    @staticmethod
+    def _merge_continuation_row(parent: TableReplicaRow, values: List[str]) -> None:
+        for idx, value in enumerate(values):
+            if not value or idx >= len(parent.values):
+                continue
+            parent.values[idx] = f"{parent.values[idx]} {value}".strip()
+
     def _write_table_replica_sheet(self, wb: Workbook) -> None:
         sheet = wb.create_sheet("sheet1")
         headers = [column.header for column in self.table_columns]
@@ -981,7 +1056,7 @@ class LayoutReplicaParser(BaseParser):
             sheet.column_dimensions[get_column_letter(col_idx)].width = width
 
     def _write_lines_sheet(self, wb: Workbook) -> None:
-        sheet = wb.create_sheet("Text_Lines")
+        sheet = wb.create_sheet("Full_Text")
         headers = ["Page", "Line", "Source", "Text"]
         for col_idx, header in enumerate(headers, 1):
             cell = sheet.cell(row=1, column=col_idx, value=header)

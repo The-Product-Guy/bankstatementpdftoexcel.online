@@ -6,8 +6,8 @@ A modern web application for converting bank statement PDFs to Excel format with
 
 - **🌐 Web-based Interface** - Beautiful, responsive UI with drag-and-drop upload
 - **🏦 Universal Bank Support** - Works across text-based and scanned statements  
-- **🤖 Smart Processing** - Auto-detects PDF type and uses the universal parsing pipeline
-- **📊 Financial Analysis** - Automatic calculation of deposits, withdrawals, and balances
+- **🤖 Smart Processing** - Auto-detects PDF type (text or scanned) and recreates the statement's own table layout
+- **📊 Exact-Copy Output** - The bank's own rows and columns land in Excel unchanged; a `Full_Text` sheet preserves everything else on the page
 - **🔒 Secure Processing** - Files automatically deleted after conversion
 - **📱 Responsive Design** - Works seamlessly on desktop and mobile devices
 - **☁️ Cloud Ready** - Production-ready deployment configuration for Railway
@@ -152,25 +152,14 @@ pip3
 
 ## 📊 Output Excel Format
 
-| Column | Description | Example |
-|--------|-------------|---------|
-| `Date` | Transaction date | `23/07/25` |
-| `Description` | Transaction details | `UPI/ZOMATO LIM/zomatoorder` |
-| `Reference_Number` | Bank reference/serial | `1`, `CHQ001` |
-| `Withdrawal_Amount` | Debit amount | `254.59` |
-| `Deposit_Amount` | Credit amount | `5000.00` |
-| `Transaction_Amount` | Net amount (+/-) | `-254.59` |
-| `Closing_Balance` | Balance after transaction | `9745.41` |
-| `Source_File` | Original PDF name | `statement.pdf` |
-| `Page_Line` | Reference for debugging | `Page1_Line15` |
-
-Generated workbooks include validation sheets when normalized transactions are available:
+The workbook is an **exact copy of the PDF** — the bank's own columns, one Excel row per PDF table row, all values as strings:
 
 | Sheet | Purpose |
 |-------|---------|
-| `Validation` | Exact ledger checks for row count, balance continuity, debit/credit counts, totals, statement summary values, and repair counts. |
-| `Issues` | Rows where extracted amounts do not reconcile with running balances or other ledger rules. |
-| `Repairs` | Audit trail for rows that were deterministically repaired from running-balance deltas. |
+| `sheet1` | The statement table with the bank's own header row (e.g. `TXN DT \| VALUE_DT \| BRN \| DESCRIPTION \| REFERENCE \| DEBITS \| CREDITS \| BALANCE`). Wrapped descriptions are merged into their transaction's row. |
+| `Full_Text` | Every visual line of every page in reading order (Page \| Line \| Source \| Text) — account details, headers, footers, and anything not classified as table content. Nothing is silently dropped. |
+
+Delete whatever you don't need from `Full_Text`; the table sheet stays clean for sums and pivots.
 
 ## 🔧 Configuration
 

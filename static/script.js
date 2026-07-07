@@ -12,6 +12,8 @@ const ICONS = {
 
 // DOM Elements
 const fileInput = document.getElementById('pdf_file');
+// Kept so "Retry in high quality" still works after the form is reset
+let lastSelectedFile = null;
 const fileUploadArea = document.getElementById('fileUploadArea');
 const fileInfo = document.getElementById('fileInfo');
 const fileName = document.getElementById('fileName');
@@ -161,6 +163,7 @@ function handleFileSelect(e) {
     const file = e.target.files[0];
     if (file) {
         if (validateFile(file)) {
+            lastSelectedFile = file;
             displayFileInfo(file);
             checkFormValidity();
         } else {
@@ -647,6 +650,13 @@ function retryWithHighQuality() {
             highOption.classList.add('selected');
             highOption.querySelector('input[type="radio"]').checked = true;
         }
+    }
+
+    if (fileInput.files.length === 0 && lastSelectedFile) {
+        const dt = new DataTransfer();
+        dt.items.add(lastSelectedFile);
+        fileInput.files = dt.files;
+        displayFileInfo(lastSelectedFile);
     }
 
     if (fileInput.files.length > 0) {
