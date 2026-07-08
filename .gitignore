@@ -87,3 +87,5 @@ input/
 *.pdf
 .serena/
 Website redesign request-handoff.zip
+!static/sample-statement.pdf
+!static/sample-statement.xlsx
