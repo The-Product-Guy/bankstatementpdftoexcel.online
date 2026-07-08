@@ -505,6 +505,39 @@ def test_header_columns_outrank_wider_inferred_columns():
     ]
 
 
+def test_date_detection_covers_western_formats():
+    from parsers.layout_replica_parser import LayoutReplicaParser
+
+    accepted = ["06/11", "06/03/2026", "3 Jun 2026", "30 June 2026", "Jun 3, 2026", "03.06.2026", "03-06-2026"]
+    rejected = ["1.5", "1,234.56", "2,100.00", "CHECK 1042", "", "2026"]
+    for value in accepted:
+        assert LayoutReplicaParser._looks_like_date_value(value), value
+    for value in rejected:
+        assert not LayoutReplicaParser._looks_like_date_value(value), value
+
+
+def test_amount_detection_covers_western_formats():
+    from parsers.layout_replica_parser import LayoutReplicaParser
+
+    accepted = ["1,234.56", "£2,480.00", "€112,40", "$300.00", "-15.99", "(45.00)", "1.234,56", "2480", "0.84"]
+    rejected = ["3 Jun 2026", "06/11", "CHECK", "", "-", "£"]
+    for value in accepted:
+        assert LayoutReplicaParser._looks_like_amount_value(value), value
+    for value in rejected:
+        assert not LayoutReplicaParser._looks_like_amount_value(value), value
+
+
+def test_amount_headers_cover_western_conventions():
+    from parsers.layout_replica_parser import LayoutReplicaParser
+
+    accepted = ["Debit", "Withdrawals", "Money out", "Money in", "Af", "Bij", "Saldo", "Soll", "Haben", "Amount"]
+    rejected = ["Description", "Omschrijving", "Date", "Reference"]
+    for header in accepted:
+        assert LayoutReplicaParser._is_amount_header(header), header
+    for header in rejected:
+        assert not LayoutReplicaParser._is_amount_header(header), header
+
+
 def test_word_snaps_to_column_holding_most_of_its_width():
     from parsers.layout_replica_parser import LayoutReplicaParser, LayoutWord, TableColumn
 

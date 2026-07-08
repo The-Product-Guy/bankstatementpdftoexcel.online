@@ -89,3 +89,4 @@ input/
 Website redesign request-handoff.zip
 !static/sample-statement.pdf
 !static/sample-statement.xlsx
+!tests/data/synthetic/*.pdf
