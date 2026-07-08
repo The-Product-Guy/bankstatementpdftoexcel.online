@@ -34,3 +34,21 @@ def client():
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as test_client:
         yield test_client
+
+
+def test_bank_index_renders(client):
+    resp = client.get("/convert/")
+    assert resp.status_code == 200
+    assert b"Convert any bank" in resp.data
+
+
+def test_bank_landing_renders(client):
+    resp = client.get("/convert/chase-statement-to-excel")
+    assert resp.status_code == 200
+    assert b"Convert Chase Statements to Excel" in resp.data
+    assert b"FAQPage" in resp.data
+    assert b"BreadcrumbList" in resp.data
+
+
+def test_unknown_bank_404(client):
+    assert client.get("/convert/notabank-statement-to-excel").status_code == 404

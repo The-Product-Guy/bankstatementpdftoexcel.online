@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape
 
-from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import distinct, func
 
 from db import get_db_session
@@ -353,6 +353,21 @@ def blog_post(slug):
     if not post:
         return "Not found", 404
     return render_template('blog_post.html', post=post)
+
+
+@pages_bp.route('/convert/')
+def bank_index():
+    from routes.bank_pages import BANK_PAGES
+    return render_template('bank_index.html', banks=BANK_PAGES)
+
+
+@pages_bp.route('/convert/<slug>')
+def bank_landing(slug):
+    from routes.bank_pages import BANK_BY_SLUG
+    bank = BANK_BY_SLUG.get(slug)
+    if not bank:
+        abort(404)
+    return render_template('bank_landing.html', bank=bank)
 
 
 @pages_bp.route('/pricing')

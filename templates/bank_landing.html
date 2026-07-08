@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Convert {{ bank.name }} Statements to Excel - Statement Converter{% endblock %}
+
+{% block meta_description %}Convert {{ bank.name }} bank statement PDFs to Excel. {{ bank.columns|join(', ') }} — the same rows and columns as your statement, typed or scanned.{% endblock %}
+
+{% block canonical_url %}{{ public_url_for('pages.bank_landing', slug=bank.slug) }}{% endblock %}
+
+{% block structured_data %}
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{% for f in bank.faqs %}{"@type":"Question","name":{{ f.q|tojson }},"acceptedAnswer":{"@type":"Answer","text":{{ f.a|tojson }}}}{{ "," if not loop.last }}{% endfor %}]}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"{{ site_base_url() }}/"},
+{"@type":"ListItem","position":2,"name":"Convert","item":"{{ site_base_url() }}/convert/"},
+{"@type":"ListItem","position":3,"name":{{ bank.name|tojson }}}]}
+</script>
+{% endblock %}
+
+{% block content %}
+<main>
+    <header class="pricing-intro page">
+        <p class="eyebrow">{{ bank.country }}</p>
+        <h1 class="display">Convert {{ bank.name }} Statements to Excel</h1>
+        <p class="muted">Upload a {{ bank.name }} statement PDF — typed or scanned — and download the same rows and columns in Excel. Nothing reformatted, nothing silently dropped.</p>
+    </header>
+
+    <section class="section page bank-format" aria-labelledby="formatTitle">
+        <div class="security-grid">
+            <div>
+                <p class="eyebrow">Statement format</p>
+                <h2 id="formatTitle" class="display section-title">What a {{ bank.name }} statement looks like to the converter.</h2>
+                <p class="muted">{{ bank.layout_notes }}</p>
+            </div>
+            <div class="spec-rows">
+                <div class="spec-row"><span class="label">Currency</span><span class="value">{{ bank.currency }}</span></div>
+                <div class="spec-row"><span class="label">Date format</span><span class="value">{{ bank.date_format }}</span></div>
+                <div class="spec-row"><span class="label">Typical columns</span><span class="value">{{ bank.columns|join(' · ') }}</span></div>
+                <div class="spec-row"><span class="label">Wrapped descriptions</span><span class="value">merged into one row</span></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section page" aria-labelledby="stepsTitle">
+        <div class="split-head">
+            <div>
+                <p class="eyebrow">Workflow</p>
+                <h2 id="stepsTitle" class="display section-title">Three steps, no setup.</h2>
+            </div>
+            <p class="muted split-head-note">The converter reads your PDF's own layout — there is no {{ bank.name }} template to pick and nothing to configure.</p>
+        </div>
+        <div class="hairline-grid workflow-cards">
+            <article>
+                <div class="step-num" aria-hidden="true">01</div>
+                <h3>Upload the statement</h3>
+                <p class="muted">Drop your {{ bank.name }} statement PDF in. Text-based and scanned pages route through different extraction paths automatically.</p>
+            </article>
+            <article>
+                <div class="step-num" aria-hidden="true">02</div>
+                <h3>Recreate the layout</h3>
+                <p class="muted">Text and coordinates are placed into Excel cells the way they appeared on the page — {{ bank.name }}'s own headings included.</p>
+            </article>
+            <article>
+                <div class="step-num" aria-hidden="true">03</div>
+                <h3>Download and review</h3>
+                <p class="muted">One row per printed transaction, plus a Full_Text sheet carrying every line of the PDF so nothing is lost.</p>
+            </article>
+        </div>
+    </section>
+
+    <section class="pricing-faq" aria-labelledby="faqTitle">
+        <h2 id="faqTitle" class="display">{{ bank.name }} questions, answered.</h2>
+        <div class="faq-list">
+            {% for f in bank.faqs %}
+            <details class="faq-item"{% if loop.first %} open{% endif %}>
+                <summary><span>{{ f.q }}</span><span class="faq-icon" aria-hidden="true">+</span></summary>
+                <p>{{ f.a }}</p>
+            </details>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="cta-band" aria-labelledby="bankCtaTitle">
+        <h2 id="bankCtaTitle" class="display cta-title">Convert your {{ bank.name }} statement now.</h2>
+        <p class="cta-sub">1 free conversion as a guest — 5 a month with a free account. No credit card needed.</p>
+        <div class="cta-actions">
+            <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="bank_page_cta_click">Convert a PDF free</a>
+            <a href="{{ url_for('pages.bank_index') }}" class="btn-pill btn-pill--ghost-dark btn-pill--big">All banks</a>
+        </div>
+    </section>
+</main>
+{% endblock %}
