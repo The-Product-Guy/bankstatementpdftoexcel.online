@@ -23,7 +23,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **Pricing still claims "Unlimited batch processing"** (enterprise) — no batch upload exists; same honesty issue as the removed API claim. Needs owner call.
 - [x] **Quota gating silently disables when `RESEND_API_KEY` is missing** (app.py) — a misconfigured deploy turns off all limits.
 - [ ] **SEO content round** (biggest distribution lever): only ~10 indexable pages; no per-bank landing pages ("HDFC statement to Excel", …); `/blogs` listing duplicates and out-contents its own post pages; 1.4 MB og-image; socket.io CDN loaded on every marketing page.
-- [x] **UI trust round**: fake hero data eliminated — the 2026-07-08 ledger redesign ships an abstract PDF→XLSX hero visual (spec: `docs/superpowers/specs/2026-07-08-ledger-redesign-design.md`). Still open: downloadable real sample workbook (folded into the SEO/growth round).
+- [x] **UI trust round**: fake hero data eliminated — the 2026-07-08 ledger redesign ships an abstract PDF→XLSX hero visual (spec: `docs/superpowers/specs/2026-07-08-ledger-redesign-design.md`). Downloadable real sample shipped 2026-07-08: `static/sample-statement.pdf` → `static/sample-statement.xlsx`, linked from the home hero.
 
 ---
 
