@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #faf8f4; }
+    * { box-sizing: border-box; }
+    ::selection { background: #ff6b4a; color: #0e1420; }
+  </style>
+</helmet>
+
+<div style="font-family:'Manrope',sans-serif; background:#faf8f4; color:#12182a; min-height:100vh;">
+
+  <!-- NAV -->
+  <div style="position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:space-between; padding:20px 56px; background:rgba(250,248,244,0.86); backdrop-filter:blur(10px); border-bottom:1px solid rgba(18,24,42,0.08);">
+    <a href="Statement Converter.dc.html" style="display:flex; align-items:center; gap:10px; text-decoration:none; color:#12182a;">
+      <div style="width:30px; height:30px; border-radius:8px; background:#12182a; position:relative; flex-shrink:0;">
+        <div style="position:absolute; top:6px; left:6px; width:8px; height:8px; border-radius:2px; background:#ff6b4a;"></div>
+        <div style="position:absolute; bottom:6px; right:6px; width:8px; height:8px; border-radius:2px; background:#faf8f4;"></div>
+      </div>
+      <span style="font-family:'Newsreader',serif; font-size:20px; font-weight:600; letter-spacing:-0.01em;">Ledger&amp;Line</span>
+    </a>
+    <div style="display:flex; align-items:center; gap:40px;">
+      <a href="Statement Converter.dc.html#workflow" style="{{ navLink }}">How it works</a>
+      <a href="Pricing.dc.html" style="{{ navLink }} color:#ff6b4a;">Pricing</a>
+      <a href="Statement Converter.dc.html#security" style="{{ navLink }}">Security</a>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <a href="#" style="{{ navLink }}">Sign in</a>
+      <a href="#" style="display:inline-flex; align-items:center; padding:11px 22px; background:#12182a; color:#faf8f4; border-radius:100px; text-decoration:none; font-weight:600; font-size:14.5px;" style-hover="background:#ff6b4a; color:#12182a;">Convert a PDF</a>
+    </div>
+  </div>
+
+  <!-- HEADER -->
+  <div style="padding:100px 56px 60px; text-align:center;">
+    <div style="font-size:13px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#ff6b4a; margin-bottom:16px;">Pricing</div>
+    <h1 style="font-family:'Newsreader',serif; font-size:clamp(36px,4.4vw,58px); font-weight:500; line-height:1.08; letter-spacing:-0.02em; margin:0 0 20px;">Simple pricing for<br>every volume of work.</h1>
+    <p style="font-size:17px; color:#12182a99; max-width:520px; margin:0 auto;">Start free. Move up only when a real batch of statements needs it.</p>
+
+    <div style="display:inline-flex; align-items:center; background:#12182a; border-radius:100px; padding:5px; margin-top:40px; gap:4px;">
+      <button style="border:none; cursor:pointer; padding:10px 22px; border-radius:100px; font-weight:600; font-size:14px; font-family:inherit; background:{{ toggleBg.monthly }}; color:{{ toggleColor.monthly }};" onclick="{{ setMonthly }}">Monthly</button>
+      <button style="border:none; cursor:pointer; padding:10px 22px; border-radius:100px; font-weight:600; font-size:14px; font-family:inherit; display:flex; align-items:center; gap:8px; background:{{ toggleBg.yearly }}; color:{{ toggleColor.yearly }};" onclick="{{ setYearly }}">
+        Yearly
+        <span style="background:#b4ff78; color:#12182a; font-size:11px; padding:2px 8px; border-radius:100px; font-weight:700;">-20%</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- PLANS -->
+  <div style="max-width:1180px; margin:0 auto; padding:20px 56px 120px; display:grid; grid-template-columns:repeat(3,1fr); gap:24px; align-items:stretch;">
+    <sc-for list="{{ plans }}" as="plan" hint-placeholder-count="3">
+      <div style="{{ plan.cardStyle }}">
+        <sc-if value="{{ plan.featured }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; top:-14px; left:50%; transform:translateX(-50%); background:#ff6b4a; color:#0e1420; font-size:12px; font-weight:700; padding:6px 16px; border-radius:100px; letter-spacing:0.02em;">Most popular</div>
+        </sc-if>
+        <div style="font-size:15px; font-weight:700; margin-bottom:8px; color:{{ plan.textMuted }};">{{ plan.name }}</div>
+        <div style="display:flex; align-items:baseline; gap:6px; margin-bottom:6px;">
+          <span style="font-family:'Newsreader',serif; font-size:46px; font-weight:500; letter-spacing:-0.01em;">{{ plan.price }}</span>
+          <span style="font-size:14px; color:{{ plan.textMuted }};">{{ plan.period }}</span>
+        </div>
+        <p style="font-size:14px; color:{{ plan.textMuted }}; margin:0 0 28px; min-height:38px;">{{ plan.blurb }}</p>
+        <a href="#" style="{{ plan.buttonStyle }}">{{ plan.cta }}</a>
+        <div style="height:1px; background:{{ plan.divider }}; margin:28px 0;"></div>
+        <sc-for list="{{ plan.features }}" as="f" hint-placeholder-count="5">
+          <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:14px;">
+            <span style="width:16px; height:16px; border-radius:50%; background:{{ plan.checkBg }}; color:{{ plan.checkColor }}; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; margin-top:2px; font-weight:700;">✓</span>
+            <span style="font-size:14.5px; color:{{ plan.textBody }}; line-height:1.5;">{{ f }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- FAQ -->
+  <div style="max-width:760px; margin:0 auto; padding:0 56px 140px;">
+    <h2 style="font-family:'Newsreader',serif; font-size:clamp(28px,3vw,36px); font-weight:500; text-align:center; margin:0 0 48px; letter-spacing:-0.01em;">Questions, answered.</h2>
+    <div style="display:flex; flex-direction:column; gap:1px; background:rgba(18,24,42,0.1); border-radius:16px; overflow:hidden;">
+      <sc-for list="{{ faqs }}" as="faq" hint-placeholder-count="4">
+        <div style="{{ faq.wrapStyle }}" onclick="{{ faq.toggle }}">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:24px 28px; cursor:pointer; background:#faf8f4;">
+            <span style="font-size:15.5px; font-weight:700;">{{ faq.q }}</span>
+            <span style="font-size:20px; color:#ff6b4a; transform:{{ faq.iconTransform }}; transition:transform 0.2s;">+</span>
+          </div>
+          <sc-if value="{{ faq.open }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:0 28px 24px; font-size:14.5px; line-height:1.65; color:#12182a99; background:#faf8f4;">{{ faq.a }}</div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div style="padding:0 56px 48px; max-width:1240px; margin:0 auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding-top:28px; border-top:1px solid rgba(18,24,42,0.08); font-size:13px; color:#12182a80; flex-wrap:wrap; gap:12px;">
+      <span>© 2026 Ledger&amp;Line. All rights reserved.</span>
+      <div style="display:flex; gap:24px;">
+        <a href="#" style="color:#12182a80; text-decoration:none;">Privacy</a>
+        <a href="#" style="color:#12182a80; text-decoration:none;">Terms</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    billing: "monthly",
+    openFaq: 0,
+  };
+
+  renderVals() {
+    const navLink = "color:#12182a; text-decoration:none; font-weight:600; font-size:14.5px;";
+    const billing = this.state.billing;
+
+    const setMonthly = () => this.setState({ billing: "monthly" });
+    const setYearly = () => this.setState({ billing: "yearly" });
+
+    const toggleBg = {
+      monthly: billing === "monthly" ? "#faf8f4" : "transparent",
+      yearly: billing === "yearly" ? "#faf8f4" : "transparent",
+    };
+    const toggleColor = {
+      monthly: billing === "monthly" ? "#12182a" : "rgba(250,248,244,0.6)",
+      yearly: billing === "yearly" ? "#12182a" : "rgba(250,248,244,0.6)",
+    };
+
+    const baseCard = "position:relative; border-radius:22px; padding:36px 32px; display:flex; flex-direction:column;";
+    const lightCard = baseCard + " background:#ffffff; border:1px solid rgba(18,24,42,0.1);";
+    const darkCard = baseCard + " background:#12182a; border:1px solid #12182a; color:#faf8f4; transform:scale(1.03); box-shadow:0 40px 80px -30px rgba(18,24,42,0.4);";
+
+    const plans = [
+      {
+        name: "Free",
+        price: "$0",
+        period: "/ month",
+        blurb: "For occasional statements and trying things out.",
+        cta: "Start free",
+        featured: false,
+        cardStyle: lightCard,
+        buttonStyle: "display:block; text-align:center; padding:13px; border-radius:100px; background:#12182a; color:#faf8f4; text-decoration:none; font-weight:700; font-size:14.5px;",
+        textMuted: "#12182a99",
+        textBody: "#12182a",
+        divider: "rgba(18,24,42,0.1)",
+        checkBg: "rgba(18,24,42,0.08)",
+        checkColor: "#12182a",
+        features: ["5 conversions / month", "Text & scanned PDFs", "Standard file retention", "Email support"],
+      },
+      {
+        name: "Pro",
+        price: billing === "monthly" ? "$19" : "$15",
+        period: "/ month",
+        blurb: "For accountants and finance teams converting weekly.",
+        cta: "Start Pro",
+        featured: true,
+        cardStyle: darkCard,
+        buttonStyle: "display:block; text-align:center; padding:13px; border-radius:100px; background:#ff6b4a; color:#0e1420; text-decoration:none; font-weight:700; font-size:14.5px;",
+        textMuted: "rgba(250,248,244,0.6)",
+        textBody: "rgba(250,248,244,0.85)",
+        divider: "rgba(250,248,244,0.15)",
+        checkBg: "rgba(255,107,74,0.2)",
+        checkColor: "#ff6b4a",
+        features: ["150 conversions / month", "Multi-page table detection", "Priority extraction queue", "Extended file retention", "Priority email support"],
+      },
+      {
+        name: "Business",
+        price: billing === "monthly" ? "$59" : "$47",
+        period: "/ month",
+        blurb: "For firms processing statements across many clients.",
+        cta: "Start Business",
+        featured: false,
+        cardStyle: lightCard,
+        buttonStyle: "display:block; text-align:center; padding:13px; border-radius:100px; background:#12182a; color:#faf8f4; text-decoration:none; font-weight:700; font-size:14.5px;",
+        textMuted: "#12182a99",
+        textBody: "#12182a",
+        divider: "rgba(18,24,42,0.1)",
+        checkBg: "rgba(18,24,42,0.08)",
+        checkColor: "#12182a",
+        features: ["Unlimited conversions", "Bulk upload & batch export", "Team seats", "Longest file retention", "Dedicated support channel"],
+      },
+    ];
+
+    const faqData = [
+      { q: "Do free conversions reset every month?", a: "Yes — the free tier includes 5 conversions per month, refreshed automatically at the start of each billing cycle." },
+      { q: "What happens to my uploaded PDFs?", a: "Files are processed for conversion and expire automatically. Nothing is retained unless you explicitly keep a job for feedback." },
+      { q: "Can I switch plans later?", a: "Yes — upgrade, downgrade, or cancel at any time. Changes apply from your next billing cycle." },
+      { q: "Do you support scanned statements?", a: "Yes. Text-based PDFs use direct text extraction; scanned or image-heavy statements route through OCR automatically." },
+    ];
+
+    const faqs = faqData.map((f, i) => ({
+      ...f,
+      open: this.state.openFaq === i,
+      toggle: () => this.setState({ openFaq: this.state.openFaq === i ? -1 : i }),
+      iconTransform: this.state.openFaq === i ? "rotate(45deg)" : "rotate(0deg)",
+      wrapStyle: "",
+    }));
+
+    return { navLink, toggleBg, toggleColor, setMonthly, setYearly, plans, faqs };
+  }
+}
+
+</script>
+</body>
+</html>
