@@ -541,6 +541,262 @@ table.workbook td.num {
 
 .footer-bottom p { margin: 0; display: flex; align-items: center; gap: 6px; }
 
+/* ---------- Home page ---------- */
+
+.home-hero {
+  position: relative;
+  background: var(--ink-deep);
+  color: var(--on-dark);
+  padding: clamp(72px, 9vw, 110px) 0 clamp(88px, 11vw, 140px);
+  overflow: hidden;
+}
+
+.home-hero-glow {
+  position: absolute;
+  top: -120px;
+  right: -140px;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 107, 74, 0.28), transparent 70%);
+  filter: blur(10px);
+}
+
+.home-hero::after {
+  content: "";
+  position: absolute;
+  bottom: -200px;
+  left: -100px;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(180, 255, 120, 0.10), transparent 70%);
+  filter: blur(20px);
+}
+
+.home-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 64px;
+  align-items: center;
+}
+
+.hero-copy .badge-pill { margin-bottom: 28px; }
+
+.hero-copy h1 {
+  font-size: clamp(42px, 4.6vw, 68px);
+  margin: 0 0 26px;
+}
+
+.hero-subhead {
+  font-size: 18px;
+  line-height: 1.6;
+  color: rgba(250, 248, 244, 0.7);
+  max-width: 480px;
+  margin: 0 0 40px;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 52px;
+}
+
+.hero-actions .link-underline { color: rgba(250, 248, 244, 0.8); font-size: 15px; }
+
+.hero-stats { display: flex; gap: 36px; flex-wrap: wrap; }
+
+.hero-stats .stat-label { color: rgba(250, 248, 244, 0.55); }
+
+.transform-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+
+.doc-card {
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.5);
+}
+
+.doc-card--pdf {
+  background: #161d2e;
+  border: 1px solid rgba(250, 248, 244, 0.1);
+  transform: rotate(-3deg);
+}
+
+.doc-card--xlsx {
+  background: var(--cream);
+  color: var(--ink);
+  transform: rotate(2.5deg);
+  padding: 18px;
+}
+
+.doc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.doc-card--pdf .doc-card-head { color: rgba(250, 248, 244, 0.45); }
+
+.doc-card--xlsx .doc-card-head { color: rgba(18, 24, 42, 0.6); }
+
+.doc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: rgba(250, 248, 244, 0.3);
+}
+
+.doc-dot--green { background: var(--ok-green); }
+
+.doc-line {
+  border-radius: 3px;
+  margin-bottom: 9px;
+  transform-origin: left;
+}
+
+.transform-arrow {
+  width: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.transform-arrow span {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--coral);
+  color: var(--ink-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 800;
+  box-shadow: 0 12px 24px -8px rgba(255, 107, 74, 0.6);
+}
+
+.xlsx-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+}
+
+.xlsx-cell { height: 16px; border-radius: 2px; }
+
+.transform-caption {
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(250, 248, 244, 0.4);
+  letter-spacing: 0.02em;
+  margin-top: 18px;
+}
+
+.chip-strip {
+  padding: 22px var(--pad-x);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  flex-wrap: wrap;
+}
+
+.split-head {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: clamp(24px, 5vw, 80px);
+  margin-bottom: 80px;
+}
+
+.split-head-note {
+  font-size: 17px;
+  line-height: 1.7;
+  align-self: end;
+  margin: 0;
+}
+
+.section-title { font-size: clamp(32px, 3.2vw, 46px); margin: 0; }
+
+.workflow-cards { grid-template-columns: repeat(3, 1fr); }
+
+.step-num {
+  font-family: var(--font-display);
+  font-size: 52px;
+  font-weight: 500;
+  color: rgba(18, 24, 42, 0.14);
+  margin-bottom: 18px;
+  line-height: 1;
+}
+
+.workflow-cards h3 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; }
+
+.workflow-cards p { font-size: 15px; line-height: 1.65; margin: 0; }
+
+.accuracy-head { max-width: 640px; margin-bottom: 72px; }
+
+.accuracy-head .muted { font-size: 17px; line-height: 1.7; margin: 20px 0 0; }
+
+.feature-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 28px;
+}
+
+.feature-card { padding: 32px 26px; transition: background 0.2s ease, border-color 0.2s ease; }
+
+.feature-card:hover { background: rgba(250, 248, 244, 0.07); border-color: rgba(180, 255, 120, 0.3); }
+
+.feature-swatch {
+  display: block;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  margin-bottom: 22px;
+}
+
+.feature-card h3 { font-size: 16.5px; font-weight: 700; margin-bottom: 10px; }
+
+.feature-card p { font-size: 14px; line-height: 1.6; margin: 0; }
+
+.security-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(32px, 6vw, 80px);
+  align-items: center;
+}
+
+.security-grid .muted { font-size: 17px; line-height: 1.7; }
+
+.cta-title { font-size: clamp(32px, 4vw, 52px); color: var(--on-dark); margin-bottom: 24px; }
+
+.cta-sub { color: rgba(250, 248, 244, 0.6); font-size: 16.5px; margin-bottom: 40px; }
+
+.cta-actions { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+
+@media (max-width: 980px) {
+  .home-hero-inner { grid-template-columns: 1fr; gap: 56px; }
+  .feature-cards { grid-template-columns: repeat(2, 1fr); }
+  .split-head { grid-template-columns: 1fr; margin-bottom: 48px; }
+  .security-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .feature-cards { grid-template-columns: 1fr; }
+  .chip-strip { gap: 20px; }
+}
+
 /* ---------- Motion ---------- */
 
 @media (prefers-reduced-motion: no-preference) {
@@ -567,6 +823,9 @@ table.workbook td.num {
   .anim-float { animation: floatUp 0.7s ease both; }
   .anim-float--late { animation: floatUp 0.9s 0.15s ease both; }
   .loading-spinner { animation: spin 0.8s linear infinite; }
+  .home-hero-glow { animation: drift 14s ease-in-out infinite alternate; }
+  .doc-line { animation: rowFill 0.5s ease both; }
+  .xlsx-cell { animation: gridGlow 2.4s ease-in-out infinite; }
 }
 
 /* ---------- Responsive ---------- */
