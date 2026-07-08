@@ -797,6 +797,179 @@ table.workbook td.num {
   .chip-strip { gap: 20px; }
 }
 
+/* ---------- Pricing page ---------- */
+
+.pricing-intro {
+  text-align: center;
+  padding: clamp(64px, 8vw, 100px) var(--pad-x) 60px;
+}
+
+.pricing-intro h1 { font-size: clamp(36px, 4.4vw, 58px); margin: 0 0 20px; }
+
+.pricing-intro .muted { font-size: 17px; max-width: 520px; margin: 0 auto; }
+
+.pricing-plans {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  align-items: stretch;
+  max-width: 1180px;
+  padding-bottom: clamp(72px, 9vw, 120px);
+}
+
+.plan-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid rgba(18, 24, 42, 0.1);
+  border-radius: 22px;
+  padding: 36px 32px;
+}
+
+.plan-card--featured {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--cream);
+  transform: scale(1.03);
+  box-shadow: 0 40px 80px -30px rgba(18, 24, 42, 0.4);
+}
+
+.plan-flag {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--coral);
+  color: var(--ink-deep);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 16px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.plan-name { font-size: 15px; font-weight: 700; margin-bottom: 8px; color: var(--muted); }
+
+.plan-card--featured .plan-name { color: rgba(250, 248, 244, 0.6); }
+
+.plan-price { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
+
+.plan-amount { font-size: 46px; letter-spacing: -0.01em; }
+
+.plan-period { font-size: 14px; color: var(--muted); }
+
+.plan-card--featured .plan-period { color: rgba(250, 248, 244, 0.6); }
+
+.plan-blurb { font-size: 14px; color: var(--muted); min-height: 42px; margin-bottom: 28px; }
+
+.plan-card--featured .plan-blurb { color: rgba(250, 248, 244, 0.6); }
+
+.plan-cta .btn-pill, .plan-cta form { width: 100%; }
+
+.plan-btn { width: 100%; }
+
+.plan-current { width: 100%; opacity: 0.6; cursor: default; }
+
+.plan-divider { height: 1px; background: rgba(18, 24, 42, 0.1); margin: 28px 0; }
+
+.plan-card--featured .plan-divider { background: rgba(250, 248, 244, 0.15); }
+
+.plan-features { list-style: none; margin: 0; padding: 0; }
+
+.plan-features li {
+  position: relative;
+  padding-left: 26px;
+  margin-bottom: 14px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.plan-features li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(18, 24, 42, 0.08);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plan-card--featured .plan-features li { color: rgba(250, 248, 244, 0.85); }
+
+.plan-card--featured .plan-features li::before {
+  background: rgba(255, 107, 74, 0.2);
+  color: var(--coral);
+}
+
+.pricing-faq {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 var(--pad-x) clamp(80px, 10vw, 140px);
+}
+
+.pricing-faq h2 {
+  font-size: clamp(28px, 3vw, 36px);
+  text-align: center;
+  margin: 0 0 48px;
+}
+
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: rgba(18, 24, 42, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+}
+
+.faq-item { background: var(--cream); }
+
+.faq-item summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 28px;
+  cursor: pointer;
+  font-size: 15.5px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.faq-item summary::-webkit-details-marker { display: none; }
+
+.faq-icon {
+  font-size: 20px;
+  color: var(--coral);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.faq-item[open] .faq-icon { transform: rotate(45deg); }
+
+.faq-item p {
+  padding: 0 28px 24px;
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .pricing-plans { grid-template-columns: 1fr; max-width: 480px; }
+  .plan-card--featured { transform: none; }
+}
+
 /* ---------- Motion ---------- */
 
 @media (prefers-reduced-motion: no-preference) {

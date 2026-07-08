@@ -138,146 +138,128 @@
 </script>
 {% endblock %}
 
-	{% block content %}
-	<main class="main-content">
-	    <div class="pricing-intro">
-	        <h1>Simple, Transparent Pricing</h1>
-	        <p>Start free and upgrade when you need more. No hidden fees, cancel anytime.</p>
-	    </div>
+{% block content %}
+<main class="main-content">
+    <header class="pricing-intro page">
+        <p class="eyebrow">Pricing</p>
+        <h1 class="display">Simple pricing for<br>every volume of work.</h1>
+        <p class="muted">Start free. Move up only when a real batch of statements needs it.</p>
+    </header>
 
-    <div class="pricing-plans">
-        <div class="pricing-card">
-            <div class="pricing-header">
-                <h3>Free</h3>
-                <div class="pricing-price">
-                    <span class="price-amount">$0</span>
-                    <span class="price-period">/month</span>
-                </div>
-                <p class="pricing-description">Good for occasional use</p>
-            </div>
-            <div class="pricing-features">
-                <ul>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> 5 conversions per month</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Files up to 20MB</li>
-	                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Common statement layouts</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Standard OCR processing</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Email support</li>
-                </ul>
-            </div>
-            <div class="pricing-cta">
+    <div class="pricing-plans page">
+        <div class="plan-card">
+            <div class="plan-name">Free</div>
+            <div class="plan-price"><span class="plan-amount display">$0</span><span class="plan-period">/ month</span></div>
+            <p class="plan-blurb">For occasional statements and trying things out.</p>
+            <div class="plan-cta">
                 {% if current_user_email and current_plan == 'free' %}
-                    <span class="pricing-button disabled">Current Plan</span>
+                    <span class="btn-pill btn-pill--ghost-light plan-current" aria-disabled="true">Current plan</span>
                 {% else %}
-                    <a href="{{ url_for('converter.dashboard') }}" class="pricing-button" data-track-event="pricing_cta_click">Get Started Free</a>
+                    <a href="{{ url_for('converter.dashboard') }}" class="btn-pill" data-track-event="pricing_cta_click">Start free</a>
                 {% endif %}
             </div>
+            <div class="plan-divider"></div>
+            <ul class="plan-features">
+                <li>5 conversions per month</li>
+                <li>Files up to 20 MB</li>
+                <li>Common statement layouts</li>
+                <li>Standard OCR processing</li>
+                <li>Email support</li>
+            </ul>
         </div>
 
-        <div class="pricing-card featured">
-            <div class="pricing-badge">Most Popular</div>
-            <div class="pricing-header">
-                <h3>Pro</h3>
-                <div class="pricing-price">
-                    <span class="price-amount">$9.99</span>
-                    <span class="price-period">/month</span>
-                </div>
-                <p class="pricing-description">For regular users and small businesses</p>
-            </div>
-            <div class="pricing-features">
-                <ul>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> 50 conversions per month</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Files up to 100MB</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Advanced OCR processing</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Priority processing</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Priority email support</li>
-                </ul>
-            </div>
-            <div class="pricing-cta">
+        <div class="plan-card plan-card--featured">
+            <div class="plan-flag">Most popular</div>
+            <div class="plan-name">Pro</div>
+            <div class="plan-price"><span class="plan-amount display">$9.99</span><span class="plan-period">/ month</span></div>
+            <p class="plan-blurb">For accountants and finance teams converting weekly.</p>
+            <div class="plan-cta">
                 {% if current_user_email and current_plan == 'pro' %}
                     <form method="POST" action="{{ url_for('billing.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="pricing-button featured">Manage Subscription</button>
+                        <button type="submit" class="btn-pill btn-pill--coral plan-btn">Manage subscription</button>
                     </form>
                 {% elif current_user_email %}
-                    <button onclick="startCheckout('pro')" class="pricing-button featured">Subscribe to Pro</button>
+                    <button onclick="startCheckout('pro')" class="btn-pill btn-pill--coral plan-btn">Subscribe to Pro</button>
                 {% else %}
-                    <a href="{{ url_for('auth.signin') }}" class="pricing-button featured">Sign In to Subscribe</a>
+                    <a href="{{ url_for('auth.signin') }}" class="btn-pill btn-pill--coral plan-btn">Sign in to subscribe</a>
                 {% endif %}
             </div>
+            <div class="plan-divider"></div>
+            <ul class="plan-features">
+                <li>50 conversions per month</li>
+                <li>Files up to 100 MB</li>
+                <li>Advanced OCR processing</li>
+                <li>Priority processing</li>
+                <li>Priority email support</li>
+            </ul>
         </div>
 
-        <div class="pricing-card">
-            <div class="pricing-header">
-                <h3>Enterprise</h3>
-                <div class="pricing-price">
-                    <span class="price-amount">$29.99</span>
-                    <span class="price-period">/month</span>
-                </div>
-                <p class="pricing-description">For teams and high-volume users</p>
-            </div>
-            <div class="pricing-features">
-                <ul>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Unlimited conversions</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Files up to 500MB</li>
-	                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Custom statement-format support</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Premium OCR with AI enhancement</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> 24/7 priority support</li>
-                    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7.5l3 3 5-5.5"/></svg> Custom integrations</li>
-                </ul>
-            </div>
-            <div class="pricing-cta">
+        <div class="plan-card">
+            <div class="plan-name">Enterprise</div>
+            <div class="plan-price"><span class="plan-amount display">$29.99</span><span class="plan-period">/ month</span></div>
+            <p class="plan-blurb">For firms processing statements across many clients.</p>
+            <div class="plan-cta">
                 {% if current_user_email and current_plan == 'enterprise' %}
                     <form method="POST" action="{{ url_for('billing.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="pricing-button">Manage Subscription</button>
+                        <button type="submit" class="btn-pill plan-btn">Manage subscription</button>
                     </form>
                 {% elif current_user_email %}
-                    <button onclick="startCheckout('enterprise')" class="pricing-button">Subscribe to Enterprise</button>
+                    <button onclick="startCheckout('enterprise')" class="btn-pill plan-btn">Subscribe to Enterprise</button>
                 {% else %}
-                    <a href="{{ url_for('auth.signin') }}" class="pricing-button">Sign In to Subscribe</a>
+                    <a href="{{ url_for('auth.signin') }}" class="btn-pill plan-btn">Sign in to subscribe</a>
                 {% endif %}
             </div>
+            <div class="plan-divider"></div>
+            <ul class="plan-features">
+                <li>Unlimited conversions</li>
+                <li>Files up to 500 MB</li>
+                <li>Custom statement-format support</li>
+                <li>Premium OCR with AI enhancement</li>
+                <li>24/7 priority support</li>
+                <li>Custom integrations</li>
+            </ul>
         </div>
     </div>
 
-    <div class="pricing-faq">
-        <h2>Frequently Asked Questions</h2>
-        <div class="faq-grid">
-            <div class="faq-item">
-                <h4>Can I change plans anytime?</h4>
+    <section id="faq" class="pricing-faq" aria-labelledby="faqTitle">
+        <h2 id="faqTitle" class="display">Questions, answered.</h2>
+        <div class="faq-list">
+            <details class="faq-item" open>
+                <summary><span>Can I change plans anytime?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>Yes. You can upgrade or downgrade at any time and the change takes effect right away.</p>
-            </div>
-            <div class="faq-item">
-                <h4>What payment methods do you accept?</h4>
+            </details>
+            <details class="faq-item">
+                <summary><span>What payment methods do you accept?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>All major credit cards and debit cards. Enterprise plans can be invoiced.</p>
-            </div>
-            <div class="faq-item">
-                <h4>Is there a free trial?</h4>
+            </details>
+            <details class="faq-item">
+                <summary><span>Is there a free trial?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>The Free plan is always free. Pro and Enterprise come with a 14-day trial.</p>
-            </div>
-            <div class="faq-item">
-                <h4>What happens if I go over my limit?</h4>
+            </details>
+            <details class="faq-item">
+                <summary><span>What happens if I go over my limit?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>You'll get a notification when you're close to your limit. You can upgrade or wait for the next billing cycle.</p>
-            </div>
-            <div class="faq-item">
-                <h4>Are my files safe?</h4>
+            </details>
+            <details class="faq-item">
+                <summary><span>Are my files safe?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>Yes. Files are processed securely with short retention windows. PDFs are deleted after conversion unless you explicitly retain one for feedback.</p>
-            </div>
-            <div class="faq-item">
-                <h4>Can I cancel anytime?</h4>
+            </details>
+            <details class="faq-item">
+                <summary><span>Can I cancel anytime?</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>Yes. Cancel from the billing portal at any time. No cancellation fees.</p>
-            </div>
+            </details>
         </div>
-    </div>
+    </section>
 
-    <div class="pricing-cta-section">
-        <h2>Ready to get started?</h2>
-        <p>Start converting bank statements today. No credit card needed for the free plan.</p>
-        <a href="{{ url_for('converter.dashboard') }}" class="cta-button-large" data-track-event="pricing_cta_click">
-            Start Converting
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-        </a>
-    </div>
+    <section class="cta-band" aria-labelledby="pricingCtaTitle">
+        <h2 id="pricingCtaTitle" class="display cta-title">Ready to get started?</h2>
+        <p class="cta-sub">Start converting bank statements today. No credit card needed for the free plan.</p>
+        <div class="cta-actions">
+            <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="pricing_cta_click">Start converting</a>
+        </div>
+    </section>
 </main>
 {% endblock %}
 

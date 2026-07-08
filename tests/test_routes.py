@@ -42,7 +42,7 @@ class TestPublicRoutes:
         resp = client.get("/pricing")
         assert resp.status_code == 200
         assert b"Pricing" in resp.data
-        assert b"<h1>Simple, Transparent Pricing</h1>" in resp.data
+        assert b"Simple pricing for" in resp.data
         assert b"FAQPage" in resp.data
 
     def test_blogs(self, client):
