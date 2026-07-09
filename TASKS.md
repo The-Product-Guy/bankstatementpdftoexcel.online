@@ -22,7 +22,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **Column drift on very poor scans** — proportional token split occasionally places a boundary word one column over (PART-02 rows like "03/09/18 1763 ATM" bleeding into VALUE DT). Candidate fix: snap tokens to the column containing most of their width.
 - [x] **Pricing still claims "Unlimited batch processing"** (enterprise) — no batch upload exists; same honesty issue as the removed API claim. Needs owner call.
 - [x] **Quota gating silently disables when `RESEND_API_KEY` is missing** (app.py) — a misconfigured deploy turns off all limits.
-- [ ] **SEO content round** (biggest distribution lever): only ~10 indexable pages; no per-bank landing pages ("HDFC statement to Excel", …); `/blogs` listing duplicates and out-contents its own post pages; 1.4 MB og-image; socket.io CDN loaded on every marketing page.
+- [x] **SEO content round — round one shipped 2026-07-09** (spec: `docs/superpowers/specs/2026-07-08-seo-round-design.md`): 12 US/UK/EU bank landing pages + `/convert/` index (parser format-validated first via synthetic fixtures — 4 parser gaps fixed); blog restructured to excerpt-only listing + 2 new posts (exact-copy deep dive, QuickBooks/Xero workflow); og-image 1.45 MB → 40 KB; socket.io scoped to dashboard; Western demo sample. **Later round:** India bank pages (HDFC/SBI/ICICI/KVB — samples already proven).
 - [x] **UI trust round**: fake hero data eliminated — the 2026-07-08 ledger redesign ships an abstract PDF→XLSX hero visual (spec: `docs/superpowers/specs/2026-07-08-ledger-redesign-design.md`). Downloadable real sample shipped 2026-07-08: `static/sample-statement.pdf` → `static/sample-statement.xlsx`, linked from the home hero.
 
 ---
