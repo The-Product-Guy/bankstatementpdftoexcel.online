@@ -503,3 +503,44 @@ def test_header_columns_outrank_wider_inferred_columns():
     assert [column.header for column in parser.table_columns] == [
         "Date", "Description", "Debit", "Credit", "Balance",
     ]
+
+
+def test_word_snaps_to_column_holding_most_of_its_width():
+    from parsers.layout_replica_parser import LayoutReplicaParser, LayoutWord, TableColumn
+
+    columns = [
+        TableColumn(header="DATE", x0=10.0, x1=90.0, left=0.0, right=100.0),
+        TableColumn(header="VALUE DT", x0=100.0, x1=108.0, left=100.0, right=110.0),
+        TableColumn(header="DESCRIPTION", x0=115.0, x1=290.0, left=110.0, right=300.0),
+    ]
+    # Proportionally-estimated OCR token box straddles the narrow VALUE DT
+    # column: its center (x=100.0) lands there, but 70pt of its width lies in
+    # DATE vs 10pt in VALUE DT. Most-of-width must win over center.
+    word = LayoutWord(text="03/09/18", x0=30.0, x1=170.0, top=0.0, bottom=10.0, page=1, source="ocr")
+
+    assert LayoutReplicaParser._table_column_index_for_word(word, columns) == 0
+
+
+def test_word_fully_inside_a_column_is_unaffected_by_snapping():
+    from parsers.layout_replica_parser import LayoutReplicaParser, LayoutWord, TableColumn
+
+    columns = [
+        TableColumn(header="DATE", x0=10.0, x1=90.0, left=0.0, right=100.0),
+        TableColumn(header="VALUE DT", x0=100.0, x1=108.0, left=100.0, right=110.0),
+        TableColumn(header="DESCRIPTION", x0=115.0, x1=290.0, left=110.0, right=300.0),
+    ]
+    word = LayoutWord(text="UPI-SELVI", x0=120.0, x1=160.0, top=0.0, bottom=10.0, page=1, source="ocr")
+
+    assert LayoutReplicaParser._table_column_index_for_word(word, columns) == 2
+
+
+def test_word_just_past_last_column_edge_still_lands_in_last_column():
+    from parsers.layout_replica_parser import LayoutReplicaParser, LayoutWord, TableColumn
+
+    columns = [
+        TableColumn(header="DATE", x0=10.0, x1=90.0, left=0.0, right=100.0),
+        TableColumn(header="BALANCE", x0=110.0, x1=290.0, left=100.0, right=300.0),
+    ]
+    word = LayoutWord(text="1,523.00", x0=302.0, x1=330.0, top=0.0, bottom=10.0, page=1, source="ocr")
+
+    assert LayoutReplicaParser._table_column_index_for_word(word, columns) == 1
