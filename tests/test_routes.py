@@ -514,3 +514,12 @@ def test_new_universal_parser_posts_render(client):
     resp = client.get("/blogs/bank-statements-to-excel-for-reconciliation")
     assert resp.status_code == 200
     assert b"Reconciliation" in resp.data
+
+
+def test_marketing_pages_skip_socketio(client):
+    for path in ("/", "/pricing", "/blogs"):
+        assert b"socket.io" not in client.get(path).data, path
+
+
+def test_dashboard_still_loads_socketio(client):
+    assert b"socket.io" in client.get("/dashboard").data
