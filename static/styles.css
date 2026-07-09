@@ -703,6 +703,21 @@ table.workbook td.num {
   margin-top: 18px;
 }
 
+.sample-links {
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(250, 248, 244, 0.55);
+  margin-top: 6px;
+}
+
+.sample-links a {
+  color: var(--coral);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sample-links a:hover { color: var(--cream); }
+
 .chip-strip {
   padding: 22px var(--pad-x);
   border-bottom: 1px solid var(--hairline);

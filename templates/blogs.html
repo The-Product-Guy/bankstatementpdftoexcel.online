@@ -92,7 +92,7 @@
                         <li><strong>Upload your PDF</strong> - drag-and-drop or browse. We accept files up to 500 MB on Enterprise plans.</li>
                         <li><strong>Automatic detection</strong> - our engine figures out if the PDF is text-based (digital) or image-based (scanned) and picks the right extraction method.</li>
                         <li><strong>OCR for scanned PDFs</strong> - scanned statements go through OCR and table-structure detection to recover rows and columns.</li>
-                        <li><strong>Download your Excel</strong> - the result has two sheets: <em>Raw_Statement</em> (exactly as extracted) and <em>Normalized_Transactions</em> (standardized columns for pivot tables).</li>
+                        <li><strong>Download your Excel</strong> - the workbook mirrors your statement: the bank's own column headers with one row per transaction, plus a <em>Full_Text</em> sheet carrying every line of the PDF so nothing is silently dropped.</li>
                     </ol>
                     <p>Text PDFs usually take 10-30 seconds. Scanned documents take 1-3 minutes.</p>
                     <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
