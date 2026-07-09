@@ -699,8 +699,20 @@ class LayoutReplicaParser(BaseParser):
                 1 for word in words
                 if not re.search(r"[a-z]", word) or "_" in word
             )
+            # Known column vocabulary outranks e.g. an ALL-CAPS bank title —
+            # a short "Date  Description  Amount" line is a header, the title
+            # above it is not.
+            header_vocab = {
+                "date", "description", "amount", "balance", "debit", "credit",
+                "withdrawals", "withdrawal", "deposits", "deposit", "reference",
+                "particulars", "narration", "details", "value", "money", "out",
+                "in", "type", "cheque", "chq", "txn", "datum", "omschrijving",
+                "af", "bij", "saldo", "buchungstag", "verwendungszweck", "soll",
+                "haben", "betrag",
+            }
+            vocab_hits = sum(1 for word in words if word.lower().strip(".:") in header_vocab)
 
-            score = len(words) + alpha_words + (word_span / 120.0) + (uppercaseish / 2.0)
+            score = len(words) + alpha_words + (word_span / 120.0) + (uppercaseish / 2.0) + (3.0 * vocab_hits)
             if previous_separator:
                 score += 4.0
             if next_separator:
@@ -765,12 +777,37 @@ class LayoutReplicaParser(BaseParser):
 
     @staticmethod
     def _looks_like_date_value(text: str) -> bool:
-        return bool(re.fullmatch(r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}", text.strip()))
+        value = text.strip()
+        if not value:
+            return False
+        # Numeric dates: 06/03/2026, 03-06-2026, 03.06.2026 (3 parts, any of -/. )
+        if re.fullmatch(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}", value):
+            return True
+        # Short numeric dates without a year (US card style: 06/11). Slash or
+        # dash only — a dot here would swallow decimals like "1.5".
+        if re.fullmatch(r"\d{1,2}[-/]\d{1,2}", value):
+            return True
+        # Month-name dates: "3 Jun 2026", "30 June 2026", "Jun 3, 2026", "3 Jun"
+        month = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+        if re.fullmatch(rf"\d{{1,2}}\s+{month}(?:\s+\d{{2,4}})?", value, re.IGNORECASE):
+            return True
+        if re.fullmatch(rf"{month}\s+\d{{1,2}},?(?:\s+\d{{2,4}})?", value, re.IGNORECASE):
+            return True
+        return False
 
     @staticmethod
     def _looks_like_amount_value(text: str) -> bool:
-        value = text.strip().replace(",", "")
-        return bool(re.fullmatch(r"\d+(?:\.\d{1,4})?", value))
+        value = text.strip()
+        if value.startswith("(") and value.endswith(")"):
+            value = value[1:-1].strip()
+        value = value.lstrip("+-").strip()
+        if value[:1] in ("$", "£", "€"):
+            value = value[1:].strip()
+        if not value:
+            return False
+        # 2,480.00 · 1.234,56 · 2480 · 0.84 — thousands groups with , or .
+        # and an optional 1-4 digit decimal part with the other separator.
+        return bool(re.fullmatch(r"(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,4})?", value))
 
     @staticmethod
     def _is_separator_line(line: LayoutLine) -> bool:
@@ -900,6 +937,8 @@ class LayoutReplicaParser(BaseParser):
         context_patterns = (
             r"^page\s*:",
             r"statement of account",
+            r"account statement",
+            r"cardmember statement",
             r"account number",
             r"period from",
             r"period to",
@@ -921,7 +960,15 @@ class LayoutReplicaParser(BaseParser):
     @staticmethod
     def _is_amount_header(header: str) -> bool:
         normalized = header.lower()
-        return any(token in normalized for token in ("debit", "credit", "balance", "amount", "withdraw", "deposit"))
+        if any(token in normalized for token in ("debit", "credit", "balance", "amount", "withdraw", "deposit")):
+            return True
+        # UK statements split amounts into "Money out" / "Money in".
+        if "money out" in normalized or "money in" in normalized:
+            return True
+        # Short EU headers (NL: Af/Bij/Saldo, DE: Soll/Haben/Betrag) need
+        # whole-word matches — substring checks would false-positive.
+        words = set(re.split(r"[^a-zäöüß]+", normalized))
+        return bool(words & {"af", "bij", "saldo", "soll", "haben", "betrag", "importe", "cargo", "abono"})
 
     def _contains_amount_value(self, text: str) -> bool:
         return any(self._looks_like_amount_value(part) for part in str(text).split())

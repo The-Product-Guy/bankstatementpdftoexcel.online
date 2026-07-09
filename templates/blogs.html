@@ -74,114 +74,20 @@
     <div class="blog-hero">
         <h1>Blog and Guides</h1>
         <p>Tips, tutorials, and answers about converting bank statements to Excel.</p>
+        <p><a class="link-underline" href="{{ url_for('pages.bank_index') }}">See conversion guides by bank →</a></p>
     </div>
 
     <div class="blog-posts">
-        <article class="blog-post-card" id="how-to-convert">
-            <div class="blog-post-image">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-            </div>
+        {% for post in blog_posts %}
+        <article class="blog-post-card">
+            <div class="blog-post-category">{{ post.category }}</div>
             <div class="blog-post-content">
-                <div class="blog-post-meta">
-                    <span class="blog-post-category">Tutorial</span>
-                </div>
-                <h2><a href="{{ url_for('pages.blog_post', slug='how-to-convert-bank-statements-to-excel') }}">How to Convert Bank Statements to Excel</a></h2>
-                <div class="blog-body">
-                    <p>Converting bank statement PDFs to Excel is straightforward with Statement Converter. Here's how it works:</p>
-                    <ol>
-                        <li><strong>Upload your PDF</strong> - drag-and-drop or browse. We accept files up to 500 MB on Enterprise plans.</li>
-                        <li><strong>Automatic detection</strong> - our engine figures out if the PDF is text-based (digital) or image-based (scanned) and picks the right extraction method.</li>
-                        <li><strong>OCR for scanned PDFs</strong> - scanned statements go through OCR and table-structure detection to recover rows and columns.</li>
-                        <li><strong>Download your Excel</strong> - the workbook mirrors your statement: the bank's own column headers with one row per transaction, plus a <em>Full_Text</em> sheet carrying every line of the PDF so nothing is silently dropped.</li>
-                    </ol>
-                    <p>Text PDFs usually take 10-30 seconds. Scanned documents take 1-3 minutes.</p>
-                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
-                </div>
+                <h2><a href="{{ url_for('pages.blog_post', slug=post.slug) }}">{{ post.title }}</a></h2>
+                <p>{{ post.description }}</p>
+                <p class="blog-post-meta">Updated {{ post.lastmod }}</p>
             </div>
         </article>
-
-        <article class="blog-post-card" id="excel-tips">
-            <div class="blog-post-image">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v8l4-2"/><circle cx="12" cy="14" r="8"/></svg>
-            </div>
-            <div class="blog-post-content">
-                <div class="blog-post-meta">
-                    <span class="blog-post-category">Tips</span>
-                </div>
-                <h2><a href="{{ url_for('pages.blog_post', slug='excel-tips-for-converted-bank-statements') }}">5 Excel Tips for Working with Converted Statements</a></h2>
-                <div class="blog-body">
-                    <ol>
-                        <li><strong>Pivot tables</strong> - select your transaction data and insert a PivotTable to summarize spending by category or month.</li>
-                        <li><strong>SUMIFS for totals</strong> - use <code>=SUMIFS(Withdrawal_Amount, Description, "*UPI*")</code> to sum all UPI debits.</li>
-                        <li><strong>Conditional formatting</strong> - highlight large withdrawals or deposits with color scales to spot outliers quickly.</li>
-                        <li><strong>Text-to-Columns</strong> - if a description field has multiple details separated by slashes, split them into separate columns.</li>
-                        <li><strong>Freeze panes</strong> - freeze the header row (<em>View > Freeze Panes</em>) so column names stay visible when scrolling.</li>
-                    </ol>
-                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
-                </div>
-            </div>
-        </article>
-
-        <article class="blog-post-card" id="security">
-            <div class="blog-post-image">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 4v5c0 5.5-3 9.5-7 12-4-2.5-7-6.5-7-12V7l7-4z"/></svg>
-            </div>
-            <div class="blog-post-content">
-                <div class="blog-post-meta">
-                    <span class="blog-post-category">Security</span>
-                </div>
-                <h2><a href="{{ url_for('pages.blog_post', slug='how-financial-data-is-handled') }}">How We Handle Your Financial Data</a></h2>
-                <div class="blog-body">
-                    <p>Bank statements contain sensitive information. Here's how Statement Converter protects you:</p>
-                    <ul>
-                        <li><strong>Limited retention</strong> - uploaded PDFs are deleted after conversion unless you explicitly retain one for feedback. Result files are auto-deleted within the configured download window.</li>
-                        <li><strong>HTTPS everywhere</strong> - all data in transit is encrypted with TLS.</li>
-                        <li><strong>Controlled temporary storage</strong> - temporary files and generated results are cleaned up automatically.</li>
-                        <li><strong>Isolated processing</strong> - each conversion runs in its own container with no shared state between users.</li>
-                    </ul>
-                    <p>We use transaction data only to produce your conversion result and do not keep it outside the stated retention windows. Read our full <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
-                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Try the Converter</a></p>
-                </div>
-            </div>
-        </article>
-
-        <article class="blog-post-card" id="text-vs-scanned">
-            <div class="blog-post-image">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 11h6"/></svg>
-            </div>
-            <div class="blog-post-content">
-                <div class="blog-post-meta">
-                    <span class="blog-post-category">Guide</span>
-                </div>
-                <h2><a href="{{ url_for('pages.blog_post', slug='text-based-vs-scanned-bank-statement-pdfs') }}">Text-Based vs Scanned PDFs: What's the Difference?</a></h2>
-                <div class="blog-body">
-                    <p><strong>Text-based PDFs</strong> are generated digitally by your bank's online portal. The text is embedded in the PDF and can be copied. These convert the fastest and most accurately.</p>
-                    <p><strong>Scanned PDFs</strong> are photographs of printed statements. The PDF contains images, not text. These need OCR (Optical Character Recognition) to extract the data, which takes longer but still gives accurate results.</p>
-                    <p><strong>How to tell the difference:</strong> open the PDF and try to select text with your cursor. If you can highlight individual words, it's text-based. If the entire page selects as one image, it's scanned.</p>
-                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
-                </div>
-            </div>
-        </article>
-
-        <article class="blog-post-card" id="faq">
-            <div class="blog-post-image">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
-            </div>
-            <div class="blog-post-content">
-                <div class="blog-post-meta">
-                    <span class="blog-post-category">FAQ</span>
-                </div>
-                <h2><a href="{{ url_for('pages.blog_post', slug='bank-statement-conversion-faq') }}">Frequently Asked Questions</a></h2>
-                <div class="blog-body">
-                    <p><strong>Which banks are supported?</strong><br>Statement Converter is built for tabular bank statement PDFs, text-based or scanned. It includes profile hints for known formats and a universal fallback for other layouts.</p>
-                    <p><strong>What's the maximum file size?</strong><br>Free plan: 20 MB. Pro: 100 MB. Enterprise: 500 MB. For large files (80+ pages), our engine splits them into chunks automatically.</p>
-                    <p><strong>Is my data safe?</strong><br>Files are processed with short retention windows. PDFs are deleted after processing unless you explicitly retain one for feedback. See our <a href="{{ url_for('pages.privacy') }}">Privacy Policy</a>.</p>
-                    <p><strong>What if the conversion result is wrong?</strong><br>Use the feedback button after conversion to let us know. You can also share the PDF so we can improve the parser for that format.</p>
-                    <p><strong>Can I convert password-protected PDFs?</strong><br>Not yet. This is on our roadmap. For now, please remove the password before uploading.</p>
-                    <p><a class="blog-inline-cta" href="{{ url_for('converter.dashboard') }}" data-track-event="blog_inline_cta_click">Convert a PDF Free</a></p>
-                </div>
-            </div>
-        </article>
+        {% endfor %}
     </div>
 
     <div class="blog-cta">
