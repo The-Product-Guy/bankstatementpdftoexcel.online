@@ -52,3 +52,10 @@ def test_bank_landing_renders(client):
 
 def test_unknown_bank_404(client):
     assert client.get("/convert/notabank-statement-to-excel").status_code == 404
+
+
+def test_bank_pages_in_sitemap(client):
+    xml = client.get("/sitemap.xml").data.decode()
+    assert "/convert/" in xml
+    assert "/convert/chase-statement-to-excel" in xml
+    assert "/convert/santander-statement-to-excel" in xml

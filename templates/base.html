@@ -153,6 +153,16 @@
                 </ul>
             </div>
             <div class="footer-section">
+                <h4>Convert</h4>
+                <ul>
+                    <li><a href="{{ url_for('pages.bank_index') }}">All banks</a></li>
+                    <li><a href="{{ url_for('pages.bank_landing', slug='chase-statement-to-excel') }}">Chase</a></li>
+                    <li><a href="{{ url_for('pages.bank_landing', slug='bank-of-america-statement-to-excel') }}">Bank of America</a></li>
+                    <li><a href="{{ url_for('pages.bank_landing', slug='barclays-statement-to-excel') }}">Barclays</a></li>
+                    <li><a href="{{ url_for('pages.bank_landing', slug='ing-statement-to-excel') }}">ING</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
                 <h4>Legal</h4>
                 <ul>
                     <li><a href="{{ url_for('pages.privacy') }}">Privacy Policy</a></li>

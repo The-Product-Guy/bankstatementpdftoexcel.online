@@ -178,6 +178,9 @@ def _sitemap_urls():
         ('/terms', LASTMOD['terms']),
     ]
     urls.extend((f"/blogs/{post['slug']}", post['lastmod']) for post in BLOG_POSTS)
+    from routes.bank_pages import BANK_PAGES
+    urls.append(("/convert/", "2026-07-08"))
+    urls.extend((f"/convert/{bank['slug']}", bank["lastmod"]) for bank in BANK_PAGES)
     return urls
 
 
