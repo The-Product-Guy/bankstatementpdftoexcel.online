@@ -10,7 +10,7 @@
     <meta name="keywords" content="{% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction{% endblock %}">
     <meta name="author" content="Ambion Softwares">
     <meta name="application-name" content="Statement Converter">
-    <meta name="theme-color" content="#046bca">
+    <meta name="theme-color" content="#12182a">
     <meta name="format-detection" content="telephone=no">
     <meta name="robots" content="{% block robots %}index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1{% endblock %}">
     <link rel="canonical" href="{% block canonical_url %}{{ canonical_current_url() }}{% endblock %}">
@@ -18,7 +18,7 @@
     {# Fonts #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     {# Open Graph / Facebook #}
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">
@@ -91,27 +91,29 @@
         <div class="nav-container" id="navContainer">
             <div class="nav-brand">
                 <a href="{{ url_for('pages.home') }}">
-                    <img src="{{ url_for('static', filename='ambion-logo.svg') }}" alt="Ambion" height="48">
+                    <img src="{{ url_for('static', filename='logo-mark.svg') }}" alt="" width="30" height="30">
                     <span>Statement Converter</span>
                 </a>
             </div>
             <div class="nav-links" id="navMenu">
-                <a href="{{ url_for('pages.home') }}#how-it-works">How it Works</a>
+                <a href="{{ url_for('pages.home') }}#workflow">How it works</a>
                 <a href="{{ url_for('pages.pricing') }}" {% if request.endpoint == 'pages.pricing' %}class="active"{% endif %}>Pricing</a>
+                <a href="{{ url_for('pages.blogs') }}" {% if request.endpoint == 'pages.blogs' %}class="active"{% endif %}>Blog</a>
+                <a href="{{ url_for('pages.home') }}#security">Security</a>
             </div>
             <div class="nav-actions">
                 {% if current_user_email %}
                     {% set plan = session.get('plan_id', 'free') %}
                     <span class="nav-plan-badge plan-{{ plan }}">{{ plan|capitalize }}</span>
-                    <a href="{{ url_for('converter.dashboard') }}" class="nav-signin" {% if request.endpoint == 'converter.dashboard' %}style="color:var(--blue)"{% endif %}>Dashboard</a>
+                    <a href="{{ url_for('converter.dashboard') }}" class="nav-signin{% if request.endpoint == 'converter.dashboard' %} active{% endif %}">Dashboard</a>
                     {% if current_user_is_admin %}
-                    <a href="{{ url_for('pages.admin_dashboard') }}" class="nav-signin" {% if request.endpoint == 'pages.admin_dashboard' %}style="color:var(--blue)"{% endif %}>Admin</a>
+                    <a href="{{ url_for('pages.admin_dashboard') }}" class="nav-signin{% if request.endpoint == 'pages.admin_dashboard' %} active{% endif %}">Admin</a>
                     {% endif %}
                     <a href="{{ url_for('auth.account') }}" class="nav-signin">Account</a>
-                    <a href="/signout" class="nav-signin">Sign Out</a>
+                    <a href="/signout" class="nav-signin">Sign out</a>
                 {% else %}
-                    <a href="{{ url_for('auth.signin') }}" class="nav-signin">Sign In</a>
-                    <a href="{{ url_for('converter.dashboard') }}" class="btn-primary" data-track-event="nav_convert_click">Convert PDF</a>
+                    <a href="{{ url_for('auth.signin') }}" class="nav-signin">Sign in</a>
+                    <a href="{{ url_for('converter.dashboard') }}" class="btn-primary" data-track-event="nav_convert_click">Convert a PDF</a>
                 {% endif %}
             </div>
             <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-controls="navMenu" aria-expanded="false">
@@ -145,9 +147,9 @@
             <div class="footer-section">
                 <h4>Resources</h4>
                 <ul>
-                    <li><a href="{{ url_for('pages.blogs') }}#how-to-convert">Getting Started</a></li>
-                    <li><a href="{{ url_for('pages.blogs') }}#faq">FAQ</a></li>
-                    <li><a href="{{ url_for('pages.blogs') }}#security">Security</a></li>
+                    <li><a href="{{ url_for('pages.home') }}#workflow">How it works</a></li>
+                    <li><a href="{{ url_for('pages.pricing') }}#faq">FAQ</a></li>
+                    <li><a href="{{ url_for('pages.home') }}#security">Security</a></li>
                 </ul>
             </div>
             <div class="footer-section">
