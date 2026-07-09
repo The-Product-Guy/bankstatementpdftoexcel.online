@@ -496,3 +496,21 @@ class TestStripeWebhook:
                 "Stripe-Signature": "bad"
             })
             assert resp.status_code == 400
+
+
+def test_blogs_listing_is_excerpt_only(client):
+    resp = client.get("/blogs")
+    assert resp.status_code == 200
+    assert b"Blog and Guides" in resp.data
+    # sentences that live only in post BODIES must not leak into the listing
+    assert b"Pivot tables" not in resp.data
+    assert b"drag-and-drop or browse" not in resp.data
+
+
+def test_new_universal_parser_posts_render(client):
+    resp = client.get("/blogs/how-exact-copy-extraction-works")
+    assert resp.status_code == 200
+    assert b"Exact-Copy Extraction" in resp.data
+    resp = client.get("/blogs/bank-statements-to-excel-for-reconciliation")
+    assert resp.status_code == 200
+    assert b"Reconciliation" in resp.data

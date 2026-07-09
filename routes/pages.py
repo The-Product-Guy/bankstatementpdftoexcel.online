@@ -58,6 +58,73 @@ AI_CRAWLER_USER_AGENTS = [
 
 BLOG_POSTS = [
     {
+        'slug': 'how-exact-copy-extraction-works',
+        'title': 'How Exact-Copy Extraction Works — Any Bank, Typed or Scanned',
+        'category': 'Deep dive',
+        'description': 'Why Statement Converter reads your PDF\'s geometry instead of using bank templates, and how the Full_Text sheet guarantees nothing is silently dropped.',
+        'lastmod': '2026-07-09',
+        'sections': [
+            {
+                'heading': 'Geometry first, text second',
+                'paragraphs': [
+                    'Most converters work from templates: they recognise a known bank layout and map it into fixed output columns. That breaks the moment a bank redesigns its statement, and it quietly rewrites your data on the way through.',
+                    'Statement Converter works from the page itself. Every word on the page is extracted with its coordinates — from the embedded text layer on digital PDFs, or from OCR coordinates on scans. Words are grouped into visual lines, the bank\'s own header row is detected, and each column\'s horizontal range is derived from where the bank actually printed it.',
+                ],
+            },
+            {
+                'heading': 'One row per printed transaction',
+                'paragraphs': [
+                    'Statements wrap long descriptions onto continuation lines. A naive converter turns one transaction into two or three rows, which breaks counts and sums. The parser recognises continuation lines — no date, no amount in an amount column, text landing in description-like columns — and merges them back into their parent row.',
+                ],
+            },
+            {
+                'heading': 'The no-loss invariant',
+                'paragraphs': [
+                    'Every workbook carries a Full_Text sheet: page number, line number, source, and text for every visual line of every page, in reading order. Account headers, footers, summary blocks — everything the table view filters out stays recoverable. The rule is simple: every extracted line appears in the workbook at least once.',
+                    'That is also why the output deliberately avoids normalisation. Amounts stay as printed text (£1,234.56 stays £1,234.56, 1.234,56 stays 1.234,56), dates are never reinterpreted, and columns keep the bank\'s own names. You decide what to clean up — with the original always in view.',
+                ],
+            },
+            {
+                'heading': 'Scanned statements',
+                'paragraphs': [
+                    'Scans route through OCR into the same layout reconstruction. Multi-word OCR boxes are split so each token lands in its own column, and tokens snap to the column holding most of their width. Very poor scans are flagged so you can retry in high quality.',
+                ],
+            },
+        ],
+    },
+    {
+        'slug': 'bank-statements-to-excel-for-reconciliation',
+        'title': 'Converting Bank Statements to Excel for QuickBooks or Xero Reconciliation',
+        'category': 'Workflow',
+        'description': 'A practical workflow for accountants and bookkeepers: turn client statement PDFs into reviewable Excel before importing into your bookkeeping tool.',
+        'lastmod': '2026-07-09',
+        'sections': [
+            {
+                'heading': 'Why exact rows beat auto-categorised output',
+                'paragraphs': [
+                    'For reconciliation you need the statement\'s own numbers — the bank\'s running balance, its dates, its references — not a tool\'s interpretation of them. An exact-copy workbook gives you an auditable middle step: what the bank printed, in a grid you can filter.',
+                ],
+            },
+            {
+                'heading': 'The workflow',
+                'items': [
+                    'Convert each client statement PDF — typed or scanned — into Excel.',
+                    'Review in Excel: check opening and closing balances against the printed summary, scan for gaps in dates, and confirm row counts look right. The Full_Text sheet holds every line of the original if anything needs cross-checking.',
+                    'Clean only what your import needs: most bookkeeping tools want a date, description, and amount column, which the workbook already has under the bank\'s own headings.',
+                    'Save as CSV or XLSX and import through your tool\'s bank-statement import. QuickBooks and Xero both accept spreadsheet-based statement imports; map the columns once and reuse the mapping for that client.',
+                ],
+            },
+            {
+                'heading': 'Things that save time',
+                'items': [
+                    'Separate money-out and money-in columns (common on UK statements) can be combined with a simple formula when your tool wants one signed amount column.',
+                    'European decimal-comma amounts stay as printed — convert them with Excel\'s Text to Columns or VALUE/SUBSTITUTE once you\'ve verified the rows.',
+                    'Keep the original workbook unchanged and do clean-up on a copy of the sheet: the exact copy is your audit trail.',
+                ],
+            },
+        ],
+    },
+    {
         'slug': 'how-to-convert-bank-statements-to-excel',
         'title': 'How to Convert Bank Statements to Excel',
         'category': 'Tutorial',
@@ -70,7 +137,7 @@ BLOG_POSTS = [
                     'Upload your bank statement PDF from the dashboard.',
                     'The extraction engine detects whether the PDF is text-based or scanned.',
                     'Text PDFs use direct table and layout extraction. Scanned PDFs use OCR and table-structure detection.',
-                    'Download an Excel file with raw rows and normalized transaction columns.',
+                    "Download an Excel workbook that mirrors the statement: the bank's own column headers, one row per transaction, plus a Full_Text sheet carrying every line of the PDF.",
                 ],
             },
             {
