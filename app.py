@@ -21,6 +21,7 @@ from flask_socketio import SocketIO
 
 # Import parsers
 from parsers.universal_parser import UniversalBankParser, ProcessingConfig
+from site_urls import normalize_base_url, public_base_url
 from storage_utils import get_storage_config, delete_file
 from db import init_db, get_db_session
 from models import User, UsageCounter, Job, FeedbackSubmission
@@ -115,7 +116,7 @@ if allowed_origins_env:
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(',') if origin.strip()]
 elif IS_PRODUCTION:
     public_origin = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-    allowed_origins = [public_origin.rstrip('/')] if public_origin else []
+    allowed_origins = [normalize_base_url(public_origin)] if public_origin else []
     if not allowed_origins:
         logger.warning("SocketIO CORS origins are empty in production; set SOCKETIO_CORS_ORIGINS or PUBLIC_BASE_URL.")
 else:
@@ -504,11 +505,7 @@ def inject_user_context():
     user_email = session.get('user_email')
     normalized_email = (user_email or '').lower()
 
-    def site_base_url():
-        configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-        if configured:
-            return configured.rstrip('/')
-        return request.url_root.rstrip('/')
+    site_base_url = public_base_url
 
     def public_url_for(endpoint, **values):
         anchor = values.pop('_anchor', None)

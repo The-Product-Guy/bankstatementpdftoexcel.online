@@ -12,6 +12,7 @@ from sqlalchemy import distinct, func
 from db import get_db_session
 from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
 from parsers.universal_parser import UniversalBankParser
+from site_urls import public_base_url
 from tracking import clear_tracking_logs, record_funnel_event
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ PRIVATE_ROBOTS_PATHS = [
     '/auth/',
     '/billing/',
     '/checkout/',
-    '/convert',
+    '/convert$',
+    '/convert/preflight',
     '/download/',
     '/feedback',
     '/health',
@@ -223,11 +225,7 @@ BLOG_POSTS = [
 BLOG_POST_BY_SLUG = {post['slug']: post for post in BLOG_POSTS}
 
 
-def _public_base_url() -> str:
-    configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-    if configured:
-        return configured.rstrip('/')
-    return request.url_root.rstrip('/')
+_public_base_url = public_base_url
 
 
 def _public_url(path: str) -> str:
@@ -1107,7 +1105,7 @@ def robots():
     robots_content = (
         "\n\n".join(groups)
         + f"\n\nSitemap: {base_url}/sitemap.xml\n"
-        + f"Sitemap: {base_url}/sitemap.txt"
+        + f"Sitemap: {base_url}/sitemap.txt\n"
     )
     return Response(robots_content, mimetype='text/plain')
 

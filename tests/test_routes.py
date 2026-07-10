@@ -103,10 +103,15 @@ class TestPublicRoutes:
     def test_robots(self, client):
         resp = client.get("/robots.txt")
         assert resp.status_code == 200
-        assert b"Sitemap:" in resp.data
+        assert b"Sitemap: http://localhost/sitemap.xml" in resp.data
         assert b"User-agent: GPTBot" in resp.data
         assert b"Disallow: /admin" in resp.data
         assert b"Disallow: /*?*" in resp.data
+        # Upload endpoint blocked, but /convert/ bank landing pages crawlable
+        assert b"Disallow: /convert$" in resp.data
+        assert b"Disallow: /convert\n" not in resp.data
+        assert b"Disallow: /convert/preflight" in resp.data
+        assert resp.data.endswith(b"\n")
 
     def test_sitemap_txt(self, client):
         resp = client.get("/sitemap.txt")
@@ -135,6 +140,16 @@ class TestPublicRoutes:
         sitemap = client.get("/sitemap.xml")
         assert b'<link rel="canonical" href="https://statement.example/">' in home.data
         assert b"<loc>https://statement.example/</loc>" in sitemap.data
+
+    def test_schemeless_base_url_gets_https(self, client, monkeypatch):
+        monkeypatch.setenv("CANONICAL_BASE_URL", "statement.example/")
+        home = client.get("/")
+        sitemap = client.get("/sitemap.xml")
+        robots = client.get("/robots.txt")
+        assert b'<link rel="canonical" href="https://statement.example/">' in home.data
+        assert b"<loc>https://statement.example/</loc>" in sitemap.data
+        assert b"Sitemap: https://statement.example/sitemap.xml" in robots.data
+        assert b"statement.example/statement.example" not in home.data
 
     def test_noindex_header_on_functional_routes(self, client):
         resp = client.get("/dashboard")
