@@ -6,7 +6,7 @@ Use this checklist before pointing the production domain at Statement Converter.
 
 | Variable | Purpose |
 | --- | --- |
-| `PUBLIC_BASE_URL` or `CANONICAL_BASE_URL` | Absolute production origin used for canonical tags, social metadata, sitemap URLs, robots references, and LLM discovery files. Example: `https://statementconverter.com` |
+| `PUBLIC_BASE_URL` or `CANONICAL_BASE_URL` | Absolute production origin used for canonical tags, social metadata, sitemap URLs, robots references, and LLM discovery files. Must include the scheme: `https://multistatementpdftoexcel.online`. A scheme-less value is normalized to `https://` by `site_urls.py`, but set it correctly anyway. |
 | `GTM_CONTAINER_ID` or `GA_MEASUREMENT_ID` | Optional analytics container or GA4 measurement ID. |
 | `SECURITY_CONTACT` | Optional public vulnerability contact for `/.well-known/security.txt`. Use `mailto:security@example.com` or an HTTPS policy/contact URL. |
 | `INDEXNOW_KEY` | Optional IndexNow ownership key exposed at `/indexnow-key.txt` when configured. |
@@ -22,6 +22,15 @@ Use this checklist before pointing the production domain at Statement Converter.
 | `/humans.txt` | Lightweight human-readable ownership and site summary. |
 | `/.well-known/security.txt` | Vulnerability disclosure contact and policy metadata. |
 | `/static/site.webmanifest` | Browser/PWA metadata and app icons. |
+
+## Semrush Audit Findings (2026-07-10, fixed 2026-07-11)
+
+The first production Semrush audit (site health 75%) traced every error to two causes — keep these from regressing:
+
+1. **Scheme-less `CANONICAL_BASE_URL`** on Railway emitted `href="domain.tld/…"` canonical/og/sitemap/robots URLs. Crawlers resolve those as *relative* paths → 30 4XX pages, 25 broken canonicals, 25 broken internal links, "Sitemap.xml not found", "Invalid robots.txt format". Fixed by `site_urls.py` normalization; regression-tested in `tests/test_routes.py::test_schemeless_base_url_gets_https`.
+2. **`Disallow: /convert`** in robots.txt prefix-blocked all `/convert/<bank>` landing pages (26 pages) for Googlebot and AI bots. Now `Disallow: /convert$` blocks only the upload endpoint.
+
+**Cloudflare caveat:** the live domain is proxied through Cloudflare, whose "managed robots.txt" feature *prepends* a Content-Signal block plus `Disallow: /` for Google-Extended, ClaudeBot, GPTBot, CCBot, and others ahead of the app's own robots content. When auditing, always fetch `robots.txt` from the live domain, not the app — and toggle the Cloudflare setting off if AI-search visibility is wanted. The app cannot override it.
 
 ## Submit After Deploy
 

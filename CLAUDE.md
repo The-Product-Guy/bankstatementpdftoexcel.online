@@ -77,6 +77,7 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
 - `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs the layout replica parser, uploads the workbook (table sheet + `Full_Text`)
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
 - `db.py`: Engine/session management. Falls back to `sqlite:///local.db` when `DATABASE_URL` is unset
+- `site_urls.py`: Public base URL for canonical/og/sitemap/robots URLs — normalizes `CANONICAL_BASE_URL`/`PUBLIC_BASE_URL` to an absolute `https://` origin (scheme-less env values once broke all crawler-facing URLs; see Semrush section in `docs/Launch-SEO-Readiness.md`)
 - `storage_utils.py`: Thin S3 wrapper (upload/download/presign/delete)
 - `celery_config.py`: Celery setup with Redis broker, solo pool default, JSON serialization
 
@@ -87,7 +88,7 @@ Configured via `EXECUTION_PRESET` env var (defined in `universal_parser.py`):
 - `prod-high-accuracy`: 200 DPI for poor quality scans
 
 ### Environment
-Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `DATABASE_URL`, `SECRET_KEY`. For local dev without cloud services, the app falls back to SQLite and local file storage.
+Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `DATABASE_URL`, `SECRET_KEY`. For local dev without cloud services, the app falls back to SQLite and local file storage. Production also needs `CANONICAL_BASE_URL=https://multistatementpdftoexcel.online` (absolute, with scheme) — it drives every crawler-facing URL. The live domain is Cloudflare-proxied; Cloudflare's managed robots.txt prepends AI-bot blocks the app cannot override.
 
 ## Conventions
 

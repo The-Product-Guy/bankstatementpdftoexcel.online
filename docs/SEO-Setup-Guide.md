@@ -119,9 +119,9 @@ Use these tools:
 - Check XML format is valid
 
 ### 4. Test Robots.txt
-- Visit `https://yourdomain.com/robots.txt`
-- Verify correct directives
-- Check sitemap reference
+- Visit `https://yourdomain.com/robots.txt` — the **live domain**, not the Railway app URL: Cloudflare's managed robots.txt prepends its own AI-bot blocks ahead of the app's content
+- Verify correct directives (bank landing pages under `/convert/` must NOT be disallowed; only `/convert$` and `/convert/preflight` are)
+- Check sitemap references are absolute `https://` URLs
 
 ### 5. Test AI Discovery Files
 - Visit `https://yourdomain.com/llms.txt`
