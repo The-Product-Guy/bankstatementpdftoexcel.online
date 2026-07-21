@@ -11,7 +11,7 @@
 ### 2. Page Structure
 - ✅ **Home Page** (`/`) - Refactored from `index.html` to `home.html`
   - SEO-optimized meta tags
-  - Structured data (WebApplication, Organization)
+  - Structured data (Service, Organization, WebSite)
   - All original functionality preserved
   
 - ✅ **Blogs Page** (`/blogs`)
@@ -30,7 +30,7 @@
 - ✅ Twitter Card tags
 - ✅ Canonical URLs
 - ✅ Structured data (JSON-LD)
-  - WebApplication schema
+  - Service schema
   - Organization schema
   - Blog schema
   - BreadcrumbList schema
@@ -115,7 +115,7 @@ All pages include optimized:
 - Canonical URLs
 
 ### Structured Data
-- WebApplication schema (home page)
+- Service schema (home page)
 - Organization schema (all pages)
 - Blog schema (blogs page)
 - BreadcrumbList schema (blogs, pricing)

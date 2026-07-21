@@ -35,7 +35,7 @@ BANK_PAGES = [
             {"q": "Is a scanned Chase statement supported?",
              "a": "Yes — scanned pages route through OCR and the same layout reconstruction. Very poor scans are flagged so you can retry in high quality."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "bank-of-america-statement-to-excel",
@@ -60,7 +60,7 @@ BANK_PAGES = [
             {"q": "Can I convert both bank and card statements?",
              "a": "Yes. Layouts are detected per document from the printed columns, not from a per-product template."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "wells-fargo-statement-to-excel",
@@ -85,7 +85,7 @@ BANK_PAGES = [
             {"q": "What about long descriptions that wrap to a second line?",
              "a": "Wrapped description lines are merged back into their transaction's row, so row counts match the statement."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "citi-statement-to-excel",
@@ -109,7 +109,7 @@ BANK_PAGES = [
             {"q": "Does a scanned Citi statement work?",
              "a": "Yes. Scans route through OCR into the same layout reconstruction, and poor-quality pages are flagged for a high-quality retry."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "capital-one-statement-to-excel",
@@ -133,7 +133,7 @@ BANK_PAGES = [
             {"q": "Does this cover Capital One 360 checking as well as cards?",
              "a": "Yes. The layout is detected from each document's printed columns rather than a per-product template."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     # ---------------- United Kingdom ----------------
     {
@@ -158,7 +158,7 @@ BANK_PAGES = [
             {"q": "Does it handle £ amounts and UK dates?",
              "a": "Yes. Values are kept as printed text — £1,234.56 stays £1,234.56 — and D Mon YYYY dates are recognised when rows are assembled."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "hsbc-statement-to-excel",
@@ -182,7 +182,7 @@ BANK_PAGES = [
             {"q": "My statement is a scan from a branch printer — will it work?",
              "a": "Scanned pages go through OCR into the same layout reconstruction. Poor scans are flagged so you can retry in high quality."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "lloyds-statement-to-excel",
@@ -206,7 +206,7 @@ BANK_PAGES = [
             {"q": "How are wrapped payee references handled?",
              "a": "Continuation lines are merged into their transaction's row, so a long reference stays one transaction."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "natwest-statement-to-excel",
@@ -230,7 +230,7 @@ BANK_PAGES = [
             {"q": "Can I convert several months of statements?",
              "a": "Yes — each PDF converts on its own, and multi-page documents keep their layout page by page."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     # ---------------- Europe ----------------
     {
@@ -255,7 +255,7 @@ BANK_PAGES = [
             {"q": "Does it work for both betaalrekening and spaarrekening statements?",
              "a": "Yes. The layout is read from each document's printed columns, not from an account-type template."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "deutsche-bank-statement-to-excel",
@@ -279,7 +279,7 @@ BANK_PAGES = [
             {"q": "Do DD.MM.YYYY dates and 1.234,56 amounts survive?",
              "a": "Yes — both are recognised during row assembly and copied as printed text, without reformatting."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
     {
         "slug": "santander-statement-to-excel",
@@ -303,7 +303,7 @@ BANK_PAGES = [
             {"q": "What happens to transaction references that wrap?",
              "a": "Wrapped lines merge into their parent row, keeping one row per transaction."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-07-21",
     },
 ]
 

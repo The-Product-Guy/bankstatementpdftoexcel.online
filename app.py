@@ -8,11 +8,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import hashlib
 import os
 import secrets
 import shutil
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 from flask import Flask, jsonify, flash, redirect, url_for, request, session
@@ -57,9 +59,24 @@ IS_PRODUCTION = _is_production_runtime()
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if IS_PRODUCTION and not SECRET_KEY:
     raise RuntimeError("SECRET_KEY must be set in production.")
+PUBLIC_ORIGIN_SETTING = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+if IS_PRODUCTION and not PUBLIC_ORIGIN_SETTING:
+    raise RuntimeError("CANONICAL_BASE_URL or PUBLIC_BASE_URL must be set in production.")
+if PUBLIC_ORIGIN_SETTING:
+    try:
+        normalize_base_url(PUBLIC_ORIGIN_SETTING)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid public base URL: {exc}") from exc
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY or 'dev-secret-key-change-in-production'
+STATIC_ASSET_VERSIONS = {}
+for _asset_name in ('styles.min.css', 'ui.min.js', 'script.min.js'):
+    try:
+        with open(os.path.join(app.static_folder, _asset_name), 'rb') as _asset_file:
+            STATIC_ASSET_VERSIONS[_asset_name] = hashlib.sha256(_asset_file.read()).hexdigest()[:12]
+    except OSError:
+        logger.warning("Static asset is missing: %s", _asset_name)
 MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '20'))
 MAX_PAGES = int(os.environ.get('MAX_PAGES', '250'))
 GUEST_CONVERSION_LIMIT = int(os.environ.get('GUEST_CONVERSION_LIMIT', '1'))
@@ -518,6 +535,12 @@ def inject_user_context():
     def canonical_current_url():
         return f"{site_base_url()}{request.path}"
 
+    def static_asset_url(filename):
+        version = STATIC_ASSET_VERSIONS.get(filename)
+        if version:
+            return url_for('static', filename=filename, v=version)
+        return url_for('static', filename=filename)
+
     return {
         'current_user_email': user_email,
         'current_user_is_admin': bool(
@@ -528,20 +551,35 @@ def inject_user_context():
         'site_base_url': site_base_url,
         'public_url_for': public_url_for,
         'canonical_current_url': canonical_current_url,
+        'static_asset_url': static_asset_url,
     }
+
+
+@app.before_request
+def redirect_www_to_canonical_host():
+    """Redirect the optional www alias once DNS/hosting routes it to this app."""
+    configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+    if not configured:
+        return None
+
+    canonical_origin = normalize_base_url(configured)
+    canonical_host = urlsplit(canonical_origin).hostname
+    request_host = (request.host.split(':', 1)[0] or '').lower().rstrip('.')
+    if canonical_host and not canonical_host.startswith('www.') and request_host == f'www.{canonical_host}':
+        target_path = request.full_path[:-1] if request.full_path.endswith('?') else request.full_path
+        return redirect(f'{canonical_origin}{target_path}', code=308)
+    return None
 
 @app.after_request
 def add_security_headers(response):
     csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdnjs.cloudflare.com "
-        "https://www.googletagmanager.com https://www.google-analytics.com "
-        "https://umami-production-9269.up.railway.app; "
+        "https://www.googletagmanager.com https://www.google-analytics.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob: https://www.google-analytics.com; "
-        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com "
-        "https://umami-production-9269.up.railway.app; "
+        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "object-src 'none'"
@@ -579,6 +617,10 @@ def add_security_headers(response):
     )
     if request.path in noindex_exact_paths or any(request.path.startswith(prefix) for prefix in noindex_prefixes):
         response.headers.setdefault('X-Robots-Tag', 'noindex, nofollow')
+    if request.path in {'/static/sample-statement.pdf', '/static/sample-statement.xlsx'}:
+        response.headers.setdefault('X-Robots-Tag', 'noindex, noarchive')
+    if request.path.endswith(('.min.css', '.min.js')):
+        response.headers['Cache-Control'] = 'public, max-age=604800'
     try:
         user_agent = request.headers.get('User-Agent', '')
         if should_track_page_view(

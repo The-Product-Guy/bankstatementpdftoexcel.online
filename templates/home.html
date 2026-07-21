@@ -20,17 +20,14 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "WebApplication",
+  "@type": "Service",
   "name": "Statement Converter",
   "alternateName": "Bank Statement PDF to Excel Converter",
   "description": "Convert bank statement PDFs to Excel format with support for text-based and scanned statement layouts.",
   "url": "{{ public_url_for('pages.home') }}",
-  "applicationCategory": "UtilityApplication",
-  "applicationSubCategory": "Financial data conversion",
-  "operatingSystem": "Web",
-  "browserRequirements": "Requires a modern web browser with JavaScript enabled.",
+  "serviceType": "Bank statement PDF to Excel conversion",
   "image": "{{ site_base_url() }}{{ url_for('static', filename='og-image.png') }}",
-  "publisher": {
+  "provider": {
     "@type": "Organization",
     "name": "Ambion Softwares",
     "url": "{{ public_url_for('pages.home') }}",
@@ -44,13 +41,10 @@
     "price": "0",
     "priceCurrency": "USD"
   },
-  "featureList": [
-    "Bank Statement PDF to Excel",
-    "Text and Scanned PDF Processing",
-    "Dynamic Table Detection",
-    "Secure File Handling",
-    "Excel Workbook Export"
-  ]
+  "audience": {
+    "@type": "Audience",
+    "audienceType": "Accountants, auditors, founders, small businesses, and finance teams"
+  }
 }
 </script>
 <script type="application/ld+json">
@@ -102,7 +96,7 @@
         <div class="home-hero-inner page">
             <div class="hero-copy anim-float">
                 <span class="badge-pill">For accountants, auditors, founders &amp; finance teams</span>
-                <h1 id="homeHeroTitle" class="display">Every statement, <em>rebuilt</em> as a workbook you can trust.</h1>
+                <h1 id="homeHeroTitle" class="display">Turn every bank statement PDF into an <em>Excel workbook</em> you can trust.</h1>
                 <p class="hero-subhead">
                     Upload a bank statement PDF — typed or scanned — and get back the same rows,
                     columns, and balances, laid out in Excel exactly as they appeared.

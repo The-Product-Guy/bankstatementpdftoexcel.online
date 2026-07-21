@@ -27,20 +27,20 @@
     <meta property="og:description" content="{% block og_description %}{{ self.meta_description()|striptags }}{% endblock %}">
     <meta property="og:image" content="{% block og_image %}{{ site_base_url() }}{{ url_for('static', filename='og-image.png') }}{% endblock %}">
     <meta property="og:image:secure_url" content="{% block og_image_secure %}{{ self.og_image()|striptags }}{% endblock %}">
-    <meta property="og:image:width" content="1344">
-    <meta property="og:image:height" content="768">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:alt" content="{% block og_image_alt %}Statement Converter PDF to Excel workbook preview{% endblock %}">
     <meta property="og:locale" content="en_US">
     <meta property="og:site_name" content="Statement Converter">
 
     {# Twitter #}
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="{% block twitter_url %}{{ canonical_current_url() }}{% endblock %}">
-    <meta property="twitter:title" content="{% block twitter_title %}{{ self.title()|striptags }}{% endblock %}">
-    <meta property="twitter:description" content="{% block twitter_description %}{{ self.meta_description()|striptags }}{% endblock %}">
-    <meta property="twitter:image" content="{% block twitter_image %}{{ self.og_image()|striptags }}{% endblock %}">
-    <meta property="twitter:image:alt" content="{% block twitter_image_alt %}{{ self.og_image_alt()|striptags }}{% endblock %}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="{% block twitter_url %}{{ canonical_current_url() }}{% endblock %}">
+    <meta name="twitter:title" content="{% block twitter_title %}{{ self.title()|striptags }}{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}{{ self.meta_description()|striptags }}{% endblock %}">
+    <meta name="twitter:image" content="{% block twitter_image %}{{ self.og_image()|striptags }}{% endblock %}">
+    <meta name="twitter:image:alt" content="{% block twitter_image_alt %}{{ self.og_image_alt()|striptags }}{% endblock %}">
 
     {# Favicon #}
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
@@ -50,13 +50,10 @@
     <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
 
     {# Stylesheets #}
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ static_asset_url('styles.min.css') }}">
 
     {# Structured Data (JSON-LD) #}
     {% block structured_data %}{% endblock %}
-
-    {# Umami Analytics #}
-    <script defer src="https://umami-production-9269.up.railway.app/script.js" data-website-id="b12954fa-b821-4978-a835-aa70845aee96"></script>
 
     {# Google Analytics (gtag.js) #}
     {% if config.get('GA_MEASUREMENT_ID') %}
@@ -100,6 +97,17 @@
                 <a href="{{ url_for('pages.pricing') }}" {% if request.endpoint == 'pages.pricing' %}class="active"{% endif %}>Pricing</a>
                 <a href="{{ url_for('pages.blogs') }}" {% if request.endpoint == 'pages.blogs' %}class="active"{% endif %}>Blog</a>
                 <a href="{{ url_for('pages.home') }}#security">Security</a>
+                <div class="nav-mobile-actions">
+                    {% if current_user_email %}
+                        <a href="{{ url_for('converter.dashboard') }}">Dashboard</a>
+                        {% if current_user_is_admin %}<a href="{{ url_for('pages.admin_dashboard') }}">Admin</a>{% endif %}
+                        <a href="{{ url_for('auth.account') }}">Account</a>
+                        <a href="/signout">Sign out</a>
+                    {% else %}
+                        <a href="{{ url_for('auth.signin') }}">Sign in</a>
+                        <a href="{{ url_for('converter.dashboard') }}" class="nav-mobile-cta" data-track-event="nav_convert_click">Convert a PDF</a>
+                    {% endif %}
+                </div>
             </div>
             <div class="nav-actions">
                 {% if current_user_email %}
@@ -174,76 +182,13 @@
             <p>&copy; {{ now().year }} Statement Converter by Ambion Softwares. All rights reserved.</p>
             <p>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L2 5v4c0 3.5 2.5 6 6 8 3.5-2 6-4.5 6-8V5L8 1.5z"/></svg>
-                Files are deleted after conversion. We don't store your data.
+                Files use temporary storage and expire automatically.
             </p>
         </div>
     </footer>
 
     {# Scripts #}
-    <script src="{{ url_for('static', filename='ui.js') }}" defer></script>
+    <script src="{{ static_asset_url('ui.min.js') }}" defer></script>
     {% block scripts %}{% endblock %}
-
-    {# Navigation Toggle Script #}
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const navToggle = document.getElementById('navToggle');
-            const navMenu = document.getElementById('navMenu');
-            const navContainer = document.getElementById('navContainer');
-
-            if (!navToggle || !navMenu || !navContainer) return;
-
-            function closeNav() {
-                navMenu.classList.remove('active');
-                navContainer.classList.remove('nav-open');
-                navToggle.classList.remove('active');
-                navToggle.setAttribute('aria-expanded', 'false');
-            }
-
-            navToggle.addEventListener('click', function() {
-                const isOpen = navMenu.classList.toggle('active');
-                navContainer.classList.toggle('nav-open');
-                navToggle.classList.toggle('active');
-                navToggle.setAttribute('aria-expanded', isOpen);
-                if (isOpen) {
-                    const firstLink = navMenu.querySelector('a');
-                    if (firstLink) firstLink.focus();
-                }
-            });
-
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && navMenu.classList.contains('active')) {
-                    closeNav();
-                    navToggle.focus();
-                }
-            });
-
-            document.addEventListener('click', function(e) {
-                if (navMenu.classList.contains('active') && !navContainer.contains(e.target)) {
-                    closeNav();
-                }
-            });
-
-            document.querySelectorAll('[data-track-event]').forEach(function(el) {
-                el.addEventListener('click', function() {
-                    const eventType = el.getAttribute('data-track-event');
-                    if (!eventType) return;
-                    const payload = JSON.stringify({
-                        event_type: eventType,
-                        path: window.location.pathname
-                    });
-                    if (navigator.sendBeacon) {
-                        navigator.sendBeacon('/track/event', new Blob([payload], { type: 'application/json' }));
-                    } else {
-                        fetch('/track/event', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: payload,
-                            keepalive: true
-                        }).catch(function() {});
-                    }
-                });
-            });
-        });
-    </script>
 </body>
 </html>

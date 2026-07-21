@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ post.title }} | Statement Converter{% endblock %}
+{% block title %}{{ post.get('seo_title', post.title) }} | Statement Converter{% endblock %}
 
 {% block meta_description %}{{ post.description }}{% endblock %}
 
@@ -8,11 +8,11 @@
 
 {% block og_type %}article{% endblock %}
 
-{% block og_title %}{{ post.title }} | Statement Converter{% endblock %}
+{% block og_title %}{{ post.get('seo_title', post.title) }} | Statement Converter{% endblock %}
 
 {% block og_description %}{{ post.description }}{% endblock %}
 
-{% block twitter_title %}{{ post.title }} | Statement Converter{% endblock %}
+{% block twitter_title %}{{ post.get('seo_title', post.title) }} | Statement Converter{% endblock %}
 
 {% block twitter_description %}{{ post.description }}{% endblock %}
 
@@ -74,7 +74,14 @@
 
 {% block content %}
 <main class="main-content legal-page">
-    <p class="legal-updated">{{ post.category }}</p>
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="{{ url_for('pages.home') }}">Home</a>
+        <span aria-hidden="true">/</span>
+        <a href="{{ url_for('pages.blogs') }}">Guides</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{{ post.title }}</span>
+    </nav>
+    <p class="legal-updated">{{ post.category }} · By Ambion Softwares · Updated <time datetime="{{ post.lastmod }}">{{ post.lastmod }}</time></p>
     <h1>{{ post.title }}</h1>
     <p>{{ post.description }}</p>
 
@@ -93,6 +100,31 @@
         {% endif %}
     </section>
     {% endfor %}
+
+    {% if post.get('resources') %}
+    <section aria-labelledby="sampleResourcesTitle">
+        <h2 id="sampleResourcesTitle">Try the sample files</h2>
+        <p>Review the example input and output together before converting a sensitive document.</p>
+        <ul>
+            {% for resource in post.resources %}
+            <li><a href="{{ url_for('static', filename=resource.filename) }}">{{ resource.label }}</a> - {{ resource.description }}</li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    <section class="related-guides" aria-labelledby="relatedGuidesTitle">
+        <h2 id="relatedGuidesTitle">Related guides</h2>
+        <div class="related-guide-grid">
+            {% for related in related_posts %}
+            <article class="related-guide-card">
+                <p class="legal-updated">{{ related.category }}</p>
+                <h3><a href="{{ url_for('pages.blog_post', slug=related.slug) }}">{{ related.title }}</a></h3>
+                <p>{{ related.description }}</p>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
 
     <div class="blog-cta blog-post-cta">
         <h3>Convert a bank statement now</h3>

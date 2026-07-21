@@ -49,7 +49,7 @@ For each page, implement:
 #### 1.3 Structured Data (Schema.org)
 Implement JSON-LD structured data:
 - **Organization schema**: Company/service information
-- **WebApplication schema**: Application details
+- **Service schema**: Converter-service details without unverified ratings or reviews
 - **BreadcrumbList schema**: Navigation breadcrumbs
 - **Article schema**: For blog posts
 - **Product schema**: For pricing plans

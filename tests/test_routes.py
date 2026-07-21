@@ -106,11 +106,13 @@ class TestPublicRoutes:
         assert b"Sitemap: http://localhost/sitemap.xml" in resp.data
         assert b"User-agent: GPTBot" in resp.data
         assert b"Disallow: /admin" in resp.data
-        assert b"Disallow: /*?*" in resp.data
-        # Upload endpoint blocked, but /convert/ bank landing pages crawlable
-        assert b"Disallow: /convert$" in resp.data
+        assert b"Disallow: /*?*" not in resp.data
+        # Public bank guides are explicitly crawlable; only preflight stays private.
+        assert b"Allow: /convert/" in resp.data
+        assert b"Disallow: /convert$" not in resp.data
         assert b"Disallow: /convert\n" not in resp.data
         assert b"Disallow: /convert/preflight" in resp.data
+        assert b"Sitemap: http://localhost/sitemap.txt" not in resp.data
         assert resp.data.endswith(b"\n")
 
     def test_sitemap_txt(self, client):
@@ -158,7 +160,8 @@ class TestPublicRoutes:
 
     def test_index_redirects(self, client):
         resp = client.get("/index")
-        assert resp.status_code == 302
+        assert resp.status_code == 308
+        assert resp.headers["Location"].endswith("/")
 
     def test_track_event_records_allowed_funnel_event(self, client):
         from db import get_db_session, init_db

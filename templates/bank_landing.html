@@ -2,7 +2,7 @@
 
 {% block title %}Convert {{ bank.name }} Statements to Excel - Statement Converter{% endblock %}
 
-{% block meta_description %}Convert {{ bank.name }} bank statement PDFs to Excel. {{ bank.columns|join(', ') }} — the same rows and columns as your statement, typed or scanned.{% endblock %}
+{% block meta_description %}Convert {{ bank.name }} bank statement PDFs to Excel while preserving printed rows, columns, dates and balances. Works with text PDFs and scanned statements.{% endblock %}
 
 {% block canonical_url %}{{ public_url_for('pages.bank_landing', slug=bank.slug) }}{% endblock %}
 
@@ -22,6 +22,13 @@
 {% block content %}
 <main>
     <header class="pricing-intro page">
+        <nav class="breadcrumbs" aria-label="Breadcrumb">
+            <a href="{{ url_for('pages.home') }}">Home</a>
+            <span aria-hidden="true">/</span>
+            <a href="{{ url_for('pages.bank_index') }}">Bank guides</a>
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{{ bank.name }}</span>
+        </nav>
         <p class="eyebrow">{{ bank.country }}</p>
         <h1 class="display">Convert {{ bank.name }} Statements to Excel</h1>
         <p class="muted">Upload a {{ bank.name }} statement PDF — typed or scanned — and download the same rows and columns in Excel. Nothing reformatted, nothing silently dropped.</p>
@@ -78,6 +85,20 @@
                 <summary><span>{{ f.q }}</span><span class="faq-icon" aria-hidden="true">+</span></summary>
                 <p>{{ f.a }}</p>
             </details>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="section page related-guides" aria-labelledby="relatedBankGuidesTitle">
+        <p class="eyebrow">More statement formats</p>
+        <h2 id="relatedBankGuidesTitle" class="display section-title">Related bank conversion guides</h2>
+        <div class="related-guide-grid">
+            {% for related in related_banks %}
+            <article class="related-guide-card">
+                <p class="legal-updated">{{ related.country }}</p>
+                <h3><a href="{{ url_for('pages.bank_landing', slug=related.slug) }}">{{ related.name }} statement to Excel</a></h3>
+                <p>See the typical dates, amounts, headings, and wrapped descriptions used on {{ related.name }} statements.</p>
+            </article>
             {% endfor %}
         </div>
     </section>
