@@ -180,7 +180,7 @@ PDF-XLS-Converter/
 ### Strengths
 1. **Modular Parser Architecture**: Easy to add new bank support
 2. **Async Processing**: Celery for background tasks
-3. **Real-time Updates**: WebSocket progress tracking
+3. **Progress Updates**: Authenticated Redis-backed HTTP polling
 4. **Cloud Ready**: S3 storage support, Railway deployment configs
 5. **SEO Ready**: Meta tags, sitemap, robots.txt
 
@@ -223,8 +223,8 @@ PDF-XLS-Converter/
 ### ✅ Good Practices
 1. **Secure File Handling**: Werkzeug's `secure_filename()`
 2. **File Type Validation**: Only PDF files allowed
-3. **File Size Limits**: 20MB max
-4. **Automatic Cleanup**: Old files deleted after 1 hour
+3. **File Size Limits**: Server-enforced 50 MB max
+4. **Automatic Cleanup**: Inputs and outputs are removed by the scheduled retention task after their configured retention windows
 5. **Secret Key Configuration**: Via environment variable
 
 ### ⚠️ Recommendations
@@ -318,7 +318,7 @@ def convert():
 
 ### Functional Tests
 - [ ] PDF upload works
-- [ ] Progress tracking works (WebSocket)
+- [ ] Progress tracking works (authenticated status polling)
 - [ ] Excel download works
 - [ ] All navigation links work
 - [ ] Mobile responsive design works

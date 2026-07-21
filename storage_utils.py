@@ -3,9 +3,11 @@
 S3-compatible storage helpers for Railway buckets or any S3 provider.
 """
 import os
+from functools import lru_cache
 from typing import Optional, Dict, Any
 
 
+@lru_cache(maxsize=1)
 def get_storage_config() -> Optional[Dict[str, Any]]:
     endpoint = os.environ.get("AWS_ENDPOINT_URL")
     bucket = os.environ.get("AWS_S3_BUCKET_NAME")

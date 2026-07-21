@@ -11,9 +11,8 @@ from sqlalchemy import distinct, func
 
 from db import get_db_session
 from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
-from parsers.universal_parser import UniversalBankParser
 from site_urls import public_base_url
-from tracking import clear_tracking_logs, record_funnel_event
+from tracking import clear_tracking_logs, enqueue_funnel_event
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ pages_bp = Blueprint('pages', __name__)
 LASTMOD = {
     'home': '2026-07-21',
     'blogs': '2026-07-21',
-    'pricing': '2026-06-10',
+    'pricing': '2026-07-21',
     'privacy': '2026-06-10',
     'terms': '2026-06-10',
 }
@@ -39,7 +38,6 @@ PRIVATE_ROBOTS_PATHS = [
     '/feedback',
     '/health',
     '/processed/',
-    '/socket.io/',
     '/status/',
     '/stripe/',
     '/track/',
@@ -505,14 +503,6 @@ def _require_admin():
 @pages_bp.route('/')
 def home():
     """Marketing landing page."""
-    from app import (
-        cleanup_expired_s3_results, cleanup_feedback_shared_pdfs,
-        cleanup_first_party_analytics, cleanup_old_files,
-    )
-    cleanup_old_files()
-    cleanup_feedback_shared_pdfs()
-    cleanup_expired_s3_results()
-    cleanup_first_party_analytics()
     return render_template('home.html')
 
 
@@ -541,7 +531,7 @@ def track_event():
         return jsonify({'status': 'ignored'}), 202
 
     try:
-        record_funnel_event(
+        enqueue_funnel_event(
             event_type=event_type,
             visitor_id=request.cookies.get('sf_visitor_id'),
             user_id=session.get('user_id'),
@@ -1175,26 +1165,29 @@ def admin_export_feedback():
 
 # -- Health checks --
 
+def _check_parser_health():
+    from parsers.universal_parser import UniversalBankParser
+
+    UniversalBankParser()
+
 @pages_bp.route('/health')
 def health_check():
-    """Simple health check for Railway."""
+    """Fast, non-sensitive liveness check for Railway."""
     from app import UPLOAD_FOLDER
     try:
         if not os.path.exists(UPLOAD_FOLDER):
-            return "UPLOADS_DIR_MISSING", 500
-        try:
-            UniversalBankParser()
-        except Exception:
-            return "PARSERS_FAILED", 500
+            return "UNHEALTHY", 503
         return "OK", 200
-    except Exception as e:
-        return f"ERROR: {str(e)}", 500
+    except Exception:
+        return "UNHEALTHY", 503
 
 
 @pages_bp.route('/health/detailed')
 def detailed_health():
-    """Detailed health check with component status."""
+    """Admin-only dependency diagnostics."""
     from app import UPLOAD_FOLDER
+    if not _require_admin():
+        return "Not found", 404
     try:
         checks = {
             'flask': 'OK',
@@ -1204,14 +1197,13 @@ def detailed_health():
         }
 
         try:
-            UniversalBankParser()
+            _check_parser_health()
         except Exception:
             checks['parsers'] = 'ERROR'
 
         try:
-            import redis as _redis
-            r = _redis.StrictRedis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
-            r.ping()
+            from redis_utils import get_redis_client
+            get_redis_client().ping()
         except Exception:
             checks['redis'] = 'ERROR'
 
@@ -1227,10 +1219,9 @@ def detailed_health():
 
         return jsonify(response_data), 200 if all_ok else 503
 
-    except Exception as e:
+    except Exception:
         return jsonify({
             'status': 'error',
-            'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 

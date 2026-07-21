@@ -31,32 +31,11 @@ const limitMessage = document.getElementById('limitMessage');
 const limitClose = document.getElementById('limitClose');
 const qualitySelector = document.getElementById('qualitySelector');
 
-// Initialize WebSocket connection
-let socket = null;
-
 // Initialize page
 document.addEventListener('DOMContentLoaded', function () {
     checkFormValidity();
     setupEventListeners();
-    initializeWebSocket();
 });
-
-// Initialize WebSocket connection
-function initializeWebSocket() {
-    socket = io();
-
-    socket.on('connect', function () {
-        console.log('Connected to server');
-    });
-
-    socket.on('progress_update', function (data) {
-        updateProgress(data);
-    });
-
-    socket.on('disconnect', function () {
-        console.log('Disconnected from server');
-    });
-}
 
 // Setup event listeners
 function setupEventListeners() {
@@ -119,6 +98,20 @@ function setupEventListeners() {
     // Prevent default drag behaviors on document
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         document.addEventListener(eventName, preventDefaults, false);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (activeJobId) {
+            scheduleStatusPoll(document.hidden ? 10000 : 0);
+        }
+    });
+
+    window.addEventListener('pagehide', event => {
+        if (event.persisted) pauseStatusPolling();
+        else stopStatusPolling();
+    });
+    window.addEventListener('pageshow', event => {
+        if (event.persisted && activeJobId) scheduleStatusPoll(0);
     });
 }
 
@@ -185,7 +178,7 @@ function validateFile(file) {
         return false;
     }
 
-    const maxSizeMb = parseInt(fileInput.dataset.maxSize || '100', 10);
+    const maxSizeMb = parseInt(fileInput.dataset.maxSize || '50', 10);
     const maxSize = maxSizeMb * 1024 * 1024;
     if (file.size > maxSize) {
         showLimitModal('FILE_TOO_LARGE', maxSizeMb);
@@ -200,7 +193,7 @@ function showLimitModal(type, limitValue, pageCount) {
 
     if (type === 'FILE_TOO_LARGE') {
         limitTitle.textContent = 'File too large';
-        limitMessage.textContent = `This file exceeds the ${limitValue}MB limit. Split the PDF and try again.`;
+        limitMessage.textContent = `This file exceeds the ${limitValue} MB limit. Split the PDF and try again.`;
     } else if (type === 'PAGE_LIMIT_EXCEEDED') {
         const pageText = pageCount ? ` (${pageCount} pages)` : '';
         limitTitle.textContent = 'Too many pages';
@@ -456,8 +449,34 @@ let downloadTriggered = false;
 let completionPolls = 0;
 let lastJobData = null;
 let pendingDownload = null;
+let statusPollTimer = null;
+let statusPollController = null;
+
+function pauseStatusPolling() {
+    if (statusPollTimer) {
+        clearTimeout(statusPollTimer);
+        statusPollTimer = null;
+    }
+    if (statusPollController) {
+        statusPollController.abort();
+        statusPollController = null;
+    }
+}
+
+function stopStatusPolling() {
+    pauseStatusPolling();
+    activeJobId = null;
+}
+
+function scheduleStatusPoll(delay) {
+    if (!activeJobId) return;
+    if (statusPollTimer) clearTimeout(statusPollTimer);
+    const nextDelay = delay === undefined ? (document.hidden ? 10000 : 2000) : delay;
+    statusPollTimer = setTimeout(pollJobStatus, nextDelay);
+}
 
 function startStatusPolling(jobId) {
+    stopStatusPolling();
     activeJobId = jobId;
     downloadTriggered = false;
     completionPolls = 0;
@@ -468,15 +487,42 @@ function startStatusPolling(jobId) {
 function pollJobStatus() {
     if (!activeJobId) return;
 
-    fetch(`/status/${activeJobId}`)
-        .then(response => response.json())
+    statusPollTimer = null;
+    const controller = new AbortController();
+    statusPollController = controller;
+    fetch(`/status/${activeJobId}`, { signal: controller.signal })
+        .then(async response => {
+            if (response.status === 429) {
+                scheduleStatusPoll(5000);
+                return null;
+            }
+            if (!response.ok) {
+                let message = 'Conversion status is no longer available. Please try again.';
+                try {
+                    const payload = await response.json();
+                    if (payload && payload.error) message = payload.error;
+                } catch (error) {
+                    // Keep the generic message for non-JSON error responses.
+                }
+                const statusError = new Error(message);
+                statusError.terminal = response.status >= 400 && response.status < 500;
+                throw statusError;
+            }
+            return response.json();
+        })
         .then(data => {
+            if (!data || !activeJobId) return;
             updateProgress(data);
 
             const status = data.status || '';
 
-            if (status.startsWith('Error')) {
-                activeJobId = null;
+            if (
+                data.state === 'failed' ||
+                data.state === 'unsupported_language' ||
+                status.startsWith('Error') ||
+                status.startsWith('Unsupported language')
+            ) {
+                stopStatusPolling();
                 hideProgressModal();
                 showAlert(status, 'error');
                 return;
@@ -484,7 +530,7 @@ function pollJobStatus() {
 
             if (data.download_url && !downloadTriggered) {
                 const jobId = activeJobId;
-                activeJobId = null;
+                stopStatusPolling();
                 downloadTriggered = true;
                 lastJobData = data;
                 hideProgressModal();
@@ -497,7 +543,7 @@ function pollJobStatus() {
                 const confidence = data.confidence || '';
                 if (confidence === 'empty' || confidence === 'low' || completionPolls >= 5) {
                     const jobId = activeJobId;
-                    activeJobId = null;
+                    stopStatusPolling();
                     lastJobData = data;
                     hideProgressModal();
                     showResultBanner(data, jobId);
@@ -505,10 +551,19 @@ function pollJobStatus() {
                 }
             }
 
-            setTimeout(pollJobStatus, 1000);
+            scheduleStatusPoll();
         })
-        .catch(() => {
-            setTimeout(pollJobStatus, 2000);
+        .catch(error => {
+            if (error.terminal) {
+                stopStatusPolling();
+                hideProgressModal();
+                showAlert(error.message, 'error');
+            } else if (error.name !== 'AbortError') {
+                scheduleStatusPoll(document.hidden ? 15000 : 5000);
+            }
+        })
+        .finally(() => {
+            if (statusPollController === controller) statusPollController = null;
         });
 }
 
@@ -564,12 +619,14 @@ function showResultBanner(data, jobId) {
     actions.innerHTML = '';
     meta.textContent = '';
 
-    if (confidence === 'good' && rows > 0) {
+    if (confidence === 'good') {
         banner.classList.add('success');
         icon.innerHTML = ICONS.checkCircle;
         title.textContent = 'Conversion Complete';
         message.textContent = 'Your file has been downloaded successfully. Was the Excel output accurate?';
-        meta.textContent = `${rows} rows \u00d7 ${cols} columns extracted`;
+        meta.textContent = rows > 0
+            ? `${rows} rows \u00d7 ${cols} columns extracted`
+            : 'Workbook generated';
 
         const successBtn = document.createElement('button');
         successBtn.className = 'btn-feedback';
@@ -804,6 +861,10 @@ async function submitQuickFeedback(jobId, data, feedbackType, button) {
 
     try {
         const formData = new FormData();
+        const csrfInput = document.getElementById('feedbackCsrfToken');
+        if (csrfInput) {
+            formData.append('csrf_token', csrfInput.value);
+        }
         formData.append('job_id', jobId);
         formData.append('feedback_type', feedbackType);
         formData.append('quality_used', data.quality_used || 'standard');
@@ -948,11 +1009,21 @@ function showAlert(message, type = 'error') {
     else if (type === 'success') iconSvg = ICONS.checkCircle;
     else iconSvg = ICONS.info;
 
-    alertDiv.innerHTML = `
-        ${iconSvg}
-        ${message}
-        <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
-    `;
+    const iconContainer = document.createElement('span');
+    iconContainer.innerHTML = iconSvg;
+    while (iconContainer.firstChild) alertDiv.appendChild(iconContainer.firstChild);
+
+    const messageSpan = document.createElement('span');
+    messageSpan.textContent = String(message || '');
+    alertDiv.appendChild(messageSpan);
+
+    const closeButton = document.createElement('button');
+    closeButton.className = 'close-btn';
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Dismiss message');
+    closeButton.textContent = '\u00d7';
+    closeButton.addEventListener('click', () => alertDiv.remove());
+    alertDiv.appendChild(closeButton);
 
     const mainContent = document.querySelector('.main-content');
     mainContent.insertBefore(alertDiv, mainContent.firstChild);

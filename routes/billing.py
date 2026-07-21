@@ -7,6 +7,7 @@ from flask import Blueprint, flash, jsonify, redirect, request, session, url_for
 
 from db import get_db_session
 from models import User
+from site_urls import public_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +191,8 @@ def checkout_create():
             customer=customer_id,
             mode='subscription',
             line_items=[{'price': plan['stripe_price_id'], 'quantity': 1}],
-            success_url=url_for('billing.checkout_success', _external=True) + '?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url=url_for('pages.pricing', _external=True),
+            success_url=f"{public_base_url()}{url_for('billing.checkout_success')}?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{public_base_url()}{url_for('pages.pricing')}",
             metadata={'user_id': user_id, 'plan_id': plan_id},
         )
         return jsonify({'checkout_url': checkout_session.url})
@@ -267,7 +268,7 @@ def billing_portal():
 
         portal_session = stripe.billing_portal.Session.create(
             customer=customer_id,
-            return_url=url_for('pages.pricing', _external=True),
+            return_url=f"{public_base_url()}{url_for('pages.pricing')}",
         )
         return redirect(portal_session.url)
 

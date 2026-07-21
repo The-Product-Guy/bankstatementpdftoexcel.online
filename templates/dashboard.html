@@ -68,7 +68,7 @@
                     <p class="upload-text">
                         <strong>Drop your PDF here</strong> or click to browse
                     </p>
-                    <p class="upload-subtext" id="uploadHelp">Max file size: {{ max_upload_mb }}MB &middot; Max pages: {{ max_pages }}</p>
+                    <p class="upload-subtext" id="uploadHelp">Max file size: {{ max_upload_mb }} MB &middot; Max pages: {{ max_pages }}</p>
                 </div>
             </div>
 
@@ -217,6 +217,7 @@
         <p class="feedback-desc">Your feedback helps us support more bank statement formats.</p>
 
         <form id="feedbackForm">
+            <input type="hidden" name="csrf_token" id="feedbackCsrfToken" value="{{ csrf_token() }}">
             <input type="hidden" name="job_id" id="feedbackJobId">
             <input type="hidden" name="quality_used" id="feedbackQuality">
             <input type="hidden" name="extraction_rows" id="feedbackRows">
@@ -261,6 +262,7 @@
         <h3 id="limitTitle">File limit reached</h3>
         <p id="limitMessage">Your file exceeds the allowed limit.</p>
         <div class="limit-actions">
+            <a class="btn-primary" href="{{ file_splitter_url }}" target="_blank" rel="noopener noreferrer">Split your PDF</a>
             <button type="button" class="btn-secondary" id="limitClose">Close</button>
         </div>
     </div>
@@ -291,6 +293,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script src="{{ static_asset_url('script.min.js') }}"></script>
 {% endblock %}

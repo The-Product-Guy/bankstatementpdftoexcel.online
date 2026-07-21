@@ -56,13 +56,48 @@
 
 {% block scripts %}
 <script>
-    const jobId = "{{ job_id }}";
-    const statusUrl = "/status/" + jobId;
+    const statusUrl = {{ url_for('converter.job_status', job_id=job_id)|tojson }};
+    let statusTimer = null;
+    let statusController = null;
+    let statusFinished = false;
 
-    function checkStatus() {
-        fetch(statusUrl)
-            .then(response => response.json())
-            .then(data => {
+    function scheduleStatusCheck(delay) {
+        if (statusFinished) return;
+        if (statusTimer) clearTimeout(statusTimer);
+        statusTimer = setTimeout(checkStatus, delay ?? (document.hidden ? 10000 : 2000));
+    }
+
+    function showProcessingError(message) {
+        statusFinished = true;
+        document.getElementById('processing-state').style.display = 'none';
+        document.getElementById('error-section').classList.add('show');
+        document.getElementById('error-message').textContent = message;
+    }
+
+    async function checkStatus() {
+        statusController = new AbortController();
+        try {
+            const response = await fetch(statusUrl, { signal: statusController.signal });
+            if (response.status === 429) {
+                scheduleStatusCheck(5000);
+                return;
+            }
+            if (!response.ok) {
+                let message = 'Conversion status is no longer available. Please try again.';
+                try {
+                    const payload = await response.json();
+                    if (payload && payload.error) message = payload.error;
+                } catch (error) {
+                    // Keep the generic message for non-JSON responses.
+                }
+                if (response.status >= 400 && response.status < 500) {
+                    showProcessingError(message);
+                    return;
+                }
+                throw new Error(message);
+            }
+
+            const data = await response.json();
                 const percent = data.percent || 0;
                 const status = data.status || 'Processing...';
 
@@ -70,31 +105,46 @@
                 const statusText = document.getElementById('status-text');
 
                 progressBar.style.width = percent + '%';
-                progressBar.innerText = percent + '%';
-                statusText.innerText = status;
+                progressBar.textContent = percent + '%';
+                statusText.textContent = status;
 
-                if (data.percent >= 100 || data.status === 'Completed successfully' || data.download_url) {
+                if (
+                    data.state === 'failed' ||
+                    data.state === 'unsupported_language' ||
+                    status.startsWith('Error') ||
+                    status.startsWith('Unsupported language')
+                ) {
+                    showProcessingError(status);
+                } else if (data.download_url) {
+                    statusFinished = true;
                     document.getElementById('processing-state').style.display = 'none';
                     document.getElementById('download-section').classList.add('show');
-                    if (data.download_url) {
-                        document.getElementById('download-link').href = data.download_url;
-                    }
-                } else if (status.startsWith('Error')) {
-                    document.getElementById('processing-state').style.display = 'none';
-                    document.getElementById('error-section').classList.add('show');
-                    document.getElementById('error-message').innerText = status;
+                    document.getElementById('download-link').href = data.download_url;
+                } else if (percent >= 100) {
+                    showProcessingError(status || 'No downloadable workbook was generated.');
                 } else {
-                    setTimeout(checkStatus, 1000);
+                    scheduleStatusCheck();
                 }
-            })
-            .catch(error => {
+        } catch (error) {
+            if (error.name !== 'AbortError') {
                 console.error('Error:', error);
-                setTimeout(checkStatus, 2000);
-            });
+                scheduleStatusCheck(document.hidden ? 15000 : 5000);
+            }
+        } finally {
+            statusController = null;
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
         checkStatus();
+    });
+
+    window.addEventListener('pagehide', () => {
+        if (statusTimer) clearTimeout(statusTimer);
+        if (statusController) statusController.abort();
+    });
+    window.addEventListener('pageshow', event => {
+        if (event.persisted && !statusFinished) scheduleStatusCheck(0);
     });
 </script>
 {% endblock %}

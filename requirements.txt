@@ -1,9 +1,7 @@
 # Web Framework
 Flask==2.3.3
-Flask-SocketIO==5.3.4
 Werkzeug==2.3.7
 gunicorn==21.2.0
-simple-websocket>=1.0.0
 python-dotenv>=1.0.0
 
 # Data Processing
@@ -56,7 +54,6 @@ psycopg2-binary>=2.9.0
 
 # Async Task Queue
 celery==5.3.6
-python-socketio>=5.7.0
 
 # Object storage
 boto3>=1.34.0

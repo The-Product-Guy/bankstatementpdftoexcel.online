@@ -82,9 +82,24 @@ class TestPublicRoutes:
         assert resp.status_code == 200
         assert resp.data == b"OK"
 
-    def test_health_detailed(self, client):
+    def test_health_detailed_requires_admin(self, client):
+        resp = client.get("/health/detailed")
+        assert resp.status_code == 404
+
+    def test_health_detailed_for_admin(self, client, monkeypatch):
+        import redis_utils
+        import routes.pages as pages_module
+
+        monkeypatch.setattr(pages_module, "_require_admin", lambda: True)
+        monkeypatch.setattr(pages_module, "_check_parser_health", lambda: None)
+        monkeypatch.setattr(
+            redis_utils,
+            "get_redis_client",
+            lambda: SimpleNamespace(ping=lambda: True),
+        )
         resp = client.get("/health/detailed")
         data = resp.get_json()
+        assert resp.status_code == 200
         assert data["service"] == "pdf-excel-converter"
         assert "checks" in data
         assert data["checks"]["flask"] == "OK"
@@ -216,6 +231,24 @@ class TestAuthRoutes:
         mock_send.assert_called_once()
         args = mock_send.call_args
         assert args[0][0] == "user@example.com"
+
+    @patch("routes.auth.send_magic_link_email")
+    def test_auth_link_uses_configured_public_origin(self, mock_send, client):
+        with patch.dict(os.environ, {
+            "CANONICAL_BASE_URL": "https://canonical.example",
+            "PUBLIC_BASE_URL": "https://canonical.example",
+        }):
+            with client.session_transaction() as sess:
+                sess["csrf_token"] = "test-token"
+            resp = client.post("/auth/start", data={
+                "email": f"canonical-{uuid.uuid4().hex}@example.com",
+                "csrf_token": "test-token",
+            })
+
+        assert resp.status_code == 302
+        assert mock_send.call_args.args[1].startswith(
+            "https://canonical.example/auth/verify?token="
+        )
 
     def test_auth_verify_missing_token(self, client):
         resp = client.get("/auth/verify")
@@ -421,6 +454,315 @@ class TestProtectedRoutes:
         assert mock_send.call_args.args[0] == "worker.process_pdf"
         assert "worker" not in sys.modules
 
+    def test_convert_rejects_file_over_50_mb_before_parsing(self, client, monkeypatch, tmp_path):
+        import app as app_module
+        import routes.converter as converter_module
+
+        parser_probe = MagicMock(side_effect=AssertionError("page parser must not run"))
+        storage_probe = MagicMock(side_effect=AssertionError("storage must not run"))
+        monkeypatch.setattr(app_module, "UPLOAD_FOLDER", str(tmp_path))
+        monkeypatch.setattr(app_module, "MAX_UPLOAD_MB", 50)
+        monkeypatch.setattr(app_module, "rate_limited", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            converter_module,
+            "_saved_file_size",
+            lambda path: 50 * 1024 * 1024 + 1,
+        )
+        monkeypatch.setattr(converter_module, "get_pdf_page_count", parser_probe)
+        monkeypatch.setattr(converter_module, "get_storage_config", storage_probe)
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post(
+            "/convert",
+            data={
+                "csrf_token": "test-token",
+                "pdf_file": (BytesIO(b"%PDF-1.4\n%%EOF\n"), "oversized.pdf"),
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 413
+        assert resp.get_json()["error_code"] == "FILE_TOO_LARGE"
+        assert resp.get_json()["max_mb"] == 50
+        assert list(tmp_path.iterdir()) == []
+        parser_probe.assert_not_called()
+        storage_probe.assert_not_called()
+
+    def test_convert_does_not_upload_or_enqueue_when_job_insert_fails(
+        self, client, monkeypatch, tmp_path,
+    ):
+        from contextlib import contextmanager
+        import app as app_module
+        import routes.converter as converter_module
+
+        uploaded = []
+        deleted = []
+        send_task = MagicMock()
+
+        @contextmanager
+        def failing_db_session():
+            raise RuntimeError("database unavailable")
+            yield
+
+        monkeypatch.setattr(app_module, "UPLOAD_FOLDER", str(tmp_path))
+        monkeypatch.setattr(app_module, "rate_limited", lambda *args, **kwargs: False)
+        monkeypatch.setattr(converter_module, "get_pdf_page_count", lambda path: 1)
+        monkeypatch.setattr(
+            converter_module,
+            "get_storage_config",
+            lambda: {"bucket": "test"},
+        )
+        monkeypatch.setattr(
+            converter_module,
+            "upload_file",
+            lambda storage, path, key: uploaded.append(key),
+        )
+        monkeypatch.setattr(
+            converter_module,
+            "delete_file",
+            lambda storage, key: deleted.append(key),
+        )
+        monkeypatch.setattr(converter_module, "get_db_session", failing_db_session)
+        monkeypatch.setitem(
+            sys.modules,
+            "celery_config",
+            SimpleNamespace(celery_app=SimpleNamespace(send_task=send_task)),
+        )
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post(
+            "/convert",
+            data={
+                "csrf_token": "test-token",
+                "pdf_file": (BytesIO(b"%PDF-1.4\n%%EOF\n"), "statement.pdf"),
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 503
+        assert resp.get_json()["error_code"] == "CONVERSION_UNAVAILABLE"
+        assert uploaded == []
+        assert deleted == []
+        assert list(tmp_path.iterdir()) == []
+        send_task.assert_not_called()
+
+    def test_enqueue_failure_keeps_s3_key_when_immediate_delete_fails(
+        self, client, monkeypatch, tmp_path,
+    ):
+        import app as app_module
+        import routes.converter as converter_module
+        from db import get_db_session
+        from models import Job
+
+        uploaded = []
+
+        def send_failure(*args, **kwargs):
+            raise RuntimeError("broker unavailable")
+
+        def delete_failure(storage, key):
+            raise RuntimeError("object storage unavailable")
+
+        monkeypatch.setattr(app_module, "UPLOAD_FOLDER", str(tmp_path))
+        monkeypatch.setattr(app_module, "rate_limited", lambda *args, **kwargs: False)
+        monkeypatch.setattr(converter_module, "get_pdf_page_count", lambda path: 1)
+        monkeypatch.setattr(converter_module, "get_storage_config", lambda: {"bucket": "test"})
+        monkeypatch.setattr(
+            converter_module,
+            "upload_file",
+            lambda storage, path, key: uploaded.append(key),
+        )
+        monkeypatch.setattr(converter_module, "delete_file", delete_failure)
+        monkeypatch.setattr(
+            converter_module,
+            "get_redis_client",
+            lambda: SimpleNamespace(delete=lambda *keys: None),
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "celery_config",
+            SimpleNamespace(celery_app=SimpleNamespace(send_task=send_failure)),
+        )
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        resp = client.post(
+            "/convert",
+            data={
+                "csrf_token": "test-token",
+                "pdf_file": (BytesIO(b"%PDF-1.4\n%%EOF\n"), "statement.pdf"),
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 503
+        assert len(uploaded) == 1
+        job_id = uploaded[0].split('/')[1]
+        try:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                assert job.status == "failed"
+                assert job.input_storage_key == uploaded[0]
+                assert job.storage_key == uploaded[0]
+        finally:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+
+    def test_exactly_50_mb_is_within_the_upload_limit(self):
+        from routes.converter import _exceeds_upload_limit
+
+        assert _exceeds_upload_limit(50 * 1024 * 1024, 50) is False
+        assert _exceeds_upload_limit(50 * 1024 * 1024 + 1, 50) is True
+
+    def test_status_reads_json_and_remains_owner_protected(self, client, monkeypatch):
+        import json
+        import app as app_module
+        import routes.converter as converter_module
+        from db import get_db_session, init_db
+        from models import Job
+
+        suffix = uuid.uuid4().hex
+        job_id = f"status-{suffix}"
+        owner_guest_id = f"owner-{suffix}"
+        init_db()
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                guest_id=owner_guest_id,
+                filename="statement.pdf",
+                status="completed",
+                output_storage_key=f"outputs/{job_id}/statement.xlsx",
+            ))
+
+        redis_status = json.dumps({
+            "status": "Completed successfully",
+            "percent": 100,
+            "storage": "s3",
+            "download_key": f"outputs/{job_id}/statement.xlsx",
+        }).encode("utf-8")
+        fake_redis = SimpleNamespace(get=lambda key: redis_status)
+        monkeypatch.setattr(app_module, "rate_limited", lambda *args, **kwargs: False)
+        monkeypatch.setattr(converter_module, "get_redis_client", lambda: fake_redis)
+
+        try:
+            with client.session_transaction() as sess:
+                sess["guest_id"] = owner_guest_id
+            owner_resp = client.get(f"/status/{job_id}")
+            assert owner_resp.status_code == 200
+            assert owner_resp.get_json()["download_url"].endswith(
+                f"/download/{job_id}/statement.xlsx"
+            )
+
+            with client.session_transaction() as sess:
+                sess["guest_id"] = f"other-{suffix}"
+            other_resp = client.get(f"/status/{job_id}")
+            assert other_resp.status_code == 404
+        finally:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+
+    def test_completed_status_falls_back_to_db_when_redis_is_down(self, client, monkeypatch):
+        import app as app_module
+        import routes.converter as converter_module
+        from db import get_db_session, init_db
+        from models import Job
+
+        suffix = uuid.uuid4().hex
+        job_id = f"status-fallback-{suffix}"
+        guest_id = f"guest-{suffix}"
+        output_key = f"outputs/{job_id}/statement.xlsx"
+        init_db()
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                guest_id=guest_id,
+                filename="statement.pdf",
+                status="completed",
+                output_storage_key=output_key,
+            ))
+
+        def redis_down():
+            raise RuntimeError("redis unavailable")
+
+        monkeypatch.setattr(app_module, "RATE_LIMIT_FAIL_CLOSED", True)
+        monkeypatch.setattr(app_module, "get_redis_client", redis_down)
+        monkeypatch.setattr(converter_module, "get_redis_client", redis_down)
+
+        try:
+            with client.session_transaction() as sess:
+                sess["guest_id"] = guest_id
+            resp = client.get(f"/status/{job_id}")
+
+            assert resp.status_code == 200
+            assert resp.get_json()["percent"] == 100
+            assert resp.get_json()["download_url"].endswith(
+                f"/download/{job_id}/statement.xlsx"
+            )
+        finally:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+
+    def test_terminal_db_status_beats_stale_redis_and_supports_legacy_storage(
+        self, client, monkeypatch,
+    ):
+        import json
+        import app as app_module
+        import routes.converter as converter_module
+        from db import get_db_session, init_db
+        from models import Job
+
+        suffix = uuid.uuid4().hex
+        job_id = f"legacy-status-{suffix}"
+        guest_id = f"guest-{suffix}"
+        legacy_key = f"outputs/{job_id}/legacy.xlsx"
+        init_db()
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                guest_id=guest_id,
+                filename="statement.pdf",
+                status="completed",
+                storage_key=legacy_key,
+                transaction_count=12,
+            ))
+
+        stale_status = json.dumps({
+            "status": "Processing page 1",
+            "percent": 10,
+        }).encode("utf-8")
+        fake_redis = SimpleNamespace(get=lambda key: stale_status)
+        monkeypatch.setattr(app_module, "rate_limited", lambda *args, **kwargs: False)
+        monkeypatch.setattr(converter_module, "get_redis_client", lambda: fake_redis)
+
+        try:
+            with client.session_transaction() as sess:
+                sess["guest_id"] = guest_id
+            resp = client.get(f"/status/{job_id}")
+            data = resp.get_json()
+
+            assert resp.status_code == 200
+            assert data["percent"] == 100
+            assert data["confidence"] == "good"
+            assert data["extraction_rows"] == 12
+            assert data["download_url"].endswith(
+                f"/download/{job_id}/legacy.xlsx"
+            )
+        finally:
+            with get_db_session() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    db.delete(job)
+
     def test_download_email_capture_links_guest_job_to_user(self, client):
         from db import get_db_session, init_db
         from models import FunnelEvent, Job, User
@@ -475,19 +817,14 @@ class TestRateLimiting:
     """Test rate limiter behavior when Redis is unavailable."""
 
     @staticmethod
-    def _failing_redis_module():
-        def from_url(*args, **kwargs):
-            raise RuntimeError("redis down")
-
-        return SimpleNamespace(
-            StrictRedis=SimpleNamespace(from_url=from_url)
-        )
+    def _failing_redis_client():
+        raise RuntimeError("redis down")
 
     def test_rate_limit_backend_failure_defaults_open(self, monkeypatch):
         import app as app_module
 
         monkeypatch.setattr(app_module, "RATE_LIMIT_FAIL_CLOSED", False)
-        monkeypatch.setitem(sys.modules, "redis", self._failing_redis_module())
+        monkeypatch.setattr(app_module, "get_redis_client", self._failing_redis_client)
 
         assert app_module.rate_limited("rate:test", 1, 60) is False
 
@@ -495,9 +832,67 @@ class TestRateLimiting:
         import app as app_module
 
         monkeypatch.setattr(app_module, "RATE_LIMIT_FAIL_CLOSED", True)
-        monkeypatch.setitem(sys.modules, "redis", self._failing_redis_module())
+        monkeypatch.setattr(app_module, "get_redis_client", self._failing_redis_client)
 
         assert app_module.rate_limited("rate:test", 1, 60) is True
+
+    def test_rate_limit_increment_and_expiry_are_atomic(self, monkeypatch):
+        import app as app_module
+
+        calls = []
+
+        class FakeRedis:
+            def eval(self, script, key_count, key, window):
+                calls.append((script, key_count, key, window))
+                return 2
+
+        monkeypatch.setattr(app_module, "get_redis_client", lambda: FakeRedis())
+
+        assert app_module.rate_limited("rate:atomic", 1, 60) is True
+        script, key_count, key, window = calls[0]
+        assert "INCR" in script and "TTL" in script and "EXPIRE" in script
+        assert (key_count, key, window) == (1, "rate:atomic", 60)
+
+
+class TestProxyTrust:
+    def test_client_ip_ignores_spoofed_forwarded_for(self):
+        import app as app_module
+
+        with app_module.app.test_request_context(
+            "/",
+            headers={"X-Forwarded-For": "203.0.113.99"},
+            environ_base={"REMOTE_ADDR": "198.51.100.10"},
+        ):
+            assert app_module.get_client_ip() == "198.51.100.10"
+
+    def test_client_ip_uses_valid_railway_real_ip(self):
+        import app as app_module
+
+        with app_module.app.test_request_context(
+            "/",
+            headers={
+                "X-Real-IP": "203.0.113.25",
+                "X-Forwarded-For": "192.0.2.55",
+            },
+            environ_base={"REMOTE_ADDR": "198.51.100.10"},
+        ):
+            assert app_module.get_client_ip() == "203.0.113.25"
+
+    def test_production_rejects_noncanonical_host(self, client, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module, "IS_PRODUCTION", True)
+        monkeypatch.setenv("CANONICAL_BASE_URL", "https://canonical.example")
+
+        resp = client.get("/", headers={"Host": "raw-origin.example"})
+        assert resp.status_code == 421
+        assert client.get("/health", headers={"Host": "raw-origin.example"}).status_code == 200
+
+    def test_www_alias_redirects_to_canonical_host(self, client, monkeypatch):
+        monkeypatch.setenv("CANONICAL_BASE_URL", "https://canonical.example")
+        resp = client.get("/pricing?src=test", headers={"Host": "www.canonical.example"})
+        assert resp.status_code == 308
+        assert resp.headers["Location"] == "https://canonical.example/pricing?src=test"
 
 
 class TestStripeWebhook:
@@ -514,6 +909,65 @@ class TestStripeWebhook:
                 "Stripe-Signature": "bad"
             })
             assert resp.status_code == 400
+
+
+def test_stripe_urls_use_configured_origin_not_request_host(client, monkeypatch):
+    import app as app_module
+    import routes.billing as billing_module
+    from db import get_db_session, init_db
+    from models import User
+
+    email = f"stripe-origin-{uuid.uuid4().hex}@example.com"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=email, stripe_customer_id="cus_origin_test")
+        db.add(user)
+        db.flush()
+        user_id = user.id
+
+    checkout_create = MagicMock(return_value=SimpleNamespace(url="https://checkout.stripe.test"))
+    portal_create = MagicMock(return_value=SimpleNamespace(url="https://portal.stripe.test"))
+    monkeypatch.setattr(billing_module.stripe.checkout.Session, "create", checkout_create)
+    monkeypatch.setattr(billing_module.stripe.billing_portal.Session, "create", portal_create)
+    monkeypatch.setitem(app_module.PLAN_CONFIG["pro"], "stripe_price_id", "price_origin_test")
+
+    attacker_base = "http://attacker.example"
+    try:
+        with patch.dict(os.environ, {
+            "CANONICAL_BASE_URL": "https://canonical.example",
+            "PUBLIC_BASE_URL": "https://canonical.example",
+        }):
+            with client.session_transaction(base_url=attacker_base) as sess:
+                sess["user_id"] = user_id
+                sess["csrf_token"] = "stripe-csrf"
+
+            checkout_resp = client.post(
+                "/checkout/create",
+                base_url=attacker_base,
+                data={"plan_id": "pro", "csrf_token": "stripe-csrf"},
+            )
+            portal_resp = client.post(
+                "/billing/portal",
+                base_url=attacker_base,
+                data={"csrf_token": "stripe-csrf"},
+            )
+
+        assert checkout_resp.status_code == 200
+        checkout_kwargs = checkout_create.call_args.kwargs
+        assert checkout_kwargs["success_url"] == (
+            "https://canonical.example/checkout/success"
+            "?session_id={CHECKOUT_SESSION_ID}"
+        )
+        assert checkout_kwargs["cancel_url"] == "https://canonical.example/pricing"
+        assert portal_resp.status_code == 302
+        assert portal_create.call_args.kwargs["return_url"] == (
+            "https://canonical.example/pricing"
+        )
+    finally:
+        with get_db_session() as db:
+            user = db.get(User, user_id)
+            if user:
+                db.delete(user)
 
 
 def test_blogs_listing_is_excerpt_only(client):
@@ -539,5 +993,58 @@ def test_marketing_pages_skip_socketio(client):
         assert b"socket.io" not in client.get(path).data, path
 
 
-def test_dashboard_still_loads_socketio(client):
-    assert b"socket.io" in client.get("/dashboard").data
+def test_dashboard_does_not_load_socketio(client):
+    assert b"socket.io" not in client.get("/dashboard").data
+
+
+def test_dashboard_advertises_enforced_limit_and_splitter(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert b"Max file size: 50 MB" in resp.data
+    assert b"https://smallpdfsplit.online/" in resp.data
+
+    script = client.get("/static/script.js").data
+    assert b"window.addEventListener('pageshow'" in script
+    assert b"event.persisted && activeJobId" in script
+
+    minified_script = client.get("/static/script.min.js").data
+    assert b"initializeWebSocket" not in minified_script
+    assert b"socket.io" not in minified_script
+    assert b"feedbackCsrfToken" in minified_script
+    assert b"pageshow" in minified_script
+    assert b"Unsupported language" in minified_script
+    assert b"messageSpan.textContent" in minified_script
+
+
+def test_non_ajax_processing_page_handles_terminal_statuses():
+    template = (
+        Path(__file__).parent.parent / "templates" / "processing.html"
+    ).read_text()
+
+    assert "response.status >= 400 && response.status < 500" in template
+    assert "status.startsWith('Unsupported language')" in template
+    assert "data.state === 'unsupported_language'" in template
+    assert "statusFinished = true" in template
+
+
+def test_worker_reserves_remote_output_before_upload_and_checks_db_commit():
+    worker_source = (Path(__file__).parent.parent / "worker.py").read_text()
+
+    first_reservation = worker_source.index('Unable to reserve conversion output storage.')
+    first_output_upload = worker_source.index('upload_file(storage, excel_path, output_storage_key)')
+    assert first_reservation < first_output_upload
+    assert worker_source.count('Unable to persist completed conversion.') == 2
+    assert 'if storage and output_dir and os.path.exists(output_dir):' in worker_source
+
+
+def test_home_does_not_run_retention_cleanup(client, monkeypatch):
+    import app as app_module
+
+    def unexpected_cleanup(*args, **kwargs):
+        raise AssertionError("retention cleanup ran during a page request")
+
+    monkeypatch.setattr(app_module, "cleanup_old_files", unexpected_cleanup)
+    monkeypatch.setattr(app_module, "cleanup_feedback_shared_pdfs", unexpected_cleanup)
+    monkeypatch.setattr(app_module, "cleanup_expired_s3_results", unexpected_cleanup)
+    monkeypatch.setattr(app_module, "cleanup_first_party_analytics", unexpected_cleanup)
+    assert client.get("/").status_code == 200

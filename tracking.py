@@ -37,6 +37,7 @@ BOT_USER_AGENT_KEYWORDS = (
     "petalbot",
     "pingdom",
     "perplexitybot",
+    "siteauditbot",
     "semrushbot",
     "slurp",
     "spider",
@@ -62,7 +63,6 @@ IGNORED_PATH_PREFIXES = (
     "/admin",
     "/auth/verify",
     "/download/",
-    "/socket.io/",
     "/static/",
     "/status/",
 )
@@ -80,7 +80,7 @@ def normalize_visitor_id(raw_value: Optional[str]) -> str:
 def is_probable_bot(user_agent: Optional[str]) -> bool:
     normalized = (user_agent or "").strip().lower()
     if not normalized:
-        return False
+        return True
     return any(keyword in normalized for keyword in BOT_USER_AGENT_KEYWORDS)
 
 
@@ -156,6 +156,34 @@ def record_funnel_event(
             ip=(ip or "")[:128],
             user_agent=(user_agent or "")[:512],
         ))
+
+
+def _enqueue_tracking_task(task_name: str, payload: dict) -> None:
+    """Queue analytics without allowing telemetry to affect the request."""
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context() and current_app.config.get("TESTING"):
+            if task_name == "maintenance.persist_page_view":
+                record_page_view(**payload)
+            else:
+                record_funnel_event(**payload)
+            return
+
+        from celery_config import celery_app
+
+        celery_app.send_task(task_name, kwargs=payload, retry=False)
+    except Exception:
+        # Analytics is deliberately best-effort and must never fail a request.
+        return
+
+
+def enqueue_page_view(**payload) -> None:
+    _enqueue_tracking_task("maintenance.persist_page_view", payload)
+
+
+def enqueue_funnel_event(**payload) -> None:
+    _enqueue_tracking_task("maintenance.persist_funnel_event", payload)
 
 
 def cleanup_tracking_logs(retention_days: int) -> dict:

@@ -44,15 +44,16 @@ python tools/run_accuracy_gates.py --dry-run        # Show configured accuracy g
 ```
 Browser → Flask (app.py) → /convert POST → creates Job in DB → dispatches Celery task
 Celery worker (worker.py) → process_pdf_task → LayoutReplicaParser (default) → Excel (table + Full_Text) → S3 → presigned URL
-Browser polls /status/<job_id> or receives WebSocket updates via Flask-SocketIO
+Browser polls the authenticated /status/<job_id> endpoint for Redis-backed progress
 ```
 
-### Two-Process Model
-The app runs as **two separate processes** sharing Redis + Postgres:
-- **Web** (`app.py`): Flask + Gunicorn threads + simple-websocket — handles HTTP, WebSocket, auth, Stripe webhooks. No OCR models loaded.
+### Service Model
+The app runs as separate services sharing Redis + Postgres:
+- **Web** (`app.py`): Flask + Gunicorn threads — handles HTTP, auth, Stripe webhooks, and status polling. No OCR models loaded.
 - **Worker** (`worker.py`): Celery with `solo` pool — runs PDF extraction. Loads PaddleOCR/ONNX (~2-3 GB RAM). Must use `--pool=solo` because native C++ libs (PaddleOCR, OpenCV, ONNX Runtime) crash with `fork()`.
+- **Scheduler** (`celery beat`): exactly one replica enqueues hourly retention maintenance.
 
-In production (Railway), these are separate services (`SERVICE_ROLE=web` vs `SERVICE_ROLE=worker`) configured in `entrypoint.sh`. Scale by adding worker replicas.
+In production (Railway), these are separate services (`SERVICE_ROLE=web`, `worker`, or `scheduler`) configured in `entrypoint.sh`. Scale by adding worker replicas, never scheduler replicas.
 
 ### Parser Pipeline (`parsers/`)
 
@@ -97,6 +98,6 @@ Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_K
 - Conversion is auth-gated: homepage is marketing-only, converter lives at `/dashboard` (requires login)
 - Auth is magic-link email via Resend SDK (no passwords)
 - Plans: free (5 conversions/month), pro (50), enterprise (unlimited) — managed via Stripe subscriptions
-- Worker communicates progress to web via Redis keys; web pushes to browser via SocketIO
+- Worker communicates progress through expiring Redis JSON keys; the browser polls an ownership-protected HTTP endpoint
 - Output format is the PDF's own table: the bank's header row becomes the Excel header, one row per PDF table row, all values as strings; `Full_Text` sheet carries every visual line. (The standardized 9-column format only exists in the dormant `structured_transactions` mode.)
 - The `tools/` directory contains standalone diagnostic/debugging scripts (not imported by the app)

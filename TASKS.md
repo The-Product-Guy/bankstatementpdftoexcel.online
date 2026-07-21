@@ -74,7 +74,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **`app.py` is 1100+ lines** - Split into Flask Blueprints: `routes/auth.py` (254), `routes/billing.py` (277), `routes/converter.py` (280), `routes/pages.py` (212). `app.py` down to 407 lines (shared config + utilities). All 83 tests pass.
 - [x] **`print()` statements scattered** - Replaced all `print()` with `logger.warning()` in `app.py`.
 - [x] **Health check doesn't verify Redis/Celery** - `/health/detailed` now pings Redis and returns `degraded` (503) if any check fails.
-- [x] **No file cleanup job for expired S3 files** - Added `cleanup_expired_s3_results()` with configurable `S3_RESULT_RETENTION_HOURS` (default 24h). Runs hourly from home route.
+- [x] **No file cleanup job for expired S3 files** - Added scheduled retention cleanup with configurable input, output, feedback, and analytics windows. Runs hourly from the dedicated maintenance scheduler.
 - [x] **Version hardcoded as `1.0.0`** - Now reads from `APP_VERSION` env var (defaults to `dev`).
 
 ### Testing

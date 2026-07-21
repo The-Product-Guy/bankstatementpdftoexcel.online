@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import json
+import shutil
 import tempfile
-import redis
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from celery_config import celery_app
@@ -27,6 +28,7 @@ from parsers.statement_summary import extract_statement_summary_from_pdf
 from parsers.layout_replica_parser import create_layout_replica_parser
 from parsers.universal_parser import create_universal_parser, UnsupportedLanguageError
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
+from redis_utils import get_redis_client
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
 from db import get_db_session, init_db, DATABASE_URL
 from models import FunnelEvent, Job, UsageCounter
@@ -50,9 +52,8 @@ except Exception as e:
 if DATABASE_URL.startswith("sqlite"):
     logger.warning("DATABASE_URL not set; worker is using SQLite. Connect Postgres to this service in Railway.")
 
-# Redis for progress updates (separate from Celery broker if needed, but usually same)
-redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-redis_client = redis.StrictRedis.from_url(redis_url)
+# Redis status keys share a process-wide connection pool.
+redis_client = get_redis_client()
 _PADDLE_WARMUP_AVAILABLE = False
 
 
@@ -208,23 +209,26 @@ def _warmup_ocr_models():
         _PADDLE_WARMUP_AVAILABLE = False
 
 
-# Warm up models only inside the worker service. The web service must be able to
-# enqueue jobs without importing OCR models or paying Paddle startup cost.
-if os.environ.get("SERVICE_ROLE", "").strip().lower() != "web":
+# Warm up models only inside a conversion worker (or an explicit local run).
+# Web and scheduler services must not pay the OCR model startup/memory cost.
+_service_role = os.environ.get("SERVICE_ROLE", "").strip().lower()
+if _service_role in {"", "worker", "local-worker"}:
     _warmup_ocr_models()
 else:
-    logger.info("Skipping OCR model warmup in web service role.")
+    logger.info("Skipping OCR model warmup in %s service role.", _service_role)
 
 def _update_job(job_id, **fields):
     try:
         with get_db_session() as db:
             job = db.get(Job, job_id)
             if not job:
-                return
+                return False
             for key, value in fields.items():
                 setattr(job, key, value)
+        return True
     except Exception as e:
         logger.warning(f"DB job update failed for {job_id}: {e}")
+        return False
 
 def _increment_usage(job_id):
     try:
@@ -285,7 +289,7 @@ def _record_worker_funnel_event(job_id: str, event_type: str, extra: str = "") -
 
 
 def update_progress(job_id, current, total, status_message, percent_override=None, extra=None):
-    """Publish progress update to Redis channel"""
+    """Store an expiring JSON progress snapshot for HTTP polling."""
     try:
         if percent_override is not None:
             percent = max(0, min(100, int(percent_override)))
@@ -304,14 +308,14 @@ def update_progress(job_id, current, total, status_message, percent_override=Non
         if extra:
             message.update(extra)
         
-        # Publish to job-specific channel
-        channel = f"job_progress:{job_id}"
-        redis_client.publish(channel, str(message))
-        # Also set a key for polling fallback
-        redis_client.setex(f"job_status:{job_id}", 3600, str(message))
+        # Keep the legacy repr key for one rolling-deploy window so an older web
+        # replica can still read progress while the JSON-aware release starts.
+        redis_client.setex(f"job_status:{job_id}", 3600, repr(message))
+        redis_client.setex(f"job_status_v2:{job_id}", 3600, json.dumps(message))
         
     except Exception as e:
         logger.error(f"Failed to update progress: {str(e)}")
+
 
 @celery_app.task(bind=True, name='worker.process_pdf')
 def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, quality='standard'):
@@ -332,6 +336,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
     storage = None
     input_storage_key = None
     output_storage_key = None
+    output_dir = None
     retain_input_pdf = False
     try:
         storage = get_storage_config()
@@ -356,7 +361,8 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         if not file_path or not os.path.exists(file_path):
             raise FileNotFoundError(f"PDF file not found: {file_path}")
 
-        _update_job(job_id, status="processing", started_at=datetime.utcnow())
+        if not _update_job(job_id, status="processing", started_at=datetime.utcnow()):
+            raise RuntimeError("Unable to persist conversion state.")
 
         # Define progress callback wrapper
         def progress_callback(data):
@@ -465,6 +471,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             quality_report = parser.get_quality_report() if hasattr(parser, "get_quality_report") else {}
             has_data = bool(ext_meta and ext_meta.has_data)
             result_extra = {
+                "state": "completed" if has_data else "completed_no_data",
                 "quality_used": quality,
                 "execution_preset": execution_preset,
                 "extraction_mode": "layout_replica",
@@ -506,10 +513,25 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
 
             if storage:
                 output_storage_key = f"outputs/{job_id}/{excel_filename}"
+                if not _update_job(
+                    job_id,
+                    output_storage_key=output_storage_key,
+                    storage_key=output_storage_key,
+                ):
+                    raise RuntimeError("Unable to reserve conversion output storage.")
                 upload_file(storage, excel_path, output_storage_key)
                 result_extra["storage"] = "s3"
                 result_extra["download_key"] = output_storage_key
 
+            if not _update_job(
+                job_id,
+                status="completed" if has_data else "completed_no_data",
+                finished_at=datetime.utcnow(),
+                output_storage_key=output_storage_key,
+                storage_key=output_storage_key,
+                transaction_count=quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
+            ):
+                raise RuntimeError("Unable to persist completed conversion.")
             update_progress(
                 job_id,
                 100,
@@ -517,14 +539,6 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 status_msg,
                 percent_override=100,
                 extra=result_extra,
-            )
-            _update_job(
-                job_id,
-                status="completed" if has_data else "completed_no_data",
-                finished_at=datetime.utcnow(),
-                output_storage_key=output_storage_key,
-                storage_key=output_storage_key,
-                transaction_count=quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
             )
             _increment_usage(job_id)
             _record_worker_funnel_event(job_id, 'conversion_completed', extra=status_msg)
@@ -877,6 +891,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         # --- Build extraction metadata for frontend ---
         ext_meta = getattr(parser, "extraction_metadata", None)
         result_extra = {
+            "state": "completed" if has_data else "completed_no_data",
             "quality_used": quality,
             "execution_preset": execution_preset,
             "runtime_use_paddleocr": runtime_use_paddleocr,
@@ -939,31 +954,31 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         else:
             status_msg = "Completed successfully"
 
-        # Upload and update progress
+        # Upload the result, commit the completed job, then expose 100% progress.
         if storage:
             output_storage_key = f"outputs/{job_id}/{excel_filename}"
+            if not _update_job(
+                job_id,
+                output_storage_key=output_storage_key,
+                storage_key=output_storage_key,
+            ):
+                raise RuntimeError("Unable to reserve conversion output storage.")
             upload_file(storage, excel_path, output_storage_key)
             result_extra["storage"] = "s3"
             result_extra["download_key"] = output_storage_key
-            update_progress(
-                job_id, 100, 100, status_msg,
-                percent_override=100,
-                extra=result_extra
-            )
-        else:
-            update_progress(
-                job_id, 100, 100, status_msg,
-                percent_override=100,
-                extra=result_extra
-            )
-        
-        _update_job(
+        if not _update_job(
             job_id,
             status="completed" if has_data else "completed_no_data",
             finished_at=datetime.utcnow(),
             output_storage_key=output_storage_key,
             storage_key=output_storage_key,
             transaction_count=len(transactions)
+        ):
+            raise RuntimeError("Unable to persist completed conversion.")
+        update_progress(
+            job_id, 100, 100, status_msg,
+            percent_override=100,
+            extra=result_extra
         )
         _increment_usage(job_id)
         _record_worker_funnel_event(job_id, 'conversion_completed', extra=status_msg)
@@ -987,11 +1002,17 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         logger.error(f"Job {job_id} failed: {str(e)}")
         if isinstance(e, UnsupportedLanguageError):
             _update_job(job_id, status="unsupported_language", finished_at=datetime.utcnow(), error=str(e))
-            update_progress(job_id, 0, 0, f"Unsupported language: {str(e)}")
+            update_progress(
+                job_id, 0, 0, f"Unsupported language: {str(e)}",
+                extra={"state": "unsupported_language"},
+            )
             _record_worker_funnel_event(job_id, 'conversion_failed', extra=f"unsupported_language: {str(e)}")
         else:
             _update_job(job_id, status="failed", finished_at=datetime.utcnow(), error=str(e))
-            update_progress(job_id, 0, 0, f"Error: {str(e)}")
+            update_progress(
+                job_id, 0, 0, "Error: Conversion failed. Please try again.",
+                extra={"state": "failed"},
+            )
             _record_worker_funnel_event(job_id, 'conversion_failed', extra=str(e))
         return {
             'status': 'error',
@@ -999,6 +1020,11 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             'error': str(e)
         }
     finally:
+        if storage and output_dir and os.path.exists(output_dir):
+            try:
+                shutil.rmtree(output_dir)
+            except Exception as exc:
+                logger.warning("Failed to remove local output directory %s: %s", output_dir, exc)
         if local_input_path and os.path.exists(local_input_path):
             try:
                 os.remove(local_input_path)

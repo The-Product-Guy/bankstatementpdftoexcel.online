@@ -16,7 +16,7 @@ The Universal Bank Statement Converter transforms PDF bank statements into struc
 1.  **Open the Application**: Navigate to the web interface (e.g., `https://your-app.railway.app`).
 2.  **Select Bank**: Choose "Universal (Any Bank)" for best results.
 3.  **Upload PDF**: Click "Choose File" and select your PDF bank statement.
-    *   *Note: Max file size is 20MB.*
+    *   *Note: Max file size is 50 MB. Larger PDFs can be divided with the linked file splitter.*
 4.  **API Key (Optional)**: If you possess your own OpenAI API Key, you may enter it to bypass shared limits.
 5.  **Convert**: Click the "Convert to Excel" button.
 6.  **Wait for Processing**:
@@ -28,13 +28,13 @@ The Universal Bank Statement Converter transforms PDF bank statements into struc
 ## Troubleshooting
 
 *   **Stuck at 0%?**: Refresh the page and try again. Ensure your internet connection is stable.
-*   **"Error: File too large"**: Please split your PDF into smaller chunks (e.g., < 50 pages) using a PDF splitter.
+*   **"Error: File too large"**: Please use the linked splitter so each PDF is no more than 50 MB and 250 pages.
 *   **Missing Transactions**: Use the "Report Issue" link (if configured) or ensure the PDF is legible.
 
 ## Privacy & Security
 
 *   uploaded files are **encrypted** in transit.
-*   Files are **deleted** from the server immediately after processing.
+*   Source files and generated workbooks are retained only for the configured download/feedback window, then deleted automatically.
 *   No human reviews your financial data.
 
 ---

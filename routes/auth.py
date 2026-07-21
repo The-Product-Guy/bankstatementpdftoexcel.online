@@ -7,6 +7,7 @@ from flask import Blueprint, flash, jsonify, redirect, render_template, request,
 
 from db import get_db_session
 from models import AuthToken, Job, LoginEvent, User, UsageCounter
+from site_urls import public_base_url
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -14,9 +15,9 @@ auth_bp = Blueprint('auth', __name__)
 def _record_auth_funnel_event(event_type: str, email: str = "", extra: str = "") -> None:
     try:
         from app import get_client_ip
-        from tracking import record_funnel_event
+        from tracking import enqueue_funnel_event
 
-        record_funnel_event(
+        enqueue_funnel_event(
             event_type=event_type,
             visitor_id=request.cookies.get('sf_visitor_id'),
             user_id=session.get('user_id'),
@@ -177,7 +178,7 @@ def auth_start():
                 user_agent=request.headers.get('User-Agent', '')[:512],
             ))
 
-        link = url_for('auth.auth_verify', token=token, _external=True)
+        link = f"{public_base_url()}{url_for('auth.auth_verify', token=token)}"
         send_magic_link_email(email, link)
         _record_auth_funnel_event('magic_link_sent', email=email)
 

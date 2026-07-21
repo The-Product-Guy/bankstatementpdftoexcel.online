@@ -3,6 +3,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,8 +14,9 @@ os.environ.setdefault("DISABLE_QUOTAS", "true")
 def test_should_track_page_view_filters_non_content_routes():
     from tracking import is_probable_bot, should_track_page_view
 
-    assert should_track_page_view("/", "GET", 200, "text/html") is True
-    assert should_track_page_view("/pricing", "GET", 200, "text/html") is True
+    human_agent = "Mozilla/5.0 AppleWebKit/537.36"
+    assert should_track_page_view("/", "GET", 200, "text/html", human_agent) is True
+    assert should_track_page_view("/pricing", "GET", 200, "text/html", human_agent) is True
     assert should_track_page_view("/", "GET", 200, "text/html", "Googlebot/2.1") is False
     assert should_track_page_view("/static/styles.css", "GET", 200, "text/css") is False
     assert should_track_page_view("/auth/verify", "GET", 302, "text/html") is False
@@ -23,6 +25,8 @@ def test_should_track_page_view_filters_non_content_routes():
     assert should_track_page_view("/", "GET", 404, "text/html") is False
     assert is_probable_bot("Mozilla/5.0 AppleWebKit/537.36") is False
     assert is_probable_bot("Mozilla/5.0 (compatible; Googlebot/2.1)") is True
+    assert is_probable_bot("SiteAuditBot/1.0") is True
+    assert is_probable_bot("") is True
 
 
 def test_public_page_sets_visitor_cookie():
@@ -51,6 +55,43 @@ def test_bot_page_view_does_not_set_visitor_cookie():
     cookies = resp.headers.getlist("Set-Cookie")
     assert resp.status_code == 200
     assert not any(cookie.startswith(f"{VISITOR_COOKIE}=") for cookie in cookies)
+
+
+def test_tracking_enqueue_is_fail_open_and_disables_publish_retry(monkeypatch):
+    from tracking import enqueue_page_view
+
+    calls = []
+
+    def send_task(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "celery_config",
+        SimpleNamespace(celery_app=SimpleNamespace(send_task=send_task)),
+    )
+
+    enqueue_page_view(
+        visitor_id=str(uuid.uuid4()),
+        user_id=None,
+        path="/pricing",
+        referrer="",
+        ip="127.0.0.1",
+        user_agent="Mozilla/5.0",
+    )
+
+    assert calls[0][0][0] == "maintenance.persist_page_view"
+    assert calls[0][1]["retry"] is False
+
+
+def test_retention_sweep_is_scheduled_hourly():
+    config_source = (Path(__file__).parent.parent / "celery_config.py").read_text()
+
+    assert "'hourly-retention-sweep'" in config_source
+    assert "'task': 'maintenance.run_retention_sweep'" in config_source
+    assert "'schedule': 3600.0" in config_source
+    assert "'options': {'queue': 'maintenance'}" in config_source
 
 
 def test_auth_verify_logs_successful_login():

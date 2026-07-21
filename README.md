@@ -104,7 +104,8 @@ This script will:
 
    **Terminal 2 (Celery Worker):**
    ```bash
-   celery -A celery_config.celery_app worker --loglevel=info
+   SERVICE_ROLE=local-worker celery -A celery_config.celery_app worker \
+     --loglevel=info --pool=solo --queues=conversion,maintenance,celery --beat
    ```
 
    **Terminal 3 (Flask App):**
@@ -129,8 +130,9 @@ This script will:
    - Connect your GitHub repository at [railway.app](https://railway.app)
    - Railway auto-detects all configurations
    - Set `SECRET_KEY=your-production-secret-key`
-   - Set `PUBLIC_BASE_URL=https://your-domain.com` for canonical sitemap URLs and production SocketIO CORS defaults
-   - Deploy automatically with zero configuration
+   - Set `PUBLIC_BASE_URL=https://your-domain.com` for canonical URLs and trusted production host validation
+   - Create web (`SERVICE_ROLE=web`), worker (`SERVICE_ROLE=worker`), and one scheduler (`SERVICE_ROLE=scheduler`) services
+   - Give all three services the same Postgres, Redis, storage, and application configuration
 
 3. **Production Features**
    - ✅ Automatic HTTPS
@@ -168,19 +170,20 @@ Delete whatever you don't need from `Full_Text`; the table sheet stays clean for
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
 | `SECRET_KEY` | Yes in production | Flask session security. Required when `APP_ENV=production`, `FLASK_ENV=production`, or Railway runtime vars are present. | Local dev fallback |
-| `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on both web and worker services so users, jobs, analytics, and feedback share one durable store. | `sqlite:///local.db` locally |
+| `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on web, worker, and scheduler services so users, jobs, analytics, feedback, and retention share one durable store. | `sqlite:///local.db` locally |
 | `APP_ENV` / `FLASK_ENV` | No | Set either to `production` to enable strict production defaults. | - |
 | `PORT` | No | Application port | `5001` |
-| `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Recommended in production | Public site origin for sitemap URLs and production SocketIO CORS defaults. | Request host |
-| `SOCKETIO_CORS_ORIGINS` / `ALLOWED_ORIGINS` | No | Comma-separated SocketIO origins. Overrides the public base URL default. | Public base in production, `*` locally |
-| `SOCKETIO_ASYNC_MODE` | No | Flask-SocketIO runtime mode. Keep `threading` unless a different deployment runtime is intentionally configured. | `threading` |
+| `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Yes in production | Canonical public origin used for crawler URLs, emailed links, Stripe redirects, and host validation. | Request host locally |
+| `SERVICE_ROLE` | Yes per Railway service | `web`, `worker`, or `scheduler`. Run exactly one scheduler replica. | `web` |
 | `WEB_THREADS` | No | Gunicorn thread count for the web service entrypoint. | `20` |
 | `SESSION_COOKIE_SECURE` | No | Enables secure session cookies. | `true` in production, `false` locally |
-| `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. Leave off for availability-first behavior. | `false` |
-| `MAX_UPLOAD_MB` | No | Upload size limit for guest/default conversions. Plan-specific limits may be higher. | `20` |
+| `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. | `true` in production, `false` locally |
+| `MAX_UPLOAD_MB` | No | PDF upload cap for every plan; values above the public cap are clamped. | `50` |
+| `FILE_SPLITTER_URL` | No | Splitter link shown when a PDF exceeds the file-size or page limit. | `https://smallpdfsplit.online/` |
 | `MAX_PAGES` | No | Maximum PDF pages processed per conversion. | `250` |
 | `RESULT_RETENTION_HOURS` | No | Retention window for generated outputs in object storage. | `24` |
 | `LOCAL_RESULT_RETENTION_HOURS` | No | Retention window for locally stored generated outputs. | `RESULT_RETENTION_HOURS` |
+| `ACTIVE_UPLOAD_GRACE_HOURS` | No | Maximum age for protecting queued/processing local inputs from cleanup. | `24` |
 | `FEEDBACK_RETENTION_DAYS` | No | Retention window for feedback submissions and copied source/output files. | `30` |
 | `FIRST_PARTY_ANALYTICS_RETENTION_DAYS` | No | Retention window for internal page-view and login-event logs shown in the admin portal. | `180` |
 | `FIRST_PARTY_ANALYTICS_SWEEP_MINS` | No | Minimum interval between analytics cleanup sweeps. | `1440` |
@@ -193,7 +196,7 @@ Delete whatever you don't need from `Full_Text`; the table sheet stays clean for
 
 ### File Limits
 
-- **Maximum file size**: 20MB by default; paid plans allow larger uploads up to the enterprise cap
+- **Maximum file size**: 50 MB for every plan. Larger PDFs are directed to the file splitter.
 - **Supported formats**: PDF only
 - **Processing timeout**: 5 minutes
 - **Concurrent uploads**: Handled automatically
@@ -246,7 +249,7 @@ PDF → Images → OCR → Text → Regex Parsing → Transactions
 - **Method**: Tesseract OCR at 150 DPI
 - **Format**: Pipe-delimited (`|`) transaction lines
 - **Pattern**: `DD/MM/YY | Description | Reference | Amounts`
-- **Performance**: ~1-2 minutes for 100MB files
+- **Performance**: Processing time varies with page count, scan quality, and OCR mode
 
 ### ICICI Bank (Text-based PDFs)
 ```
@@ -264,7 +267,7 @@ PDF → Text Extraction → Pattern Matching → Transactions
 | Issue | Cause | Solution |
 |-------|--------|----------|
 | "No transactions found" | Unsupported PDF format | Try different bank selection |
-| "File too large" | >100MB file | Split PDF or compress |
+| "File too large" | File exceeds 50 MB | Use the linked PDF splitter, then upload each part |
 | OCR errors | Poor image quality | Use higher quality PDF |
 | Missing dependencies | System packages not installed | Install Tesseract/Poppler |
 

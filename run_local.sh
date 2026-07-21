@@ -91,7 +91,9 @@ trap cleanup SIGINT SIGTERM
 echo -e "\n${BLUE}👷 Starting Celery worker in background...${NC}"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES # Fix for macOS forking safety issues
 # Use solo pool to avoid fork() SIGSEGV with PaddleOCR/OpenCV native libraries
-celery -A celery_config.celery_app worker --loglevel=info --pool=solo &
+env SERVICE_ROLE=local-worker celery -A celery_config.celery_app worker --loglevel=info --pool=solo \
+    --queues=conversion,maintenance,celery --beat \
+    --schedule=/tmp/statement-converter-celerybeat-schedule &
 CELERY_PID=$!
 
 # Give worker a moment to start
@@ -111,4 +113,3 @@ echo -e "${GREEN}🌐 Open http://localhost:5001 in your browser${NC}\n"
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}\n"
 
 python app.py
-
