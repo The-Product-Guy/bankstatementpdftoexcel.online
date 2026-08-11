@@ -1,12 +1,12 @@
 # StatementFlow - Pending Tasks
 
-Last updated: 2026-07-03
+Last updated: 2026-08-11
 
 ---
 
 ## 2026-07-03 — Exact-Copy Fidelity Round (PR #1)
 
-Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/columns, nothing silently dropped, users delete unwanted content themselves). Spec: `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`. PR: https://github.com/The-Product-Guy/bankstatementpdftoexcel.online/pull/1 (merge = Railway deploy).
+Product direction locked: **preserve before interpreting**. `Exact_Copy` contains every successfully extracted word in visual row order and approximate page geometry; `Table_Data` is a best-effort convenience view that must not truncate rows when schemas change. Users clean the workbook themselves and verify scanned/OCR output against the PDF. Historical design spec: `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`.
 
 ### Shipped
 
@@ -90,7 +90,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [ ] **Multi-file upload / batch processing** - Upload and convert multiple PDFs at once.
 - [ ] **Conversion history retention** - Let users re-download past conversions (currently files deleted after download).
 - [ ] **Password-protected PDF support** - Common for bank statements; currently these fail silently.
-- [ ] **Non-English statement support** - Currently gated by `ENGLISH_ONLY_BETA` flag.
+- [ ] **Non-English statement validation** - The public geometry-first path no longer rejects non-English files, but OCR scripts and representative fixtures still need explicit coverage.
 - [ ] **Rate limiting feedback to user** - When rate limited, show remaining cooldown time.
 - [ ] **Admin dashboard improvements** - Currently minimal (job count + recent jobs). Could show conversion success rate, error breakdown, revenue metrics.
 - [ ] **Run full 128-page HDFC benchmark on Railway** - Record production baseline on real hardware.

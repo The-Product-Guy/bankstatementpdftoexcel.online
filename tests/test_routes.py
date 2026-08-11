@@ -441,7 +441,7 @@ class TestProtectedRoutes:
                 "csrf_token": "test-token",
                 "pdf_file": (pdf_buffer, "statement.pdf"),
                 "quality": "standard",
-                "extraction_mode": "layout_replica",
+                "extraction_mode": "structured_transactions",
             },
             headers={"X-Requested-With": "XMLHttpRequest"},
             content_type="multipart/form-data",
@@ -452,6 +452,8 @@ class TestProtectedRoutes:
         assert data["task_id"] == task_id
         mock_send.assert_called_once()
         assert mock_send.call_args.args[0] == "worker.process_pdf"
+        file_ref = mock_send.call_args.kwargs["args"][0]
+        assert file_ref["extraction_mode"] == "layout_replica"
         assert "worker" not in sys.modules
 
     def test_convert_rejects_file_over_50_mb_before_parsing(self, client, monkeypatch, tmp_path):
@@ -702,8 +704,13 @@ class TestProtectedRoutes:
             resp = client.get(f"/status/{job_id}")
 
             assert resp.status_code == 200
-            assert resp.get_json()["percent"] == 100
-            assert resp.get_json()["download_url"].endswith(
+            data = resp.get_json()
+            assert data["percent"] == 100
+            assert data["confidence"] == "unknown"
+            assert data["review_required"] is True
+            assert data["extraction_rows"] == 0
+            assert data["table_row_count"] == 0
+            assert data["download_url"].endswith(
                 f"/download/{job_id}/statement.xlsx"
             )
         finally:
@@ -752,8 +759,11 @@ class TestProtectedRoutes:
 
             assert resp.status_code == 200
             assert data["percent"] == 100
-            assert data["confidence"] == "good"
-            assert data["extraction_rows"] == 12
+            assert data["status"] == "Completed - workbook ready for review"
+            assert data["confidence"] == "unknown"
+            assert data["review_required"] is True
+            assert data["extraction_rows"] == 0
+            assert data["table_row_count"] == 12
             assert data["download_url"].endswith(
                 f"/download/{job_id}/legacy.xlsx"
             )
@@ -1002,6 +1012,12 @@ def test_dashboard_advertises_enforced_limit_and_splitter(client):
     assert resp.status_code == 200
     assert b"Max file size: 50 MB" in resp.data
     assert b"https://smallpdfsplit.online/" in resp.data
+    assert b"Beta:" not in resp.data
+    assert b"active testing" not in resp.data
+    assert b"Current beta scope" not in resp.data
+    assert b"designed to preserve its visual rows and column positions" in resp.data
+    assert b"Leave this unchecked to delete the source PDF after processing" in resp.data
+    assert b"Reconstructing rows and columns" in resp.data
 
     script = client.get("/static/script.js").data
     assert b"window.addEventListener('pageshow'" in script
@@ -1013,7 +1029,14 @@ def test_dashboard_advertises_enforced_limit_and_splitter(client):
     assert b"feedbackCsrfToken" in minified_script
     assert b"pageshow" in minified_script
     assert b"Unsupported language" in minified_script
-    assert b"messageSpan.textContent" in minified_script
+    assert b"review_required" in minified_script
+    # Terser may rename local variables; assert the stable XSS-safe assignment.
+    assert b"textContent=String(" in minified_script
+
+    script_source = script.decode("utf-8")
+    assert "confidence === 'good' && !reviewRequired" in script_source
+    assert "confidence === 'low' || reviewRequired" in script_source
+    assert "confidence === 'low' || data.review_required" in script_source
 
 
 def test_non_ajax_processing_page_handles_terminal_statuses():

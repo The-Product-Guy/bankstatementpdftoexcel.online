@@ -608,25 +608,32 @@ function showResultBanner(data, jobId) {
 
     if (!banner) return;
 
-    const confidence = data.confidence || 'good';
+    const confidence = data.confidence || 'unknown';
+    const reviewRequired = Boolean(data.review_required);
     const rows = data.extraction_rows || 0;
     const cols = data.extraction_cols || 0;
+    const sourceRows = data.source_line_count || rows;
+    const tableRows = data.table_row_count || 0;
+    const tableCols = data.table_column_count || 0;
     const qualityUsed = data.quality_used || 'standard';
     const qualityMsg = data.quality_message || '';
     const docHint = data.document_hint || 'statement';
+    const reconstructionMeta = sourceRows > 0
+        ? `${sourceRows} extracted visual rows written${tableRows > 0 ? ` \u00b7 ${tableRows} table rows detected${tableCols > 0 ? ` across ${tableCols} columns` : ''}` : ''}`
+        : (tableRows > 0
+            ? `${tableRows} table rows detected${tableCols > 0 ? ` across ${tableCols} columns` : ''}`
+            : (rows > 0 ? `${rows} rows \u00d7 ${cols} columns reconstructed` : 'Workbook generated'));
 
     banner.className = 'result-banner';
     actions.innerHTML = '';
     meta.textContent = '';
 
-    if (confidence === 'good') {
+    if (confidence === 'good' && !reviewRequired) {
         banner.classList.add('success');
         icon.innerHTML = ICONS.checkCircle;
         title.textContent = 'Conversion Complete';
-        message.textContent = 'Your file has been downloaded successfully. Was the Excel output accurate?';
-        meta.textContent = rows > 0
-            ? `${rows} rows \u00d7 ${cols} columns extracted`
-            : 'Workbook generated';
+        message.textContent = 'Your workbook is ready. Do its rows and columns match the PDF?';
+        meta.textContent = reconstructionMeta;
 
         const successBtn = document.createElement('button');
         successBtn.className = 'btn-feedback';
@@ -640,12 +647,12 @@ function showResultBanner(data, jobId) {
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
 
-    } else if (confidence === 'low') {
+    } else if (confidence === 'low' || reviewRequired) {
         banner.classList.add('warning');
         icon.innerHTML = ICONS.warning;
-        title.textContent = 'Partial Extraction';
-        message.textContent = qualityMsg || 'Some data may be missing or incomplete.';
-        meta.textContent = `${rows} rows extracted \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
+        title.textContent = 'Workbook Ready \u2014 Review Recommended';
+        message.textContent = qualityMsg || 'The extracted rows or columns need comparison with the PDF.';
+        meta.textContent = `${reconstructionMeta} \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
 
         if (qualityUsed === 'standard') {
             const retryBtn = document.createElement('button');
@@ -661,7 +668,7 @@ function showResultBanner(data, jobId) {
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
 
-    } else {
+    } else if (confidence === 'empty') {
         banner.classList.add('error');
         icon.innerHTML = ICONS.error;
 
@@ -686,11 +693,23 @@ function showResultBanner(data, jobId) {
         fbBtn.textContent = 'Submit feedback';
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
+    } else {
+        banner.classList.add('warning');
+        icon.innerHTML = ICONS.warning;
+        title.textContent = 'Workbook Ready \u2014 Please Review';
+        message.textContent = qualityMsg || 'Compare the workbook rows and columns with the source PDF before using it.';
+        meta.textContent = reconstructionMeta;
+
+        const fbBtn = document.createElement('button');
+        fbBtn.className = 'btn-feedback';
+        fbBtn.textContent = 'Report a mismatch';
+        fbBtn.onclick = () => openFeedbackModal(jobId, data);
+        actions.appendChild(fbBtn);
     }
 
     banner.style.display = 'block';
 
-    if (confidence === 'good') {
+    if (confidence === 'good' && !reviewRequired) {
         setTimeout(() => { banner.style.display = 'none'; }, 45000);
     }
 }
@@ -800,8 +819,8 @@ function openFeedbackModal(jobId, data) {
     const confidence = data.confidence || '';
     if (confidence === 'empty') {
         typeSelect.value = 'empty_result';
-    } else if (confidence === 'low') {
-        typeSelect.value = 'incorrect_data';
+    } else if (confidence === 'low' || data.review_required) {
+        typeSelect.value = 'column_mismatch';
     }
 
     modal.style.display = 'flex';

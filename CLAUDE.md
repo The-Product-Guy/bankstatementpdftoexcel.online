@@ -50,22 +50,22 @@ Browser polls the authenticated /status/<job_id> endpoint for Redis-backed progr
 ### Service Model
 The app runs as separate services sharing Redis + Postgres:
 - **Web** (`app.py`): Flask + Gunicorn threads — handles HTTP, auth, Stripe webhooks, and status polling. No OCR models loaded.
-- **Worker** (`worker.py`): Celery with `solo` pool — runs PDF extraction. Loads PaddleOCR/ONNX (~2-3 GB RAM). Must use `--pool=solo` because native C++ libs (PaddleOCR, OpenCV, ONNX Runtime) crash with `fork()`.
+- **Worker** (`worker.py`): Celery with `solo` pool — runs PDF extraction. Loads RapidOCR/ONNX for scanned pages and falls back to Tesseract. Use `--pool=solo` because native OpenCV/ONNX libraries are unsafe to initialise across forks.
 - **Scheduler** (`celery beat`): exactly one replica enqueues hourly retention maintenance.
 
 In production (Railway), these are separate services (`SERVICE_ROLE=web`, `worker`, or `scheduler`) configured in `entrypoint.sh`. Scale by adding worker replicas, never scheduler replicas.
 
 ### Parser Pipeline (`parsers/`)
 
-**Product direction (2026-07): the Excel output is an exact copy of the PDF** — the bank's own rows and columns, nothing silently dropped. Users delete unwanted content themselves. No normalization.
+**Product direction (2026-08): preserve before interpreting.** `Exact_Copy` writes every successfully extracted word in visual row order with approximate page geometry. `Table_Data` is a best-effort convenience view and must never silently truncate an earlier row when a later schema changes. Users clean the workbook themselves and verify OCR output against the PDF.
 
 **Default mode — `layout_replica`** (`layout_replica_parser.py`, see `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`):
-1. Extract words with coordinates (pdfplumber for text PDFs; PaddleOCR for scans, multi-token OCR boxes split proportionally per token)
-2. Group words into visual lines; detect the bank's header row; derive column x-ranges (header-detected columns always outrank positional inference)
-3. One Excel row per PDF table row — wrapped continuation lines merge into their parent row's cells
-4. Workbook = `sheet1` (the table, bank's own headers) + `Full_Text` (every visual line of every page — the no-loss invariant: every extracted line appears in the workbook at least once)
+1. Extract words with coordinates (pdfplumber for text PDFs; RapidOCR/ONNX for scans with Tesseract fallback). Sparse text layers are supplemented with OCR instead of suppressing the visible page.
+2. Group words into visual lines; detect table headers and geometry; carry a stable schema across continuation pages and isolate materially different schemas.
+3. Build a best-effort table view without normalising values. Wrapped OCR fragments may merge into their parent row, but source visual lines remain separate in the fidelity sheets.
+4. Workbook = `Exact_Copy` first (all successfully extracted words in visual order/approximate geometry), one or more `Table_Data` sheets, and `Full_Text` (every extracted visual line).
 
-**Dormant mode — `structured_transactions`** (`universal_parser.py`, env-var only, no UI): the old normalize-to-9-columns cascade (bank profiles → template detection via Claude Haiku → img2table+PaddleOCR → LLM fallback). Produced unusable output on scanned statements; kept for reference, do not extend. img2table was also evaluated as a replica engine and rejected on evidence (missed pages, split wraps, column misassignment).
+**Dormant mode — `structured_transactions`** (`universal_parser.py`, internal only, no public route): the old normalize-to-9-columns cascade (bank profiles → template detection → optional img2table/PaddleOCR → LLM fallback). It produced unusable output on scanned statements and is kept only for reference; do not extend it. Its optional heavy dependencies are not installed by the public production image.
 
 For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks processed independently then merged (structured mode only).
 
@@ -75,7 +75,7 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
   - `routes/billing.py`: Stripe checkout, webhooks, billing portal
   - `routes/converter.py`: `/dashboard` (auth-gated converter UI), PDF upload, status polling, download, feedback
   - `routes/pages.py`: public pages, SEO (sitemap/robots), health checks, admin
-- `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs the layout replica parser, uploads the workbook (table sheet + `Full_Text`)
+- `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs the layout replica parser, uploads the workbook, and removes non-retained inputs
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
 - `db.py`: Engine/session management. Falls back to `sqlite:///local.db` when `DATABASE_URL` is unset
 - `site_urls.py`: Public base URL for canonical/og/sitemap/robots URLs — normalizes `CANONICAL_BASE_URL`/`PUBLIC_BASE_URL` to an absolute `https://` origin (scheme-less env values once broke all crawler-facing URLs; see Semrush section in `docs/Launch-SEO-Readiness.md`)
@@ -84,9 +84,9 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
 
 ### Execution Presets
 Configured via `EXECUTION_PRESET` env var (defined in `universal_parser.py`):
-- `local-low-mem`: No OCR, no LLM — for local dev on low-memory machines
-- `prod-balanced`: PaddleOCR + img2table at 150 DPI (default in production)
-- `prod-high-accuracy`: 200 DPI for poor quality scans
+- `local-low-mem`: conservative optional integrations for local development
+- `prod-balanced`: 150 DPI layout extraction with RapidOCR/ONNX available for scans
+- `prod-high-accuracy`: 200 DPI retry for poor-quality scans
 
 ### Environment
 Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `DATABASE_URL`, `SECRET_KEY`. For local dev without cloud services, the app falls back to SQLite and local file storage. Production also needs `CANONICAL_BASE_URL=https://multistatementpdftoexcel.online` (absolute, with scheme) — it drives every crawler-facing URL. The live domain is Cloudflare-proxied; Cloudflare's managed robots.txt prepends AI-bot blocks the app cannot override.

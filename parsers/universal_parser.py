@@ -154,7 +154,7 @@ class ProcessingConfig:
     
     # Extraction Tuning
     min_table_transactions: Optional[int] = _env_int('MIN_TABLE_TRANSACTIONS', 5)
-    english_only_beta: bool = _env_bool('ENGLISH_ONLY_BETA', True)
+    english_only_beta: bool = _env_bool('ENGLISH_ONLY_BETA', False)
     row_confidence_threshold: float = _env_float('ROW_CONFIDENCE_THRESHOLD', 0.65)
     low_conf_ratio_for_fallback: float = _env_float('LOW_CONF_RATIO_FOR_FALLBACK', 0.20)
     use_template: bool = _env_bool('USE_TEMPLATE', True)

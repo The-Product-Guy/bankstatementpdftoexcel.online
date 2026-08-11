@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Convert Any Bank's Statement to Excel - Statement Converter{% endblock %}
+{% block title %}Bank Statement PDF to Excel Guides - Statement Converter{% endblock %}
 
 {% block meta_description %}Convert bank statement PDFs to Excel — Chase, Bank of America, Barclays, HSBC, ING, Deutsche Bank and more. The converter reads your PDF's own layout.{% endblock %}
 
@@ -10,7 +10,7 @@
 <main>
     <header class="pricing-intro page">
         <p class="eyebrow">Conversion guides</p>
-        <h1 class="display">Convert any bank's<br>statement to Excel.</h1>
+        <h1 class="display">Convert bank statements<br>from PDF to Excel.</h1>
         <p class="muted">The converter reads your PDF's own layout, so it doesn't need to know your bank. These are the statement formats people ask about most.</p>
     </header>
 
@@ -26,8 +26,8 @@
     </div>
 
     <section class="cta-band" aria-labelledby="indexCtaTitle">
-        <h2 id="indexCtaTitle" class="display cta-title">Don't see your bank?<br>It almost certainly still works.</h2>
-        <p class="cta-sub">Layout detection is universal — upload any tabular statement and check the result yourself. 1 free conversion, no sign-up.</p>
+        <h2 id="indexCtaTitle" class="display cta-title">Don't see your bank?<br>Try the original statement PDF.</h2>
+        <p class="cta-sub">Geometry-based extraction does not require a bank template — upload a tabular statement and review both workbook views. 1 free conversion, no sign-up.</p>
         <div class="cta-actions">
             <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="bank_index_cta_click">Convert a PDF free</a>
         </div>

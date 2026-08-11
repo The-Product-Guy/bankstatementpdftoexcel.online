@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-PaddleOCR Processor for Enhanced Table Recognition
-Provides superior OCR accuracy for bank statements with table structure detection.
-Supports PaddleOCR v2.x and v3.x APIs.
+"""OCR processor with RapidOCR primary and PaddleOCR compatibility backends.
+
+RapidOCR provides the default ONNX inference path. PaddleOCR v2/v3 remains a
+fallback and continues to provide the optional PPStructure table engine.
 """
 import os
 import gc
@@ -14,8 +14,25 @@ import numpy as np
 os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
 
 # Lazy imports to speed up app startup
+_rapid_ocr = None
+_rapid_ocr_loaded = False
 _paddle_ocr = None
 _table_engine = None
+
+
+def get_rapidocr():
+    """Lazy load RapidOCR, returning ``None`` when it is not installed."""
+    global _rapid_ocr, _rapid_ocr_loaded
+    if not _rapid_ocr_loaded:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+
+            _rapid_ocr = RapidOCR()
+        except ImportError:
+            # PaddleOCR remains available as a compatibility fallback.
+            _rapid_ocr = None
+        _rapid_ocr_loaded = True
+    return _rapid_ocr
 
 
 def get_paddleocr():
@@ -67,8 +84,10 @@ def get_table_engine():
 
 class PaddleOCRProcessor:
     """
-    Enhanced OCR processor using PaddleOCR.
-    Provides better accuracy than Tesseract for complex table layouts.
+    OCR processor retaining the historical public PaddleOCRProcessor API.
+
+    Text recognition uses RapidOCR first and falls back to PaddleOCR. Optional
+    table structure recognition still uses PaddleOCR's PPStructure engine.
     """
     
     def __init__(self, use_table_structure: bool = False):
@@ -80,8 +99,18 @@ class PaddleOCRProcessor:
                                (more accurate but slower)
         """
         self.use_table_structure = use_table_structure
+        self._rapid_ocr = None
+        self._rapid_ocr_loaded = False
         self._ocr = None
         self._table = None
+
+    @property
+    def rapid_ocr(self):
+        """Lazy load the primary RapidOCR engine."""
+        if not self._rapid_ocr_loaded:
+            self._rapid_ocr = get_rapidocr()
+            self._rapid_ocr_loaded = True
+        return self._rapid_ocr
     
     @property
     def ocr(self):
@@ -107,13 +136,30 @@ class PaddleOCRProcessor:
         Returns:
             List of dicts with 'text', 'confidence', 'bbox' keys
         """
-        # PaddleOCR expects 3-channel images; convert grayscale to RGB
+        # Both OCR backends expect 3-channel images; convert grayscale to RGB.
         if image.mode != 'RGB':
             image = image.convert('RGB')
         # Convert PIL to numpy array
         img_array = np.array(image)
-        
-        # Run OCR - supports PaddleOCR v2.x and v3.x APIs
+
+        # RapidOCR 1.x returns (results, elapsed), where each result is
+        # [bbox_polygon, text, confidence]. Fall through to PaddleOCR when the
+        # backend is unavailable or fails at runtime.
+        try:
+            rapid_engine = self.rapid_ocr
+            if rapid_engine is not None:
+                rapid_output = rapid_engine(img_array)
+                if isinstance(rapid_output, tuple):
+                    rapid_result = rapid_output[0] if rapid_output else None
+                else:
+                    rapid_result = rapid_output
+                rapid_extracted = self._normalize_rapid_results(rapid_result)
+                if rapid_extracted:
+                    return rapid_extracted
+        except Exception:
+            pass
+
+        # PaddleOCR compatibility fallback - supports v2.x and v3.x APIs.
         try:
             if hasattr(self.ocr, 'predict'):
                 result = self.ocr.predict(img_array)
@@ -201,6 +247,52 @@ class PaddleOCRProcessor:
                     'confidence': confidence,
                     'bbox': (min(x_coords), min(y_coords), max(x_coords), max(y_coords)),
                     'bbox_polygon': bbox,
+                })
+            except (IndexError, TypeError, ValueError):
+                continue
+
+        return extracted
+
+    @staticmethod
+    def _normalize_rapid_results(result: Any) -> List[Dict[str, Any]]:
+        """Normalize RapidOCR's polygon/text/score rows to the public contract."""
+        if result is None or not isinstance(result, (list, tuple)):
+            return []
+
+        extracted = []
+        for line in result:
+            try:
+                if not isinstance(line, (list, tuple)) or len(line) < 3:
+                    continue
+                polygon, text, score = line[0], line[1], line[2]
+                if text is None or not str(text).strip():
+                    continue
+
+                points = []
+                for point in polygon:
+                    if len(point) < 2:
+                        continue
+                    points.append([float(point[0]), float(point[1])])
+                if len(points) < 4:
+                    continue
+
+                try:
+                    confidence = float(score)
+                except (TypeError, ValueError):
+                    confidence = 0.0
+
+                x_coords = [point[0] for point in points]
+                y_coords = [point[1] for point in points]
+                extracted.append({
+                    'text': str(text),
+                    'confidence': confidence,
+                    'bbox': (
+                        min(x_coords),
+                        min(y_coords),
+                        max(x_coords),
+                        max(y_coords),
+                    ),
+                    'bbox_polygon': points,
                 })
             except (IndexError, TypeError, ValueError):
                 continue

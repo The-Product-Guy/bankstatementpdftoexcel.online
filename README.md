@@ -1,14 +1,14 @@
-# 🏦 PDF to Excel Converter - Universal Bank Statement Parser
+# 🏦 PDF to Excel Converter - Geometry-First Bank Statement Parser
 
-A modern web application for converting bank statement PDFs to Excel format with universal extraction. Features automatic transaction extraction, reliable OCR, and secure file processing.
+A modern web application for converting bank statement PDFs to Excel format with geometry-based extraction, OCR support, and secure file processing.
 
 ## ✨ Key Features
 
 - **🌐 Web-based Interface** - Beautiful, responsive UI with drag-and-drop upload
-- **🏦 Universal Bank Support** - Works across text-based and scanned statements  
-- **🤖 Smart Processing** - Auto-detects PDF type (text or scanned) and recreates the statement's own table layout
-- **📊 Exact-Copy Output** - The bank's own rows and columns land in Excel unchanged; a `Full_Text` sheet preserves everything else on the page
-- **🔒 Secure Processing** - Files automatically deleted after conversion
+- **🏦 Geometry-Based Bank Support** - Designed for varied text-based and scanned statement layouts
+- **🤖 Smart Processing** - Auto-detects PDF type, builds the layout-preserving `Exact_Copy` sheet, and attempts a convenient `Table_Data` view
+- **📊 Layout-Preserving Output** - `Exact_Copy` retains every successfully extracted word in visual row order with approximate page geometry; `Table_Data` adds a best-effort transaction view
+- **🔒 Secure Processing** - Source PDFs are deleted after processing unless the user explicitly opts into temporary feedback retention
 - **📱 Responsive Design** - Works seamlessly on desktop and mobile devices
 - **☁️ Cloud Ready** - Production-ready deployment configuration for Railway
 
@@ -18,7 +18,7 @@ A modern web application for converting bank statement PDFs to Excel format with
 
 ## 🏦 Supported Banks
 
-Universal parser designed to handle any bank statement format (text-based or scanned) with raw table extraction.
+The geometry-first parser is designed for varied bank statement formats, including text-based and scanned PDFs. Scans depend on OCR and require careful output review.
 
 ## 📁 Clean Project Structure
 
@@ -48,7 +48,7 @@ PDF-XLS-Converter/
 
 - **Python 3.9+**
 - **Redis** (Required for background processing)
-- **Tesseract OCR** (for Image-based PDFs)
+- **Tesseract OCR** (fallback for image-based PDFs)
 - **Poppler utilities** (for PDF processing)
 
 ### Quick Start (Recommended)
@@ -154,14 +154,15 @@ pip3
 
 ## 📊 Output Excel Format
 
-The workbook is an **exact copy of the PDF** — the bank's own columns, one Excel row per PDF table row, all values as strings:
+The workbook prioritises source fidelity before table cleanup. `Exact_Copy` keeps every word the engine successfully extracts, groups the words into visual rows, and spreads them across Excel cells using approximate PDF coordinates. `Table_Data` is a separate convenience view whose detected headers, rows, and columns are best effort:
 
 | Sheet | Purpose |
 |-------|---------|
-| `sheet1` | The statement table with the bank's own header row (e.g. `TXN DT \| VALUE_DT \| BRN \| DESCRIPTION \| REFERENCE \| DEBITS \| CREDITS \| BALANCE`). Wrapped descriptions are merged into their transaction's row. |
-| `Full_Text` | Every visual line of every page in reading order (Page \| Line \| Source \| Text) — account details, headers, footers, and anything not classified as table content. Nothing is silently dropped. |
+| `Exact_Copy` | Every successfully extracted word in visual row order, including headings, summaries, transaction lines, and footers. Cell placement approximates the horizontal geometry of the PDF. |
+| `Table_Data` | Best-effort detection of transaction headers, rows, columns, and wrapped descriptions for convenient filtering and cleanup. A materially different later-page schema is written to `Table_Data_2`, `Table_Data_3`, and so on instead of truncating earlier rows. |
+| `Full_Text` | Searchable page, line, extraction source, and text for every extracted visual line. |
 
-Delete whatever you don't need from `Full_Text`; the table sheet stays clean for sums and pivots.
+Keep the original workbook as a review copy. Clean a duplicate of `Exact_Copy` or start from `Table_Data`, and verify important rows, columns, dates, amounts, and balances against the PDF. Scanned documents use OCR, which can miss words, confuse characters, or shift placement.
 
 ## 🔧 Configuration
 
@@ -234,26 +235,29 @@ The primary parser is universal. Prefer improving shared layout detection, norma
 ### Technical Stack
 
 - **Backend**: Flask, Gunicorn
-- **PDF Processing**: PDFPlumber, pdf2image
-- **OCR**: Tesseract, Pytesseract  
+- **PDF Processing**: PDFPlumber, pinned PyMuPDF, pdf2image fallback
+- **OCR**: RapidOCR/ONNX Runtime, with Tesseract fallback
 - **Data Processing**: Pandas, OpenPyXL
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript
 - **Deployment**: Railway, Nixpacks
 
 ## 🔍 Processing Details
 
-### HDFC Bank (Image-based PDFs)
-```
-PDF → Images → OCR → Text → Regex Parsing → Transactions
-```
-- **Method**: Tesseract OCR at 150 DPI
-- **Format**: Pipe-delimited (`|`) transaction lines
-- **Pattern**: `DD/MM/YY | Description | Reference | Amounts`
-- **Performance**: Processing time varies with page count, scan quality, and OCR mode
+### Scanned statements
 
-### ICICI Bank (Text-based PDFs)
+```text
+PDF → PyMuPDF render → RapidOCR coordinates → visual rows → Exact_Copy + Table_Data
 ```
-PDF → Text Extraction → Pattern Matching → Transactions
+
+- **Standard**: 150 DPI; **High Quality**: 200 DPI.
+- Tesseract is used only when the primary ONNX path is unavailable or lacks useful coverage.
+- Suspect financial cells may receive a bounded row-band re-read. A value changes only when independent direct OCR renders agree; arithmetic is diagnostic only.
+- Scanned workbooks are always marked for review against the source PDF.
+
+### Text-based statements
+
+```text
+PDF → embedded words and coordinates → visual rows → Exact_Copy + Table_Data
 ```
 - **Method**: PDFPlumber direct text extraction
 - **Format**: Tabular with fixed columns

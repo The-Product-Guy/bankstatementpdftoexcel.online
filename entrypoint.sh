@@ -6,7 +6,7 @@
 #
 # Architecture: Web + Worker + one Scheduler (separate Railway services)
 # - Web:       Handles HTTP and polling, no OCR models loaded, lightweight
-# - Worker:    Runs Celery tasks, loads PaddleOCR + ONNX Runtime (~2-3 GB RAM)
+# - Worker:    Runs Celery tasks and loads RapidOCR + ONNX Runtime
 # - Scheduler: Enqueues hourly retention maintenance; exactly one replica
 #
 # Horizontal scaling:
@@ -17,7 +17,7 @@
 #   5. All services share the same REDIS_URL and DATABASE_URL
 #   6. Increase worker replicas to handle more concurrent users
 #
-# Each worker replica uses ~2-3 GB RAM (ONNX Runtime backend).
+# Each worker replica owns one ONNX Runtime OCR engine.
 # With 32 GB / 32 vCPU per replica, you can comfortably run 1 job per replica.
 # 10 replicas = 10 concurrent PDF conversions.
 #

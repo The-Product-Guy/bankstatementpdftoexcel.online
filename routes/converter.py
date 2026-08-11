@@ -199,7 +199,7 @@ def _attach_download_status(
 def dashboard():
     """Converter page. Guests can upload; email is requested before download."""
     from app import (
-        BETA_MODE, ENGLISH_ONLY_BETA, FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
+        FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
     )
 
     _record_converter_funnel_event('dashboard_visit')
@@ -207,8 +207,6 @@ def dashboard():
         'dashboard.html',
         max_upload_mb=MAX_UPLOAD_MB,
         max_pages=MAX_PAGES,
-        beta_mode=BETA_MODE,
-        english_only_beta=ENGLISH_ONLY_BETA,
         feedback_retention_days=FEEDBACK_RETENTION_DAYS,
     )
 
@@ -286,16 +284,7 @@ def convert():
             flash('Please upload a PDF file.', 'error')
             return redirect(url_for('converter.dashboard'))
 
-        bank_code = request.form.get('bank', 'universal')
-        extraction_mode = (
-            request.form.get('extraction_mode')
-            or os.environ.get('DEFAULT_EXTRACTION_MODE', 'layout_replica')
-            or 'layout_replica'
-        ).strip().lower().replace('-', '_')
-        if extraction_mode in {'structured', 'structured_transactions', 'transactions'}:
-            extraction_mode = 'structured_transactions'
-        else:
-            extraction_mode = 'layout_replica'
+        extraction_mode = 'layout_replica'
         pdf_file = request.files['pdf_file']
 
         if pdf_file.filename == '':
@@ -535,17 +524,26 @@ def job_status(job_id):
             logger.warning("Invalid job status JSON for %s", job_id, exc_info=True)
 
     if persisted_status in {'completed', 'completed_no_data'}:
+        has_output_data = persisted_status == 'completed'
         data = {
             'status': (
-                'Completed successfully'
-                if persisted_status == 'completed'
+                'Completed - workbook ready for review'
+                if has_output_data
                 else 'Completed - no data extracted'
             ),
             'percent': 100,
-            'state': 'completed',
-            'confidence': 'good' if persisted_status == 'completed' else 'empty',
-            'extraction_rows': transaction_count,
+            'state': persisted_status,
+            # Fidelity diagnostics live in the short-lived progress snapshot.
+            # When that snapshot is unavailable, the database completion flag
+            # proves only that a workbook exists; it does not prove accuracy.
+            'confidence': 'unknown' if has_output_data else 'empty',
+            'review_required': has_output_data,
+            # Job.transaction_count stores detected table rows, not the number
+            # of source visual lines. Keep those meanings separate so the UI
+            # does not present table rows as preserved source rows.
+            'extraction_rows': 0,
             'extraction_cols': 0,
+            'table_row_count': transaction_count,
         }
         if output_storage_key:
             data.update({'storage': 's3', 'download_key': output_storage_key})
@@ -686,7 +684,10 @@ def submit_feedback():
         extraction_rows = int(request.form.get('extraction_rows', 0) or 0)
         extraction_cols = int(request.form.get('extraction_cols', 0) or 0)
 
-        if feedback_type not in ('success', 'empty_result', 'incorrect_data', 'formatting', 'other'):
+        if feedback_type not in (
+            'success', 'empty_result', 'missing_or_extra_rows', 'column_mismatch',
+            'row_split_merge', 'ocr_text', 'incorrect_data', 'formatting', 'other',
+        ):
             feedback_type = 'other'
 
         pdf_storage_key = None

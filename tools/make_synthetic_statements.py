@@ -115,7 +115,27 @@ def demo_sample(path=REPO_ROOT / "static" / "sample-statement.pdf"):
     return _statement(path, LETTER, ["DEMO BANK", "Account Statement 06/01/2026 - 06/30/2026"], headers, rows)
 
 
+def demo_sample_workbook(
+    pdf_path=REPO_ROOT / "static" / "sample-statement.pdf",
+    output_path=REPO_ROOT / "static" / "sample-statement.xlsx",
+):
+    """Regenerate the downloadable workbook with the production layout parser."""
+    from parsers.layout_replica_parser import create_layout_replica_parser
+
+    pdf_path = Path(pdf_path)
+    output_path = Path(output_path)
+    if not pdf_path.exists():
+        demo_sample(pdf_path)
+
+    parser = create_layout_replica_parser(use_ocr=False, use_paddleocr=False)
+    parser.parse(str(pdf_path), pdf_path.name)
+    parser.write_excel(str(output_path))
+    return output_path
+
+
 if __name__ == "__main__":
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     for fn in (us_checking, us_card, uk_current, eu_giro):
         print("wrote", fn())
+    print("wrote", demo_sample())
+    print("wrote", demo_sample_workbook())

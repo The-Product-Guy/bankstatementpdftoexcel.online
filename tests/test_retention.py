@@ -2,7 +2,99 @@
 """Tests for file retention and feedback PDF handling."""
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
+
+import pytest
+
+
+def _load_worker_for_retention_test(monkeypatch):
+    pytest.importorskip("celery")
+    monkeypatch.setenv("SERVICE_ROLE", "web")
+    import worker as worker_module
+
+    return worker_module
+
+
+class _SuccessfulLayoutParser:
+    extraction_metadata = SimpleNamespace(
+        has_data=True,
+        row_count=2,
+        col_count=5,
+        extraction_method="layout_replica",
+        confidence="good",
+        document_hint="layout_replica",
+        message="Workbook ready.",
+    )
+
+    def parse(self, _path, _filename):
+        return []
+
+    def write_excel(self, output_path):
+        Path(output_path).write_bytes(b"test workbook")
+
+    def get_quality_report(self):
+        return {
+            "row_count": 2,
+            "source_line_count": 2,
+            "source_word_count": 10,
+            "source_coverage_pct": 100.0,
+            "table_row_count": 2,
+            "table_column_count": 5,
+            "table_schema_count": 1,
+            "review_required": False,
+            "numeric_ocr_refinement_count": 2,
+            "numeric_ocr_unresolved_count": 0,
+        }
+
+
+def _stub_successful_worker_dependencies(monkeypatch, worker_module, processed_root):
+    monkeypatch.setenv("SHARED_STORAGE_PATH", str(processed_root))
+    monkeypatch.setenv("USE_OCR", "false")
+    monkeypatch.setattr(worker_module, "_PADDLE_WARMUP_AVAILABLE", False)
+    monkeypatch.setattr(
+        worker_module,
+        "create_layout_replica_parser",
+        lambda **_kwargs: _SuccessfulLayoutParser(),
+    )
+    monkeypatch.setattr(worker_module, "update_progress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker_module, "_increment_usage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        worker_module,
+        "_record_worker_funnel_event",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+def test_worker_ocr_warmup_requires_a_successful_inference(monkeypatch):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    from parsers.paddleocr_processor import PaddleOCRProcessor
+
+    monkeypatch.setenv("USE_PADDLEOCR", "true")
+    monkeypatch.setattr(PaddleOCRProcessor, "process_image", lambda *_args: [])
+    worker_module._PADDLE_WARMUP_AVAILABLE = True
+
+    worker_module._warmup_ocr_models()
+
+    assert worker_module._PADDLE_WARMUP_AVAILABLE is False
+
+
+def test_worker_ocr_warmup_enables_backend_after_text_is_detected(monkeypatch):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    from parsers.paddleocr_processor import PaddleOCRProcessor
+
+    monkeypatch.setenv("USE_PADDLEOCR", "true")
+    monkeypatch.setattr(
+        PaddleOCRProcessor,
+        "process_image",
+        lambda *_args: [{"text": "DATE", "confidence": 1.0, "bbox": (0, 0, 10, 10)}],
+    )
+    worker_module._PADDLE_WARMUP_AVAILABLE = False
+
+    worker_module._warmup_ocr_models()
+
+    assert worker_module._PADDLE_WARMUP_AVAILABLE is True
 
 
 def test_cleanup_expired_s3_job_files(monkeypatch):
@@ -136,6 +228,192 @@ def test_local_cleanup_preserves_active_upload_and_removes_orphan(monkeypatch, t
             stale_job = db.get(Job, stale_job_id)
             if stale_job:
                 db.delete(stale_job)
+
+
+def test_worker_deletes_only_its_local_upload_after_success(monkeypatch, tmp_path):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    job_id = f"local-success-{uuid4()}"
+    upload = tmp_path / "uploads" / f"{job_id}_statement.pdf"
+    unrelated = upload.with_name("unrelated.pdf")
+    upload.parent.mkdir()
+    upload.write_bytes(b"statement")
+    unrelated.write_bytes(b"keep me")
+    monkeypatch.setattr(worker_module, "UPLOAD_FOLDER", str(upload.parent))
+
+    _stub_successful_worker_dependencies(
+        monkeypatch,
+        worker_module,
+        tmp_path / "processed",
+    )
+    monkeypatch.setattr(worker_module, "get_storage_config", lambda: None)
+    update_calls = []
+
+    def update_job(job_id, **fields):
+        update_calls.append((job_id, fields))
+        return True
+
+    monkeypatch.setattr(worker_module, "_update_job", update_job)
+
+    result = worker_module.process_pdf_task.run(
+        {
+            "type": "local",
+            "path": str(upload),
+            # Local mode cannot provide a durable feedback attachment, so even
+            # an explicitly supplied retention request must be cleaned up.
+            "retain_for_feedback": True,
+            "extraction_mode": "layout_replica",
+        },
+        "statement.pdf",
+        job_id,
+    )
+
+    assert result["status"] == "success"
+    assert result["numeric_ocr_refinement_count"] == 2
+    assert result["numeric_ocr_unresolved_count"] == 0
+    assert result["review_required"] is False
+    assert not upload.exists()
+    assert unrelated.read_bytes() == b"keep me"
+    assert any("input_deleted_at" in fields for _job_id, fields in update_calls)
+
+
+def test_worker_marks_unresolved_numeric_ocr_for_review(monkeypatch, tmp_path):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    job_id = f"numeric-review-{uuid4()}"
+    upload = tmp_path / "uploads" / f"{job_id}_statement.pdf"
+    upload.parent.mkdir()
+    upload.write_bytes(b"statement")
+    monkeypatch.setattr(worker_module, "UPLOAD_FOLDER", str(upload.parent))
+
+    class _UnresolvedNumericParser(_SuccessfulLayoutParser):
+        def get_quality_report(self):
+            report = super().get_quality_report()
+            report.update({
+                "review_required": False,
+                "numeric_ocr_refinement_count": 1,
+                "numeric_ocr_unresolved_count": 1,
+            })
+            return report
+
+    _stub_successful_worker_dependencies(
+        monkeypatch,
+        worker_module,
+        tmp_path / "processed",
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "create_layout_replica_parser",
+        lambda **_kwargs: _UnresolvedNumericParser(),
+    )
+    monkeypatch.setattr(worker_module, "get_storage_config", lambda: None)
+    monkeypatch.setattr(worker_module, "_update_job", lambda *_args, **_kwargs: True)
+    completed_updates = []
+    monkeypatch.setattr(
+        worker_module,
+        "update_progress",
+        lambda *_args, **kwargs: completed_updates.append(kwargs.get("extra")),
+    )
+
+    result = worker_module.process_pdf_task.run(
+        {
+            "type": "local",
+            "path": str(upload),
+            "extraction_mode": "layout_replica",
+        },
+        "statement.pdf",
+        job_id,
+    )
+
+    assert result["status"] == "success"
+    assert result["review_required"] is True
+    assert result["numeric_ocr_refinement_count"] == 1
+    assert result["numeric_ocr_unresolved_count"] == 1
+    final_extra = next(extra for extra in reversed(completed_updates) if extra)
+    assert final_extra["review_required"] is True
+    assert final_extra["numeric_ocr_unresolved_count"] == 1
+
+
+def test_worker_deletes_local_upload_after_failure(monkeypatch, tmp_path):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    job_id = f"local-failure-{uuid4()}"
+    upload = tmp_path / "uploads" / f"{job_id}_statement.pdf"
+    unrelated = upload.with_name("unrelated.pdf")
+    upload.parent.mkdir()
+    upload.write_bytes(b"statement")
+    unrelated.write_bytes(b"keep me")
+    monkeypatch.setattr(worker_module, "UPLOAD_FOLDER", str(upload.parent))
+
+    monkeypatch.setattr(worker_module, "get_storage_config", lambda: None)
+    monkeypatch.setattr(worker_module, "update_progress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        worker_module,
+        "_record_worker_funnel_event",
+        lambda *_args, **_kwargs: None,
+    )
+    # Fail before parser creation. The task's finally path must still own and
+    # delete the exact local upload path.
+    monkeypatch.setattr(worker_module, "_update_job", lambda *_args, **_kwargs: False)
+
+    result = worker_module.process_pdf_task.run(
+        {
+            "type": "local",
+            "path": str(upload),
+            "extraction_mode": "layout_replica",
+        },
+        "statement.pdf",
+        job_id,
+    )
+
+    assert result["status"] == "error"
+    assert not upload.exists()
+    assert unrelated.read_bytes() == b"keep me"
+
+
+def test_local_upload_cleanup_does_not_replace_s3_temp_cleanup(monkeypatch, tmp_path):
+    worker_module = _load_worker_for_retention_test(monkeypatch)
+    processed_root = tmp_path / "processed"
+    _stub_successful_worker_dependencies(monkeypatch, worker_module, processed_root)
+
+    storage = {"bucket": "test"}
+    input_key = f"uploads/{uuid4()}/statement.pdf"
+    downloaded_paths = []
+    uploaded_keys = []
+    deleted_keys = []
+
+    def download_file(_storage, _key, destination):
+        downloaded_paths.append(Path(destination))
+        Path(destination).write_bytes(b"statement")
+
+    monkeypatch.setattr(worker_module, "get_storage_config", lambda: storage)
+    monkeypatch.setattr(worker_module, "download_file", download_file)
+    monkeypatch.setattr(
+        worker_module,
+        "upload_file",
+        lambda _storage, _path, key: uploaded_keys.append(key),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "delete_file",
+        lambda _storage, key: deleted_keys.append(key),
+    )
+    monkeypatch.setattr(worker_module, "_update_job", lambda *_args, **_kwargs: True)
+
+    result = worker_module.process_pdf_task.run(
+        {
+            "type": "s3",
+            "key": input_key,
+            "retain_for_feedback": False,
+            "extraction_mode": "layout_replica",
+        },
+        "statement.pdf",
+        f"s3-success-{uuid4()}",
+    )
+
+    assert result["status"] == "success"
+    assert uploaded_keys and uploaded_keys[0].startswith("outputs/")
+    assert deleted_keys == [input_key]
+    assert len(downloaded_paths) == 1
+    assert not downloaded_paths[0].exists()
+    assert not downloaded_paths[0].parent.exists()
 
 
 def test_feedback_copies_retained_pdf(monkeypatch):

@@ -21,7 +21,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-# Uses ONNX Runtime (not full PaddlePaddle) for OCR inference — saves ~1.5GB image size
+# RapidOCR uses ONNX Runtime. PaddleOCR/img2table remain optional compatibility layers.
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

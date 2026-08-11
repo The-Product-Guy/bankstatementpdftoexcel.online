@@ -40,7 +40,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run unit tests
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not ocr"
 
-      - name: Run extraction accuracy gate
+      - name: Run production OCR fidelity gates
+        run: python -m pytest -q -m ocr
+
+      - name: Run legacy structured-parser accuracy gate
         run: python tools/run_accuracy_gates.py --dataset synthetic_canada_ci

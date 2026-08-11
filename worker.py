@@ -30,6 +30,7 @@ from parsers.universal_parser import create_universal_parser, UnsupportedLanguag
 from pdf_utils import PasswordProtectedPDFError, get_pdf_page_count
 from redis_utils import get_redis_client
 from storage_utils import get_storage_config, delete_file, download_file, upload_file
+from retention import UPLOAD_FOLDER
 from db import get_db_session, init_db, DATABASE_URL
 from models import FunnelEvent, Job, UsageCounter
 import logging
@@ -176,36 +177,48 @@ def _retry_result_is_better(current_report, retry_report) -> bool:
 
 def _warmup_ocr_models():
     """
-    Pre-load PaddleOCR models at worker startup so first request isn't slow.
-    Without this, the first conversion takes an extra 15-30s for model loading.
-    With ONNX Runtime, warmup takes ~5-10s and reduces first-request latency to match subsequent ones.
+    Pre-load and verify the enhanced OCR backend at worker startup.
+
+    RapidOCR uses the packaged ONNX models by default; PaddleOCR remains a
+    compatibility fallback. A real text inference is required before jobs are
+    allowed to select this path, otherwise they use Tesseract.
     """
     global _PADDLE_WARMUP_AVAILABLE
 
     if not os.environ.get('USE_PADDLEOCR', 'true').lower() in {'1', 'true', 'yes', 'on'}:
-        logger.info("PaddleOCR disabled via USE_PADDLEOCR, skipping warmup")
+        logger.info("Enhanced OCR disabled via USE_PADDLEOCR, skipping warmup")
         _PADDLE_WARMUP_AVAILABLE = False
         return
 
     try:
         import time
         start = time.time()
-        logger.info("Pre-warming PaddleOCR models (ONNX Runtime backend)...")
-        from parsers.paddleocr_processor import get_paddleocr
-        ocr = get_paddleocr()
-        # Run a tiny inference to fully initialize the ONNX/Paddle runtime graph
+        logger.info("Pre-warming enhanced OCR models...")
+        from PIL import Image
+        import cv2
         import numpy as np
-        dummy = np.zeros((64, 64, 3), dtype=np.uint8)
-        try:
-            ocr.ocr(dummy, cls=False)
-        except Exception:
-            # Some versions throw on blank images; model is still loaded
-            pass
+        from parsers.paddleocr_processor import PaddleOCRProcessor
+
+        dummy = np.full((192, 768, 3), 255, dtype=np.uint8)
+        cv2.putText(
+            dummy,
+            "DATE 2026-01-01 AMOUNT 123.45",
+            (20, 115),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.35,
+            (0, 0, 0),
+            3,
+            cv2.LINE_AA,
+        )
+        processor = PaddleOCRProcessor(use_table_structure=False)
+        results = processor.process_image(Image.fromarray(dummy))
+        if not results:
+            raise RuntimeError("OCR warmup inference returned no text.")
         elapsed = time.time() - start
-        logger.info(f"PaddleOCR models ready in {elapsed:.1f}s")
+        logger.info("Enhanced OCR models ready in %.1fs", elapsed)
         _PADDLE_WARMUP_AVAILABLE = True
     except Exception as e:
-        logger.warning(f"OCR model warmup failed (will lazy-load on first request): {e}")
+        logger.warning("OCR model warmup failed; using Tesseract fallback: %s", e)
         _PADDLE_WARMUP_AVAILABLE = False
 
 
@@ -333,6 +346,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
     
     temp_dir = None
     local_input_path = None
+    local_upload_path = None
     storage = None
     input_storage_key = None
     output_storage_key = None
@@ -353,6 +367,35 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 file_path = local_input_path
             elif ref_type == "local":
                 file_path = file_ref.get("path")
+                # Local mode has no durable object-storage key that feedback can
+                # safely attach later. Treat the upload as processing-only even
+                # if a caller supplied retain_for_feedback, and remove this exact
+                # path in the task's finally block on both success and failure.
+                try:
+                    candidate = os.path.realpath(os.path.abspath(str(file_path)))
+                    upload_root = os.path.realpath(os.path.abspath(UPLOAD_FOLDER))
+                    inside_upload_root = os.path.commonpath(
+                        [candidate, upload_root]
+                    ) == upload_root
+                    belongs_to_job = os.path.basename(candidate).startswith(f"{job_id}_")
+                    if inside_upload_root and belongs_to_job:
+                        local_upload_path = candidate
+                    else:
+                        logger.warning(
+                            "Job %s: refusing automatic cleanup for an unowned local path",
+                            job_id,
+                        )
+                except (OSError, TypeError, ValueError):
+                    logger.warning(
+                        "Job %s: unable to validate local upload cleanup path",
+                        job_id,
+                    )
+                if retain_input_pdf:
+                    logger.info(
+                        "Job %s: local input retention is unavailable; the upload "
+                        "will be deleted after processing",
+                        job_id,
+                    )
             else:
                 raise RuntimeError(f"Unsupported file_ref type: {ref_type}")
         else:
@@ -417,14 +460,13 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
         runtime_use_pymupdf = os.environ.get('USE_PYMUPDF', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
         runtime_use_llm = os.environ.get('USE_LLM', '').strip().lower() in {'1', 'true', 'yes', 'on'}
         if not _PADDLE_WARMUP_AVAILABLE:
-            # In environments where PaddleOCR isn't installed (or failed init),
-            # img2table's Paddle backend can fall back to very heavy Tesseract paths
-            # and cause worker instability. Force the safer fallback pipeline.
+            # If the enhanced OCR smoke test failed, avoid repeatedly loading
+            # optional OCR/table backends and use the supported Tesseract path.
             runtime_use_paddleocr = False
             runtime_use_img2table = False
             if execution_preset != "local-low-mem":
                 logger.warning(
-                    f"Job {job_id}: PaddleOCR unavailable, forcing safe OCR mode "
+                    f"Job {job_id}: enhanced OCR unavailable, forcing safe OCR mode "
                     f"(preset={execution_preset} -> paddleocr/img2table disabled)"
                 )
 
@@ -458,6 +500,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 progress_callback=progress_callback,
                 quality=quality,
                 use_ocr=runtime_use_ocr,
+                use_paddleocr=runtime_use_paddleocr,
             )
             update_progress(job_id, 0, 100, "Recreating PDF layout...", percent_override=5)
             parser.parse(file_path, original_filename)
@@ -470,6 +513,31 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             ext_meta = getattr(parser, "extraction_metadata", None)
             quality_report = parser.get_quality_report() if hasattr(parser, "get_quality_report") else {}
             has_data = bool(ext_meta and ext_meta.has_data)
+            source_line_count = int(quality_report.get(
+                "source_line_count",
+                ext_meta.row_count if ext_meta else 0,
+            ) or 0)
+            source_word_count = int(quality_report.get(
+                "source_word_count",
+                quality_report.get("word_count", 0),
+            ) or 0)
+            table_row_count = int(quality_report.get("table_row_count", 0) or 0)
+            table_column_count = int(quality_report.get("table_column_count", 0) or 0)
+            source_coverage_pct = float(quality_report.get(
+                "source_coverage_pct",
+                100.0 if has_data else 0.0,
+            ) or 0.0)
+            numeric_ocr_refinement_count = int(
+                quality_report.get("numeric_ocr_refinement_count", 0) or 0
+            )
+            numeric_ocr_unresolved_count = int(
+                quality_report.get("numeric_ocr_unresolved_count", 0) or 0
+            )
+            review_required = bool(
+                quality_report.get("review_required")
+                or (ext_meta and ext_meta.confidence == "low")
+                or numeric_ocr_unresolved_count > 0
+            )
             result_extra = {
                 "state": "completed" if has_data else "completed_no_data",
                 "quality_used": quality,
@@ -494,22 +562,33 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
             if quality_report:
                 result_extra.update({
                     "execution_preset_applied": execution_preset,
-                    "accuracy_proxy_pct": quality_report.get("accuracy_proxy_pct", 0.0),
+                    # Source coverage means extracted words were preserved in
+                    # Exact_Copy. It is deliberately not presented as OCR or
+                    # cell accuracy, which requires comparison with the PDF.
+                    "accuracy_proxy_pct": 0.0,
+                    "source_coverage_pct": source_coverage_pct,
+                    "source_line_count": source_line_count,
+                    "source_word_count": source_word_count,
+                    "review_required": review_required,
                     "quality_row_count": quality_report.get("row_count", 0),
-                    "table_row_count": quality_report.get("table_row_count", 0),
-                    "table_column_count": quality_report.get("table_column_count", 0),
+                    "table_row_count": table_row_count,
+                    "table_column_count": table_column_count,
+                    "table_schema_count": quality_report.get("table_schema_count", 0),
                     "table_page_count": quality_report.get("table_page_count", 0),
                     "layout_word_count": quality_report.get("word_count", 0),
                     "ocr_page_count": quality_report.get("ocr_page_count", 0),
                     "text_page_count": quality_report.get("text_page_count", 0),
                     "ocr_confidence_avg": quality_report.get("ocr_confidence_avg", 0.0),
+                    "numeric_ocr_refinement_count": numeric_ocr_refinement_count,
+                    "numeric_ocr_unresolved_count": numeric_ocr_unresolved_count,
                 })
 
-            status_msg = (
-                "Completed successfully"
-                if has_data
-                else "Completed - no visible text extracted"
-            )
+            if not has_data:
+                status_msg = "Completed - no visible text extracted"
+            elif review_required:
+                status_msg = "Completed - review rows and columns"
+            else:
+                status_msg = "Completed - workbook ready"
 
             if storage:
                 output_storage_key = f"outputs/{job_id}/{excel_filename}"
@@ -529,7 +608,7 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 finished_at=datetime.utcnow(),
                 output_storage_key=output_storage_key,
                 storage_key=output_storage_key,
-                transaction_count=quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
+                transaction_count=table_row_count,
             ):
                 raise RuntimeError("Unable to persist completed conversion.")
             update_progress(
@@ -547,10 +626,18 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 'status': 'success',
                 'job_id': job_id,
                 'excel_path': excel_path,
-                'transaction_count': quality_report.get("table_row_count", ext_meta.row_count if ext_meta else 0),
+                'transaction_count': table_row_count,
                 'filename': excel_filename,
                 'confidence': ext_meta.confidence if ext_meta else 'unknown',
-                'accuracy_proxy_pct': quality_report.get("accuracy_proxy_pct", 0.0) if quality_report else 0.0,
+                'accuracy_proxy_pct': 0.0,
+                'source_coverage_pct': source_coverage_pct,
+                'source_line_count': source_line_count,
+                'source_word_count': source_word_count,
+                'table_row_count': table_row_count,
+                'table_column_count': table_column_count,
+                'review_required': review_required,
+                'numeric_ocr_refinement_count': numeric_ocr_refinement_count,
+                'numeric_ocr_unresolved_count': numeric_ocr_unresolved_count,
                 'ledger_valid': None,
                 'ledger_balance_consistency_pct': None,
                 'ledger_repair_count': 0,
@@ -1025,6 +1112,15 @@ def process_pdf_task(self, file_ref, original_filename, job_id, api_key=None, qu
                 shutil.rmtree(output_dir)
             except Exception as exc:
                 logger.warning("Failed to remove local output directory %s: %s", output_dir, exc)
+        if local_upload_path and os.path.exists(local_upload_path):
+            try:
+                # Delete only the explicit local upload supplied by the web
+                # process. Legacy string paths and neighboring files are not
+                # considered worker-owned and are left untouched.
+                os.remove(local_upload_path)
+                _update_job(job_id, input_deleted_at=datetime.utcnow())
+            except Exception as exc:
+                logger.warning("Failed to delete local input PDF for job %s: %s", job_id, exc)
         if local_input_path and os.path.exists(local_input_path):
             try:
                 os.remove(local_input_path)
