@@ -11,8 +11,8 @@ from sqlalchemy import distinct, func
 
 from db import get_db_session
 from models import FeedbackSubmission, FunnelEvent, Job, LoginEvent, SiteVisit, User
-from parsers.universal_parser import UniversalBankParser
-from tracking import clear_tracking_logs, record_funnel_event
+from site_urls import public_base_url
+from tracking import clear_tracking_logs, enqueue_funnel_event
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ pages_bp = Blueprint('pages', __name__)
 
 
 LASTMOD = {
-    'home': '2026-06-10',
-    'blogs': '2026-06-10',
-    'pricing': '2026-06-10',
+    'home': '2026-08-09',
+    'blogs': '2026-08-09',
+    'pricing': '2026-08-09',
     'privacy': '2026-06-10',
     'terms': '2026-06-10',
 }
@@ -33,17 +33,15 @@ PRIVATE_ROBOTS_PATHS = [
     '/auth/',
     '/billing/',
     '/checkout/',
-    '/convert',
+    '/convert/preflight',
     '/download/',
     '/feedback',
     '/health',
     '/processed/',
-    '/socket.io/',
     '/status/',
     '/stripe/',
     '/track/',
     '/uploads/',
-    '/*?*',
 ]
 
 AI_CRAWLER_USER_AGENTS = [
@@ -59,35 +57,36 @@ AI_CRAWLER_USER_AGENTS = [
 BLOG_POSTS = [
     {
         'slug': 'how-exact-copy-extraction-works',
-        'title': 'How Exact-Copy Extraction Works — Any Bank, Typed or Scanned',
+        'title': 'Exact-Copy Extraction: What It Preserves and What to Review',
+        'seo_title': 'Exact-Copy PDF to Excel: What to Review',
         'category': 'Deep dive',
-        'description': 'Why Statement Converter reads your PDF\'s geometry instead of using bank templates, and how the Full_Text sheet guarantees nothing is silently dropped.',
-        'lastmod': '2026-07-09',
+        'description': 'How Exact_Copy retains every successfully extracted word with approximate page geometry, while Table_Data provides a best-effort transaction view.',
+        'lastmod': '2026-08-09',
         'sections': [
             {
                 'heading': 'Geometry first, text second',
                 'paragraphs': [
                     'Most converters work from templates: they recognise a known bank layout and map it into fixed output columns. That breaks the moment a bank redesigns its statement, and it quietly rewrites your data on the way through.',
-                    'Statement Converter works from the page itself. Every word on the page is extracted with its coordinates — from the embedded text layer on digital PDFs, or from OCR coordinates on scans. Words are grouped into visual lines, the bank\'s own header row is detected, and each column\'s horizontal range is derived from where the bank actually printed it.',
+                    'Statement Converter works from the page itself. Each word the engine successfully extracts carries coordinates — from the embedded text layer on digital PDFs, or from OCR coordinates on scans. Exact_Copy groups those words into visual rows and places them across Excel cells using approximate page geometry.',
                 ],
             },
             {
-                'heading': 'One row per printed transaction',
+                'heading': 'Visual rows before transaction guesses',
                 'paragraphs': [
-                    'Statements wrap long descriptions onto continuation lines. A naive converter turns one transaction into two or three rows, which breaks counts and sums. The parser recognises continuation lines — no date, no amount in an amount column, text landing in description-like columns — and merges them back into their parent row.',
+                    'Exact_Copy does not require the engine to decide which lines are transactions. It retains the extracted visual rows, including headings, summaries, blank structure, and continuation lines. Table_Data then makes a separate best-effort attempt to detect headers, assign columns, and combine transaction descriptions for easier filtering.',
                 ],
             },
             {
-                'heading': 'The no-loss invariant',
+                'heading': 'Every extracted word stays reviewable',
                 'paragraphs': [
-                    'Every workbook carries a Full_Text sheet: page number, line number, source, and text for every visual line of every page, in reading order. Account headers, footers, summary blocks — everything the table view filters out stays recoverable. The rule is simple: every extracted line appears in the workbook at least once.',
-                    'That is also why the output deliberately avoids normalisation. Amounts stay as printed text (£1,234.56 stays £1,234.56, 1.234,56 stays 1.234,56), dates are never reinterpreted, and columns keep the bank\'s own names. You decide what to clean up — with the original always in view.',
+                    'Every word successfully extracted from the PDF is written to Exact_Copy in visual row order, whether it belongs to a transaction table, an account header, a summary block, or a footer. Horizontal placement is derived from PDF coordinates, so the sheet approximates the page rather than forcing the content into a fixed bank schema.',
+                    'Table_Data is intentionally secondary. It can be useful for filters and formulas, but header detection, row merging, and column assignment are automated guesses. Keep Exact_Copy unchanged, clean a duplicate or Table_Data, and compare important rows and columns with the source PDF.',
                 ],
             },
             {
                 'heading': 'Scanned statements',
                 'paragraphs': [
-                    'Scans route through OCR into the same layout reconstruction. Multi-word OCR boxes are split so each token lands in its own column, and tokens snap to the column holding most of their width. Very poor scans are flagged so you can retry in high quality.',
+                    'Scans route through OCR before the same geometry-based placement. OCR can misread characters, miss words, or shift their coordinates, especially on faint, skewed, or compressed pages. Review dates, amounts, row boundaries, and column placement against the PDF; a cleaner scan can improve the result.',
                 ],
             },
         ],
@@ -95,22 +94,23 @@ BLOG_POSTS = [
     {
         'slug': 'bank-statements-to-excel-for-reconciliation',
         'title': 'Converting Bank Statements to Excel for QuickBooks or Xero Reconciliation',
+        'seo_title': 'Bank Statements to Excel for QuickBooks & Xero',
         'category': 'Workflow',
         'description': 'A practical workflow for accountants and bookkeepers: turn client statement PDFs into reviewable Excel before importing into your bookkeeping tool.',
-        'lastmod': '2026-07-09',
+        'lastmod': '2026-08-09',
         'sections': [
             {
-                'heading': 'Why exact rows beat auto-categorised output',
+                'heading': 'Why source-faithful rows beat auto-categorised output',
                 'paragraphs': [
-                    'For reconciliation you need the statement\'s own numbers — the bank\'s running balance, its dates, its references — not a tool\'s interpretation of them. An exact-copy workbook gives you an auditable middle step: what the bank printed, in a grid you can filter.',
+                    'For reconciliation you need the statement\'s own numbers — the bank\'s running balance, its dates, its references — not a tool\'s interpretation of them. Exact_Copy provides a reviewable intermediate view of the successfully extracted text and approximate page layout before you clean or categorise it.',
                 ],
             },
             {
                 'heading': 'The workflow',
                 'items': [
                     'Convert each client statement PDF — typed or scanned — into Excel.',
-                    'Review in Excel: check opening and closing balances against the printed summary, scan for gaps in dates, and confirm row counts look right. The Full_Text sheet holds every line of the original if anything needs cross-checking.',
-                    'Clean only what your import needs: most bookkeeping tools want a date, description, and amount column, which the workbook already has under the bank\'s own headings.',
+                    'Review Exact_Copy against the PDF: check opening and closing balances, scan for gaps in dates, and confirm that visual rows and columns line up. OCR text deserves extra attention.',
+                    'Use Table_Data as a best-effort starting point when your bookkeeping tool wants date, description, and amount columns. Correct its row or column choices before import.',
                     'Save as CSV or XLSX and import through your tool\'s bank-statement import. QuickBooks and Xero both accept spreadsheet-based statement imports; map the columns once and reuse the mapping for that client.',
                 ],
             },
@@ -119,7 +119,7 @@ BLOG_POSTS = [
                 'items': [
                     'Separate money-out and money-in columns (common on UK statements) can be combined with a simple formula when your tool wants one signed amount column.',
                     'European decimal-comma amounts stay as printed — convert them with Excel\'s Text to Columns or VALUE/SUBSTITUTE once you\'ve verified the rows.',
-                    'Keep the original workbook unchanged and do clean-up on a copy of the sheet: the exact copy is your audit trail.',
+                    'Keep the downloaded workbook unchanged and do cleanup on a duplicate: Exact_Copy is useful review evidence, while the original PDF remains the authoritative source.',
                 ],
             },
         ],
@@ -129,21 +129,46 @@ BLOG_POSTS = [
         'title': 'How to Convert Bank Statements to Excel',
         'category': 'Tutorial',
         'description': 'A practical guide to converting text-based and scanned bank statement PDFs into Excel.',
-        'lastmod': '2026-06-10',
+        'lastmod': '2026-08-09',
+        'resources': [
+            {
+                'filename': 'sample-statement.pdf',
+                'label': 'Sample bank statement PDF',
+                'description': 'Use the synthetic source statement to see the layout sent into the converter.',
+            },
+            {
+                'filename': 'sample-statement.xlsx',
+                'label': 'Converted sample workbook',
+                'description': 'Compare the corresponding Excel output, including its source-context sheet.',
+            },
+        ],
         'sections': [
+            {
+                'heading': 'Prepare the statement before upload',
+                'paragraphs': [
+                    'Start with the original PDF downloaded from your bank whenever possible. A digital statement normally contains a clean text layer, which preserves characters and column positions more reliably than a screenshot or a print-and-scan copy. If the file is password protected, create an unlocked copy using your bank\'s permitted export workflow before uploading it.',
+                    'For a scanned statement, check that every page is upright, complete, and readable at normal zoom. Cropped balances, dark shadows, handwriting, and compression artifacts can all turn a clear amount into an ambiguous OCR result. A clean 200 to 300 DPI scan gives the extraction engine much better evidence than a phone photo.',
+                ],
+            },
             {
                 'heading': 'Conversion workflow',
                 'items': [
                     'Upload your bank statement PDF from the dashboard.',
                     'The extraction engine detects whether the PDF is text-based or scanned.',
                     'Text PDFs use direct table and layout extraction. Scanned PDFs use OCR and table-structure detection.',
-                    "Download an Excel workbook that mirrors the statement: the bank's own column headers, one row per transaction, plus a Full_Text sheet carrying every line of the PDF.",
+                    'Download an Excel workbook with Exact_Copy, which retains every successfully extracted word in visual row order and approximate page position, plus a best-effort Table_Data view.',
                 ],
             },
             {
                 'heading': 'What to check in the output',
                 'paragraphs': [
-                    'Always verify dates, debit and credit amounts, running balances, and any rows with merged descriptions before using the file for accounting or audit work.',
+                    'Treat the first workbook as a review copy. Compare the opening and closing balances with the PDF, scan the first and last transaction on every page, and check that long descriptions stayed attached to the correct row. When a statement prints balances only once per day, blank balance cells should remain blank rather than being filled automatically.',
+                    'For accounting or audit work, verify dates, debit and credit amounts, running balances, row boundaries, and any characters that OCR commonly confuses, such as 0 and O or 1 and I. Use Exact_Copy and the source PDF to investigate uncertain Table_Data rows.',
+                ],
+                'items': [
+                    'Keep the downloaded workbook unchanged as an audit copy.',
+                    'Make formatting, categorisation, or import changes on a duplicate sheet.',
+                    'Reconcile totals before exporting a CSV or importing into bookkeeping software.',
                 ],
             },
         ],
@@ -151,17 +176,43 @@ BLOG_POSTS = [
     {
         'slug': 'excel-tips-for-converted-bank-statements',
         'title': 'Excel Tips for Working with Converted Statements',
+        'seo_title': 'Excel Tips for Converted Bank Statements',
         'category': 'Tips',
         'description': 'Useful Excel checks and formulas after converting a bank statement PDF.',
-        'lastmod': '2026-06-10',
+        'lastmod': '2026-08-09',
         'sections': [
             {
-                'heading': 'Recommended checks',
+                'heading': 'Keep a clean source copy',
+                'paragraphs': [
+                    'Save the downloaded workbook before changing formats or formulas, then duplicate the sheet you plan to edit. Exact_Copy retains all successfully extracted words in visual order with approximate geometry; Table_Data is a best-effort convenience view. Keep the PDF beside both when checking important rows and columns.',
+                ],
+            },
+            {
+                'heading': 'Check the rows before analysing them',
                 'items': [
-                    'Use pivot tables to summarize spending by month or description.',
-                    'Use SUMIFS to total categories such as UPI, ATM, fees, or salary credits.',
-                    'Freeze the header row before reviewing long statements.',
-                    'Sort by date and compare the running balance against the original PDF.',
+                    'Freeze the header row and turn on filters before reviewing a long statement.',
+                    'Compare the first and last transaction on each PDF page with the corresponding Excel rows.',
+                    'Search for blank dates, unusually large amounts, duplicated descriptions, and OCR lookalikes such as 0/O or 1/I.',
+                    'Reconcile the opening balance plus credits minus debits to the closing balance when the statement provides those totals.',
+                ],
+                'paragraphs': [
+                    'Sort only a duplicate sheet. Some banks print a date once for a group of transactions or leave the running balance blank until the final transaction of the day. Sorting the untouched extraction can separate those deliberately blank cells from the rows they describe.',
+                ],
+            },
+            {
+                'heading': 'Convert values with the correct locale',
+                'paragraphs': [
+                    'Amounts are intentionally copied as printed text. A US statement may use 1,234.56 while a European statement uses 1.234,56, and dates can be month-first, day-first, or written with month names. Confirm the statement\'s locale before converting an entire column to numbers or dates.',
+                    'Excel\'s Text to Columns and NUMBERVALUE tools can convert a verified working column without changing the source. Test the rule on positive amounts, negative amounts, and a value above one thousand before applying it to every row.',
+                ],
+            },
+            {
+                'heading': 'Build useful summaries',
+                'items': [
+                    'Use a table and filters to isolate fees, transfers, card payments, or deposits.',
+                    'Use SUMIFS to total reviewed categories such as ATM withdrawals or salary credits.',
+                    'Use a pivot table to group verified values by month, description, or transaction type.',
+                    'Keep manual category labels in a new column so the extracted bank text remains visible.',
                 ],
             },
         ],
@@ -171,15 +222,39 @@ BLOG_POSTS = [
         'title': 'How Financial Data Is Handled',
         'category': 'Security',
         'description': 'How Statement Converter handles temporary files, conversion results, and feedback PDFs.',
-        'lastmod': '2026-06-10',
+        'lastmod': '2026-07-21',
         'sections': [
             {
-                'heading': 'Retention model',
+                'heading': 'What happens during a conversion',
+                'paragraphs': [
+                    'Your browser sends the PDF over HTTPS and the service creates a separate conversion job. The worker reads the document, builds the Excel workbook, and makes the result available for a limited download window. The product needs the file content to perform that job, but it does not need to add the transaction text to a permanent customer profile.',
+                ],
+            },
+            {
+                'heading': 'Temporary storage and retention',
                 'items': [
                     'Uploaded PDFs are deleted after processing unless you explicitly retain one for feedback.',
                     'Converted Excel files are available only during a short download window.',
                     'Feedback PDFs are stored only when you opt in and expire after the configured feedback retention period.',
                     'Temporary files and generated results are cleaned up automatically.',
+                ],
+                'paragraphs': [
+                    'A failed or interrupted job may need temporary source or result storage until the cleanup window runs. That is different from keeping statements as a document archive: Statement Converter is a conversion tool, so you should download the result promptly and retain your own approved records in the system your organisation already uses.',
+                ],
+            },
+            {
+                'heading': 'Feedback is a separate choice',
+                'paragraphs': [
+                    'Submitting a quality rating does not automatically preserve the PDF. A source file is retained for investigation only when you explicitly choose to share it with feedback. Shared feedback files expire after the retention period stated in the Privacy Policy, and you can withdraw that consent.',
+                ],
+            },
+            {
+                'heading': 'Practical steps for sensitive statements',
+                'items': [
+                    'Use a device and network you trust, and close shared-browser download tabs when finished.',
+                    'Upload only the statement pages needed for the conversion when your bank permits a narrower export.',
+                    'Store the downloaded workbook according to your own accounting, privacy, and access-control policies.',
+                    'Read the Privacy Policy for current retention periods, service providers, and deletion rights.',
                 ],
             },
         ],
@@ -189,13 +264,38 @@ BLOG_POSTS = [
         'title': 'Text-Based vs Scanned Bank Statement PDFs',
         'category': 'Guide',
         'description': 'How to tell whether a bank statement PDF is text-based or scanned and why it affects extraction quality.',
-        'lastmod': '2026-06-10',
+        'lastmod': '2026-08-09',
         'sections': [
             {
                 'heading': 'How to tell the difference',
                 'paragraphs': [
                     'Text-based PDFs are generated digitally by the bank and usually let you select individual words. Scanned PDFs are page images and require OCR before table extraction can work.',
-                    'Scanned statements can take longer and may need high-quality mode when the original image is faded, rotated, or compressed.',
+                    'A quick test is to zoom in and drag across a transaction description. If individual words highlight cleanly and copied text remains readable, the file probably has a text layer. If the whole page behaves like one picture, or copied text is empty, the statement is scanned. Some PDFs are mixed and contain digital pages alongside scanned inserts.',
+                ],
+            },
+            {
+                'heading': 'Why text PDFs are usually cleaner',
+                'paragraphs': [
+                    'A digital PDF provides both characters and their page coordinates. That lets Exact_Copy group extracted words into visual rows and approximate their horizontal placement without guessing what a pixel represents. Fonts, currency symbols, decimal separators, and small reference numbers are normally extracted more reliably, and processing is faster because OCR is unnecessary.',
+                    'A text layer can still be poor. Some statements store words in an unusual reading order or draw tables as disconnected fragments, so the workbook must still be reviewed against the original.',
+                ],
+            },
+            {
+                'heading': 'What changes for a scan',
+                'paragraphs': [
+                    'OCR must identify each character before layout reconstruction can begin. Faded print, skewed pages, shadows, stamps, and low-resolution images can change an amount or split a description. Scanned statements therefore take longer and may need high-quality mode when the standard result contains uncertain text.',
+                ],
+                'items': [
+                    'Scan complete pages at roughly 200 to 300 DPI with the page flat and upright.',
+                    'Avoid phone-camera perspective, fingers, dark borders, and aggressive image compression.',
+                    'Check account suffixes, dates, decimal points, minus signs, and opening or closing balances first.',
+                    'Use Exact_Copy and the source PDF to trace a questionable Table_Data row back to its visual context.',
+                ],
+            },
+            {
+                'heading': 'Choose the best available source',
+                'paragraphs': [
+                    'If your bank offers both a downloadable PDF and a mailed paper statement, use the downloadable file. When only paper is available, a careful flatbed scan is better than a screenshot or photo. Whichever source you use, keep the original and reconcile the workbook before relying on it for tax, audit, or accounting decisions.',
                 ],
             },
         ],
@@ -205,15 +305,54 @@ BLOG_POSTS = [
         'title': 'Bank Statement Conversion FAQ',
         'category': 'FAQ',
         'description': 'Answers about supported statement layouts, upload limits, privacy, and password-protected PDFs.',
-        'lastmod': '2026-06-10',
+        'lastmod': '2026-08-09',
         'sections': [
             {
-                'heading': 'Common questions',
-                'items': [
-                    'Statement Converter is built for tabular bank statement PDFs, text-based or scanned.',
-                    'Free, Pro, and Enterprise plans have different file-size and conversion limits.',
-                    'Password-protected PDFs are rejected with a clear message. Remove the password before uploading.',
-                    'If the result is incomplete, retry high-quality mode or submit feedback.',
+                'heading': 'Which statements can I convert?',
+                'paragraphs': [
+                    'Statement Converter is built for bank statement PDFs with tabular transaction history. It reads the headings and geometry printed in each document rather than requiring you to select a bank template. Digital text PDFs and scanned statements can both work, including multi-page files and layouts with separate debit, credit, money-in, or money-out columns.',
+                ],
+            },
+            {
+                'heading': 'Will the Excel file use standard columns?',
+                'paragraphs': [
+                    'Exact_Copy retains every successfully extracted word in visual row order and places it with approximate page geometry; it does not force the statement into a universal transaction schema. Table_Data separately makes a best-effort attempt to detect transaction headers, rows, and columns for easier cleanup.',
+                ],
+            },
+            {
+                'heading': 'Are scanned or photographed statements supported?',
+                'paragraphs': [
+                    'Scanned PDFs use OCR before Exact_Copy is positioned and Table_Data is attempted. A straight, complete scan at roughly 200 to 300 DPI gives better results than a compressed phone photo. If a standard conversion misses text on a faded scan, retry with high-quality mode and compare important amounts, rows, and columns with the source PDF.',
+                ],
+            },
+            {
+                'heading': 'Do I still need to review the workbook?',
+                'paragraphs': [
+                    'Yes. Exact_Copy preserves what the engine successfully extracts and approximates its page position, but unusual fonts, poor scans, handwritten marks, and complex layouts can still cause missing or misread text. Table_Data adds automated row and column decisions. Review dates, amounts, row boundaries, columns, and opening and closing balances against the PDF before import, accounting, or audit use.',
+                ],
+            },
+            {
+                'heading': 'What if the PDF is password protected?',
+                'paragraphs': [
+                    'Encrypted PDFs are rejected because the worker cannot safely read their pages. Remove the password using an export method permitted by your bank or PDF software, save an unlocked copy, and upload that copy. Do not send a password through feedback or place it in a filename.',
+                ],
+            },
+            {
+                'heading': 'How long are files kept?',
+                'paragraphs': [
+                    'Uploaded PDFs and generated workbooks use temporary storage and expire through automated cleanup. A PDF is retained for troubleshooting only when you explicitly opt in while submitting feedback, and that copy has its own limited retention period. The Privacy Policy lists the current handling rules and service providers.',
+                ],
+            },
+            {
+                'heading': 'What limits apply?',
+                'paragraphs': [
+                    'A verified sign-in is required before upload. Free, Pro, and Enterprise plans have different conversion counts and upload-size limits; the pricing page shows the current allowances. For large statements, confirm that every expected page appears in the workbook and review page transitions where column headers may repeat.',
+                ],
+            },
+            {
+                'heading': 'What should I do if a result looks incomplete?',
+                'paragraphs': [
+                    'First compare the questionable Table_Data row with Exact_Copy and the original PDF. For a scan, retry in high-quality mode. If the problem remains, submit a quality rating and describe the missing page, column, or row; share the source PDF only if you are comfortable opting in to temporary feedback retention.',
                 ],
             },
         ],
@@ -223,17 +362,25 @@ BLOG_POSTS = [
 BLOG_POST_BY_SLUG = {post['slug']: post for post in BLOG_POSTS}
 
 
-def _public_base_url() -> str:
-    configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-    if configured:
-        return configured.rstrip('/')
-    return request.url_root.rstrip('/')
+_public_base_url = public_base_url
 
 
 def _public_url(path: str) -> str:
     if not path.startswith('/'):
         path = f'/{path}'
     return f"{_public_base_url()}{path}"
+
+
+def _related_entries(entries, current_slug: str, count: int = 3) -> list:
+    """Return a stable circular set so every detail page has useful peer links."""
+    if len(entries) <= 1:
+        return []
+    current_index = next(
+        (index for index, entry in enumerate(entries) if entry['slug'] == current_slug),
+        0,
+    )
+    limit = min(count, len(entries) - 1)
+    return [entries[(current_index + offset) % len(entries)] for offset in range(1, limit + 1)]
 
 
 def _sitemap_urls():
@@ -252,7 +399,7 @@ def _sitemap_urls():
 
 
 def _robots_rules() -> str:
-    rules = ["Allow: /", "Allow: /static/"]
+    rules = ["Allow: /", "Allow: /convert/", "Allow: /static/"]
     rules.extend(f"Disallow: {path}" for path in PRIVATE_ROBOTS_PATHS)
     return "\n".join(rules)
 
@@ -356,14 +503,6 @@ def _require_admin():
 @pages_bp.route('/')
 def home():
     """Marketing landing page."""
-    from app import (
-        cleanup_expired_s3_results, cleanup_feedback_shared_pdfs,
-        cleanup_first_party_analytics, cleanup_old_files,
-    )
-    cleanup_old_files()
-    cleanup_feedback_shared_pdfs()
-    cleanup_expired_s3_results()
-    cleanup_first_party_analytics()
     return render_template('home.html')
 
 
@@ -392,7 +531,7 @@ def track_event():
         return jsonify({'status': 'ignored'}), 202
 
     try:
-        record_funnel_event(
+        enqueue_funnel_event(
             event_type=event_type,
             visitor_id=request.cookies.get('sf_visitor_id'),
             user_id=session.get('user_id'),
@@ -409,7 +548,7 @@ def track_event():
 @pages_bp.route('/index')
 def index():
     """Legacy route -- redirect to home."""
-    return redirect(url_for('pages.home'))
+    return redirect(url_for('pages.home'), code=308)
 
 
 @pages_bp.route('/blogs')
@@ -422,7 +561,11 @@ def blog_post(slug):
     post = BLOG_POST_BY_SLUG.get(slug)
     if not post:
         return "Not found", 404
-    return render_template('blog_post.html', post=post)
+    return render_template(
+        'blog_post.html',
+        post=post,
+        related_posts=_related_entries(BLOG_POSTS, slug),
+    )
 
 
 @pages_bp.route('/convert/')
@@ -433,11 +576,15 @@ def bank_index():
 
 @pages_bp.route('/convert/<slug>')
 def bank_landing(slug):
-    from routes.bank_pages import BANK_BY_SLUG
+    from routes.bank_pages import BANK_BY_SLUG, BANK_PAGES
     bank = BANK_BY_SLUG.get(slug)
     if not bank:
         abort(404)
-    return render_template('bank_landing.html', bank=bank)
+    return render_template(
+        'bank_landing.html',
+        bank=bank,
+        related_banks=_related_entries(BANK_PAGES, slug),
+    )
 
 
 @pages_bp.route('/pricing')
@@ -1018,26 +1165,29 @@ def admin_export_feedback():
 
 # -- Health checks --
 
+def _check_parser_health():
+    from parsers.universal_parser import UniversalBankParser
+
+    UniversalBankParser()
+
 @pages_bp.route('/health')
 def health_check():
-    """Simple health check for Railway."""
+    """Fast, non-sensitive liveness check for Railway."""
     from app import UPLOAD_FOLDER
     try:
         if not os.path.exists(UPLOAD_FOLDER):
-            return "UPLOADS_DIR_MISSING", 500
-        try:
-            UniversalBankParser()
-        except Exception:
-            return "PARSERS_FAILED", 500
+            return "UNHEALTHY", 503
         return "OK", 200
-    except Exception as e:
-        return f"ERROR: {str(e)}", 500
+    except Exception:
+        return "UNHEALTHY", 503
 
 
 @pages_bp.route('/health/detailed')
 def detailed_health():
-    """Detailed health check with component status."""
+    """Admin-only dependency diagnostics."""
     from app import UPLOAD_FOLDER
+    if not _require_admin():
+        return "Not found", 404
     try:
         checks = {
             'flask': 'OK',
@@ -1047,14 +1197,13 @@ def detailed_health():
         }
 
         try:
-            UniversalBankParser()
+            _check_parser_health()
         except Exception:
             checks['parsers'] = 'ERROR'
 
         try:
-            import redis as _redis
-            r = _redis.StrictRedis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
-            r.ping()
+            from redis_utils import get_redis_client
+            get_redis_client().ping()
         except Exception:
             checks['redis'] = 'ERROR'
 
@@ -1070,10 +1219,9 @@ def detailed_health():
 
         return jsonify(response_data), 200 if all_ok else 503
 
-    except Exception as e:
+    except Exception:
         return jsonify({
             'status': 'error',
-            'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
@@ -1107,7 +1255,6 @@ def robots():
     robots_content = (
         "\n\n".join(groups)
         + f"\n\nSitemap: {base_url}/sitemap.xml\n"
-        + f"Sitemap: {base_url}/sitemap.txt"
     )
     return Response(robots_content, mimetype='text/plain')
 
@@ -1133,7 +1280,7 @@ def llms_txt():
 - Primary use case: convert text-based and scanned bank statement PDFs into Excel workbooks.
 - Audience: accountants, auditors, founders, small businesses, and finance teams.
 - Supported input: PDF bank statements with tabular transaction layouts.
-- Output: XLSX workbook with reviewable extracted rows and source context.
+- Output: XLSX workbook with an Exact_Copy sheet for all successfully extracted words in visual row order and approximate page geometry, plus a best-effort Table_Data view.
 - Data handling: uploaded PDFs and generated workbooks are temporary; feedback copies are retained only when a user opts in.
 
 ## Canonical Pages
@@ -1149,7 +1296,7 @@ def llms_txt():
 ## Common Questions
 - What does Statement Converter do? It converts bank statement PDFs into Excel workbooks.
 - Does it support scanned PDFs? Yes, scanned statements use OCR and table-structure detection.
-- Is every conversion guaranteed? No. Users should review dates, amounts, balances, and ambiguous rows before accounting or audit use.
+- Should users review the workbook? Yes. Check rows, columns, dates, amounts, balances, and OCR text against the source PDF before accounting or audit use.
 - Are files stored permanently? No. Files are processed temporarily and expire after the configured retention windows unless feedback sharing is explicitly selected.
 
 ## Machine-Readable Discovery

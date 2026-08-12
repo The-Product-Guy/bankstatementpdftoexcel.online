@@ -49,7 +49,7 @@ All pages include:
 - Canonical URLs
 
 ### 2. Structured Data (JSON-LD)
-- **WebApplication schema** - On home page
+- **Service schema** - On the home page, without unverified ratings or reviews
 - **Organization schema** - On all pages
 - **Blog schema** - On blogs page
 - **BreadcrumbList schema** - On blogs and pricing pages
@@ -62,8 +62,8 @@ All pages include:
 ### 4. Robots.txt
 - Accessible at `/robots.txt`
 - Allows search engine crawling
-- Disallows private/runtime routes and query variants
-- References XML and plain-text sitemap locations
+- Disallows private/runtime routes while keeping public bank landing pages crawlable
+- References the canonical XML sitemap; the plain-text discovery list remains available separately
 
 ### 5. AI and Answer-Engine Discovery
 - `/llms.txt` provides a concise product summary, limitations, policy links, and canonical guide URLs
@@ -119,9 +119,9 @@ Use these tools:
 - Check XML format is valid
 
 ### 4. Test Robots.txt
-- Visit `https://yourdomain.com/robots.txt`
-- Verify correct directives
-- Check sitemap reference
+- Visit `https://yourdomain.com/robots.txt` — the **live domain**, not the Railway app URL: Cloudflare's managed robots.txt prepends its own AI-bot blocks ahead of the app's content
+- Verify correct directives (bank landing pages under `/convert/` must be allowed; `/convert/preflight` remains disallowed, while non-public HTML pages use `noindex`)
+- Check sitemap references are absolute `https://` URLs
 
 ### 5. Test AI Discovery Files
 - Visit `https://yourdomain.com/llms.txt`

@@ -39,7 +39,8 @@ def client():
 def test_bank_index_renders(client):
     resp = client.get("/convert/")
     assert resp.status_code == 200
-    assert b"Convert any bank" in resp.data
+    assert b"Convert bank statements" in resp.data
+    assert b"review both workbook views" in resp.data
 
 
 def test_bank_landing_renders(client):

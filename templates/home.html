@@ -2,7 +2,7 @@
 
 {% block title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block meta_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a faithful workbook replica for review, reconciliation, and analysis.{% endblock %}
+{% block meta_description %}Convert bank statement PDFs to Excel with a layout-preserving Exact_Copy sheet and a best-effort Table_Data view for text or scanned statements.{% endblock %}
 
 {% block meta_keywords %}pdf to excel, bank statement converter, pdf converter, excel converter, bank statement excel, transaction extraction, free pdf converter{% endblock %}
 
@@ -10,27 +10,24 @@
 
 {% block og_title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block og_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a faithful workbook replica for review and analysis.{% endblock %}
+{% block og_description %}Convert bank statement PDFs to Excel with a layout-preserving Exact_Copy sheet and a best-effort Table_Data view.{% endblock %}
 
 {% block twitter_title %}Statement Converter - Bank Statement PDF to Excel{% endblock %}
 
-{% block twitter_description %}Convert bank statement PDFs to Excel. Upload text or scanned statements and download a faithful workbook replica for review and analysis.{% endblock %}
+{% block twitter_description %}Convert bank statement PDFs to Excel with a layout-preserving Exact_Copy sheet and a best-effort Table_Data view.{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "WebApplication",
+  "@type": "Service",
   "name": "Statement Converter",
   "alternateName": "Bank Statement PDF to Excel Converter",
-  "description": "Convert bank statement PDFs to Excel format with support for text-based and scanned statement layouts.",
+  "description": "Convert text-based and scanned bank statement PDFs to Excel with a layout-preserving Exact_Copy sheet and a best-effort Table_Data view.",
   "url": "{{ public_url_for('pages.home') }}",
-  "applicationCategory": "UtilityApplication",
-  "applicationSubCategory": "Financial data conversion",
-  "operatingSystem": "Web",
-  "browserRequirements": "Requires a modern web browser with JavaScript enabled.",
+  "serviceType": "Bank statement PDF to Excel conversion",
   "image": "{{ site_base_url() }}{{ url_for('static', filename='og-image.png') }}",
-  "publisher": {
+  "provider": {
     "@type": "Organization",
     "name": "Ambion Softwares",
     "url": "{{ public_url_for('pages.home') }}",
@@ -44,13 +41,10 @@
     "price": "0",
     "priceCurrency": "USD"
   },
-  "featureList": [
-    "Bank Statement PDF to Excel",
-    "Text and Scanned PDF Processing",
-    "Dynamic Table Detection",
-    "Secure File Handling",
-    "Excel Workbook Export"
-  ]
+  "audience": {
+    "@type": "Audience",
+    "audienceType": "Accountants, auditors, founders, small businesses, and finance teams"
+  }
 }
 </script>
 <script type="application/ld+json">
@@ -102,18 +96,18 @@
         <div class="home-hero-inner page">
             <div class="hero-copy anim-float">
                 <span class="badge-pill">For accountants, auditors, founders &amp; finance teams</span>
-                <h1 id="homeHeroTitle" class="display">Every statement, <em>rebuilt</em> as a workbook you can trust.</h1>
+                <h1 id="homeHeroTitle" class="display">Turn a bank statement PDF into an <em>Excel workbook</em> you can review.</h1>
                 <p class="hero-subhead">
-                    Upload a bank statement PDF — typed or scanned — and get back the same rows,
-                    columns, and balances, laid out in Excel exactly as they appeared.
+                    Exact_Copy keeps every word the converter extracts in visual row order and
+                    approximate page position. Table_Data adds a best-effort transaction view you can clean in Excel.
                 </p>
                 <div class="hero-actions">
                     <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="hero_convert_click">Convert a PDF free →</a>
                     <a href="#workflow" class="link-underline">See how it works</a>
                 </div>
                 <div class="hero-stats">
-                    <div><div class="stat-number">1</div><div class="stat-label">free conversion — no sign-up</div></div>
-                    <div><div class="stat-number">5</div><div class="stat-label">per month with a free account</div></div>
+                    <div><div class="stat-number">5</div><div class="stat-label">free conversions each month</div></div>
+                    <div><div class="stat-number">1 link</div><div class="stat-label">secure sign-in — no password</div></div>
                     <div><div class="stat-number">Auto</div><div class="stat-label">file expiry after processing</div></div>
                 </div>
             </div>
@@ -144,7 +138,7 @@
                         </div>
                     </div>
                 </div>
-                <p class="transform-caption mono">layout preserved · headers detected · balances aligned</p>
+                <p class="transform-caption mono">visual rows retained · geometry approximated · table view included</p>
                 <p class="sample-links mono">Real example: <a href="{{ url_for('static', filename='sample-statement.pdf') }}" download data-track-event="sample_pdf_download">input PDF</a> → <a href="{{ url_for('static', filename='sample-statement.xlsx') }}" download data-track-event="sample_xlsx_download">converted workbook</a></p>
             </div>
         </div>
@@ -155,7 +149,7 @@
         <span class="chip" role="listitem">Text PDFs</span>
         <span class="chip" role="listitem">Scanned PDFs</span>
         <span class="chip" role="listitem">Multi-page tables</span>
-        <span class="chip" role="listitem">500 MB uploads (Enterprise)</span>
+        <span class="chip" role="listitem">Files up to {{ max_upload_mb }} MB</span>
         <a class="chip" role="listitem" href="{{ url_for('pages.bank_index') }}">Guides by bank →</a>
     </div>
 
@@ -166,7 +160,7 @@
                 <p class="eyebrow">Workflow</p>
                 <h2 id="workflowTitle" class="display section-title">One focused flow, from PDF to spreadsheet.</h2>
             </div>
-            <p class="muted split-head-note">The product is built around a single job: upload a statement, recreate what's on the page inside Excel, then download and review — nothing extra to configure.</p>
+            <p class="muted split-head-note">Upload a statement, preserve the extracted page structure in Exact_Copy, then download and review it in Excel. Table_Data is included as a convenience view.</p>
         </div>
         <div class="hairline-grid workflow-cards">
             <article>
@@ -176,13 +170,13 @@
             </article>
             <article>
                 <div class="step-num" aria-hidden="true">02</div>
-                <h3>Recreate the layout</h3>
-                <p class="muted">Text and coordinates — or OCR coordinates for scans — are placed into Excel cells the way they appeared on the page.</p>
+                <h3>Preserve the visual rows</h3>
+                <p class="muted">Exact_Copy keeps every extracted word in visual row order and places it into cells using the word's approximate page position.</p>
             </article>
             <article>
                 <div class="step-num" aria-hidden="true">03</div>
-                <h3>Download and review</h3>
-                <p class="muted">Headers, summaries, transaction lines, and amounts stay as reviewable text so you can clean the sheet for your workflow.</p>
+                <h3>Download, review, and clean</h3>
+                <p class="muted">Use Exact_Copy as the source-faithful view and Table_Data as a best-effort table. Check rows and columns against the PDF before relying on the data.</p>
             </article>
         </div>
     </section>
@@ -191,30 +185,30 @@
     <section class="band-dark" aria-labelledby="accuracyTitle">
         <div class="page section">
             <div class="accuracy-head">
-                <p class="eyebrow eyebrow--lime">Accuracy direction</p>
-                <h2 id="accuracyTitle" class="display section-title">Built around table geometry, not one bank's template.</h2>
-                <p class="muted">Statements vary by country, language, and layout. The extraction flow prioritizes document structure first, text second, and a reviewable workbook last.</p>
+                <p class="eyebrow eyebrow--lime">Fidelity you can inspect</p>
+                <h2 id="accuracyTitle" class="display section-title">Preserve the page before interpreting the table.</h2>
+                <p class="muted">Statements vary by country, language, and layout. Exact_Copy retains all successfully extracted text with approximate page geometry; Table_Data separately attempts to organise detected transactions.</p>
             </div>
             <div class="feature-cards">
                 <div class="card feature-card">
                     <span class="feature-swatch" style="background:var(--coral);"></span>
-                    <h3>Dynamic headers</h3>
-                    <p class="muted">Column positions are read from the file and reused when later pages omit the header row.</p>
+                    <h3>Visual rows first</h3>
+                    <p class="muted">Headers, summaries, transaction lines, and other extracted text stay in visual reading order instead of being filtered out.</p>
                 </div>
                 <div class="card feature-card">
                     <span class="feature-swatch" style="background:var(--lime);"></span>
                     <h3>Text before OCR</h3>
-                    <p class="muted">Native PDF text is used when available; OCR is reserved for scanned or image-heavy statements.</p>
+                    <p class="muted">Native PDF text is used when available. Scanned pages need OCR, which can misread characters or positions and should be checked against the PDF.</p>
                 </div>
                 <div class="card feature-card">
                     <span class="feature-swatch" style="background:var(--mist);"></span>
-                    <h3>Review context</h3>
-                    <p class="muted">Raw extraction context stays in the workbook so unclear rows can be checked, not silently hidden.</p>
+                    <h3>Two useful views</h3>
+                    <p class="muted">Exact_Copy is the layout-preserving extraction. Table_Data is a best-effort convenience sheet for filtering, cleanup, and analysis.</p>
                 </div>
                 <div class="card feature-card">
                     <span class="feature-swatch" style="background:var(--gold);"></span>
                     <h3>Feedback loop</h3>
-                    <p class="muted">Report a poor conversion after a job so the parser improves against real statement layouts.</p>
+                    <p class="muted">Flag rows or columns that need attention after a job so the parser can improve against real statement layouts.</p>
                 </div>
             </div>
         </div>
@@ -239,7 +233,7 @@
     <!-- Final CTA -->
     <section class="cta-band" aria-labelledby="ctaTitle">
         <h2 id="ctaTitle" class="display cta-title">Convert your next<br>bank statement into Excel.</h2>
-        <p class="cta-sub">1 free conversion as a guest — 5 a month with a free account. No credit card needed.</p>
+        <p class="cta-sub">A free account includes 5 conversions a month. Sign in with a one-time email link — no password or credit card needed.</p>
         <div class="cta-actions">
             <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="footer_convert_click">Convert a PDF free</a>
             <a href="{{ url_for('pages.pricing') }}" class="btn-pill btn-pill--ghost-dark btn-pill--big">View pricing</a>

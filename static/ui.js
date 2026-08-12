@@ -7,7 +7,73 @@
         });
     }
 
+    function setupNavigation() {
+        const navToggle = document.getElementById('navToggle');
+        const navMenu = document.getElementById('navMenu');
+        const navContainer = document.getElementById('navContainer');
+
+        if (!navToggle || !navMenu || !navContainer) return;
+
+        function closeNav() {
+            navMenu.classList.remove('active');
+            navContainer.classList.remove('nav-open');
+            navToggle.classList.remove('active');
+            navToggle.setAttribute('aria-expanded', 'false');
+        }
+
+        navToggle.addEventListener('click', function () {
+            const isOpen = navMenu.classList.toggle('active');
+            navContainer.classList.toggle('nav-open', isOpen);
+            navToggle.classList.toggle('active', isOpen);
+            navToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            if (isOpen) {
+                const firstLink = navMenu.querySelector('a');
+                if (firstLink) firstLink.focus();
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && navMenu.classList.contains('active')) {
+                closeNav();
+                navToggle.focus();
+            }
+        });
+
+        document.addEventListener('click', function (event) {
+            if (navMenu.classList.contains('active') && !navContainer.contains(event.target)) {
+                closeNav();
+            }
+        });
+    }
+
+    function setupTracking() {
+        document.querySelectorAll('[data-track-event]').forEach(function (element) {
+            element.addEventListener('click', function () {
+                const eventType = element.getAttribute('data-track-event');
+                if (!eventType) return;
+
+                const payload = JSON.stringify({
+                    event_type: eventType,
+                    path: window.location.pathname
+                });
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon('/track/event', new Blob([payload], { type: 'application/json' }));
+                    return;
+                }
+                fetch('/track/event', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: payload,
+                    keepalive: true
+                }).catch(function () {});
+            });
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        setupNavigation();
+        setupTracking();
+
         const revealElements = Array.from(document.querySelectorAll('[data-reveal]'));
         if (!revealElements.length) return;
 

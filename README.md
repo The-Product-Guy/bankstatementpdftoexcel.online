@@ -1,14 +1,14 @@
-# 🏦 PDF to Excel Converter - Universal Bank Statement Parser
+# 🏦 PDF to Excel Converter - Geometry-First Bank Statement Parser
 
-A modern web application for converting bank statement PDFs to Excel format with universal extraction. Features automatic transaction extraction, reliable OCR, and secure file processing.
+A modern web application for converting bank statement PDFs to Excel format with geometry-based extraction, OCR support, and secure file processing.
 
 ## ✨ Key Features
 
 - **🌐 Web-based Interface** - Beautiful, responsive UI with drag-and-drop upload
-- **🏦 Universal Bank Support** - Works across text-based and scanned statements  
-- **🤖 Smart Processing** - Auto-detects PDF type (text or scanned) and recreates the statement's own table layout
-- **📊 Exact-Copy Output** - The bank's own rows and columns land in Excel unchanged; a `Full_Text` sheet preserves everything else on the page
-- **🔒 Secure Processing** - Files automatically deleted after conversion
+- **🏦 Geometry-Based Bank Support** - Designed for varied text-based and scanned statement layouts
+- **🤖 Smart Processing** - Auto-detects PDF type, builds the layout-preserving `Exact_Copy` sheet, and attempts a convenient `Table_Data` view
+- **📊 Layout-Preserving Output** - `Exact_Copy` retains every successfully extracted word in visual row order with approximate page geometry; `Table_Data` adds a best-effort transaction view
+- **🔒 Secure Processing** - Source PDFs are deleted after processing unless the user explicitly opts into temporary feedback retention
 - **📱 Responsive Design** - Works seamlessly on desktop and mobile devices
 - **☁️ Cloud Ready** - Production-ready deployment configuration for Railway
 
@@ -18,7 +18,7 @@ A modern web application for converting bank statement PDFs to Excel format with
 
 ## 🏦 Supported Banks
 
-Universal parser designed to handle any bank statement format (text-based or scanned) with raw table extraction.
+The geometry-first parser is designed for varied bank statement formats, including text-based and scanned PDFs. Scans depend on OCR and require careful output review.
 
 ## 📁 Clean Project Structure
 
@@ -48,7 +48,7 @@ PDF-XLS-Converter/
 
 - **Python 3.9+**
 - **Redis** (Required for background processing)
-- **Tesseract OCR** (for Image-based PDFs)
+- **Tesseract OCR** (fallback for image-based PDFs)
 - **Poppler utilities** (for PDF processing)
 
 ### Quick Start (Recommended)
@@ -104,7 +104,8 @@ This script will:
 
    **Terminal 2 (Celery Worker):**
    ```bash
-   celery -A celery_config.celery_app worker --loglevel=info
+   SERVICE_ROLE=local-worker celery -A celery_config.celery_app worker \
+     --loglevel=info --pool=solo --queues=conversion,maintenance,celery --beat
    ```
 
    **Terminal 3 (Flask App):**
@@ -129,8 +130,11 @@ This script will:
    - Connect your GitHub repository at [railway.app](https://railway.app)
    - Railway auto-detects all configurations
    - Set `SECRET_KEY=your-production-secret-key`
-   - Set `PUBLIC_BASE_URL=https://your-domain.com` for canonical sitemap URLs and production SocketIO CORS defaults
-   - Deploy automatically with zero configuration
+   - Set `CANONICAL_BASE_URL=https://your-domain.com` for canonical URLs, magic links, and trusted production host validation
+   - Set `RESEND_API_KEY` and a `RESEND_FROM_EMAIL` address on a verified Resend domain; conversion uploads require magic-link sign-in
+   - Create web (`SERVICE_ROLE=web`), worker (`SERVICE_ROLE=worker`), and one scheduler (`SERVICE_ROLE=scheduler`) services
+   - Give all three services the same Postgres, Redis, storage, and application configuration
+   - If the public domain is Cloudflare-proxied, configure the Cloudflare-to-Railway origin protection below before enabling it in Railway.
 
 3. **Production Features**
    - ✅ Automatic HTTPS
@@ -152,14 +156,15 @@ pip3
 
 ## 📊 Output Excel Format
 
-The workbook is an **exact copy of the PDF** — the bank's own columns, one Excel row per PDF table row, all values as strings:
+The workbook prioritises source fidelity before table cleanup. `Exact_Copy` keeps every word the engine successfully extracts, groups the words into visual rows, and spreads them across Excel cells using approximate PDF coordinates. `Table_Data` is a separate convenience view whose detected headers, rows, and columns are best effort:
 
 | Sheet | Purpose |
 |-------|---------|
-| `sheet1` | The statement table with the bank's own header row (e.g. `TXN DT \| VALUE_DT \| BRN \| DESCRIPTION \| REFERENCE \| DEBITS \| CREDITS \| BALANCE`). Wrapped descriptions are merged into their transaction's row. |
-| `Full_Text` | Every visual line of every page in reading order (Page \| Line \| Source \| Text) — account details, headers, footers, and anything not classified as table content. Nothing is silently dropped. |
+| `Exact_Copy` | Every successfully extracted word in visual row order, including headings, summaries, transaction lines, and footers. Cell placement approximates the horizontal geometry of the PDF. |
+| `Table_Data` | Best-effort detection of transaction headers, rows, columns, and wrapped descriptions for convenient filtering and cleanup. A materially different later-page schema is written to `Table_Data_2`, `Table_Data_3`, and so on instead of truncating earlier rows. |
+| `Full_Text` | Searchable page, line, extraction source, and text for every extracted visual line. |
 
-Delete whatever you don't need from `Full_Text`; the table sheet stays clean for sums and pivots.
+Keep the original workbook as a review copy. Clean a duplicate of `Exact_Copy` or start from `Table_Data`, and verify important rows, columns, dates, amounts, and balances against the PDF. Scanned documents use OCR, which can miss words, confuse characters, or shift placement.
 
 ## 🔧 Configuration
 
@@ -168,19 +173,30 @@ Delete whatever you don't need from `Full_Text`; the table sheet stays clean for
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
 | `SECRET_KEY` | Yes in production | Flask session security. Required when `APP_ENV=production`, `FLASK_ENV=production`, or Railway runtime vars are present. | Local dev fallback |
-| `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on both web and worker services so users, jobs, analytics, and feedback share one durable store. | `sqlite:///local.db` locally |
+| `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on web, worker, and scheduler services so users, jobs, analytics, feedback, and retention share one durable store. | `sqlite:///local.db` locally |
+| `RESEND_API_KEY` | Yes in production | Sends the mandatory one-time sign-in link. | None |
+| `RESEND_FROM_EMAIL` | Yes in production | Sender on a verified Resend domain that can deliver sign-in links to users. | `onboarding@resend.dev` for limited development only |
 | `APP_ENV` / `FLASK_ENV` | No | Set either to `production` to enable strict production defaults. | - |
 | `PORT` | No | Application port | `5001` |
-| `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Recommended in production | Public site origin for sitemap URLs and production SocketIO CORS defaults. | Request host |
-| `SOCKETIO_CORS_ORIGINS` / `ALLOWED_ORIGINS` | No | Comma-separated SocketIO origins. Overrides the public base URL default. | Public base in production, `*` locally |
-| `SOCKETIO_ASYNC_MODE` | No | Flask-SocketIO runtime mode. Keep `threading` unless a different deployment runtime is intentionally configured. | `threading` |
+| `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Yes in production | Canonical public origin used for crawler URLs, emailed links, Stripe redirects, and host validation. | Request host locally |
+| `SERVICE_ROLE` | Yes per Railway service | `web`, `worker`, or `scheduler`. Run exactly one scheduler replica. | `web` |
 | `WEB_THREADS` | No | Gunicorn thread count for the web service entrypoint. | `20` |
 | `SESSION_COOKIE_SECURE` | No | Enables secure session cookies. | `true` in production, `false` locally |
-| `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. Leave off for availability-first behavior. | `false` |
-| `MAX_UPLOAD_MB` | No | Upload size limit for guest/default conversions. Plan-specific limits may be higher. | `20` |
+| `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. | `true` in production, `false` locally |
+| `CLOUDFLARE_PROXY_ENABLED` | No | Enables authenticated Cloudflare-to-Railway origin requests. | `false` |
+| `CLOUDFLARE_ORIGIN_SECRET` | Required when Cloudflare protection is enabled | At least 32 random characters shared only by Railway and Cloudflare's edge rule. | Empty |
+| `RATE_LIMIT_CONVERT` | No | Per-IP conversion limit; it remains independent from sign-in controls. | `15` per hour |
+| `RATE_LIMIT_AUTH_IP` | No | Magic-link requests allowed per IP in the auth window. | `10` |
+| `RATE_LIMIT_AUTH_EMAIL` | No | Magic-link requests allowed per normalized email in the auth window. | `5` |
+| `RATE_LIMIT_AUTH_WINDOW_SECONDS` | No | Shared magic-link limiter window. | `900` |
+| `AUTH_DISTINCT_EMAIL_ALERT_THRESHOLD` | No | Distinct normalized emails from an IP that trigger an abuse warning. | `5` |
+| `AUTH_DISTINCT_EMAIL_WINDOW_SECONDS` | No | Window for the distinct-email abuse observation. | `86400` |
+| `MAX_UPLOAD_MB` | No | PDF upload cap for every plan; values above the public cap are clamped. | `50` |
+| `FILE_SPLITTER_URL` | No | Splitter link shown when a PDF exceeds the file-size or page limit. | `https://smallpdfsplit.online/` |
 | `MAX_PAGES` | No | Maximum PDF pages processed per conversion. | `250` |
 | `RESULT_RETENTION_HOURS` | No | Retention window for generated outputs in object storage. | `24` |
 | `LOCAL_RESULT_RETENTION_HOURS` | No | Retention window for locally stored generated outputs. | `RESULT_RETENTION_HOURS` |
+| `ACTIVE_UPLOAD_GRACE_HOURS` | No | Maximum age for protecting queued/processing local inputs from cleanup. | `24` |
 | `FEEDBACK_RETENTION_DAYS` | No | Retention window for feedback submissions and copied source/output files. | `30` |
 | `FIRST_PARTY_ANALYTICS_RETENTION_DAYS` | No | Retention window for internal page-view and login-event logs shown in the admin portal. | `180` |
 | `FIRST_PARTY_ANALYTICS_SWEEP_MINS` | No | Minimum interval between analytics cleanup sweeps. | `1440` |
@@ -191,9 +207,20 @@ Delete whatever you don't need from `Full_Text`; the table sheet stays clean for
 | `VALIDATION_SUMMARY_SAMPLE_PAGES` | No | Number of pages sampled from the beginning and end for opening/closing balance and total extraction. | `2` |
 | `GA_MEASUREMENT_ID` / `GTM_CONTAINER_ID` | No | Analytics IDs injected into public pages. | - |
 
+### Cloudflare-to-Railway Origin Protection
+
+Use this only when the production hostname is proxied through Cloudflare. It prevents a direct Railway-origin request from choosing a forged visitor IP or bypassing Cloudflare controls.
+
+1. Generate a random secret of at least 32 characters and add it to Railway as `CLOUDFLARE_ORIGIN_SECRET`; keep `CLOUDFLARE_PROXY_ENABLED=false` initially.
+2. In Cloudflare, create a Transform Rule for the proxied production hostname that **overwrites** the request header `X-Statement-Origin` with that exact secret. Do not append the header and do not let a client-supplied value pass through.
+3. Confirm the rule is active, then set `CLOUDFLARE_PROXY_ENABLED=true` in the Railway web service and deploy it. The worker and scheduler do not receive public HTTP traffic, but may share the setting safely.
+4. Verify normal requests through the Cloudflare hostname. In production, unauthenticated direct-origin requests are rejected with HTTP `421`; `/health` and `/health/detailed` remain exempt so Railway health checks can reach the service.
+
+Enable the Railway flag only after the Cloudflare overwrite rule is live. Reversing that order rejects all normal public requests.
+
 ### File Limits
 
-- **Maximum file size**: 20MB by default; paid plans allow larger uploads up to the enterprise cap
+- **Maximum file size**: 50 MB for every plan. Larger PDFs are directed to the file splitter.
 - **Supported formats**: PDF only
 - **Processing timeout**: 5 minutes
 - **Concurrent uploads**: Handled automatically
@@ -231,26 +258,29 @@ The primary parser is universal. Prefer improving shared layout detection, norma
 ### Technical Stack
 
 - **Backend**: Flask, Gunicorn
-- **PDF Processing**: PDFPlumber, pdf2image
-- **OCR**: Tesseract, Pytesseract  
+- **PDF Processing**: PDFPlumber, pinned PyMuPDF, pdf2image fallback
+- **OCR**: RapidOCR/ONNX Runtime, with Tesseract fallback
 - **Data Processing**: Pandas, OpenPyXL
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript
 - **Deployment**: Railway, Nixpacks
 
 ## 🔍 Processing Details
 
-### HDFC Bank (Image-based PDFs)
-```
-PDF → Images → OCR → Text → Regex Parsing → Transactions
-```
-- **Method**: Tesseract OCR at 150 DPI
-- **Format**: Pipe-delimited (`|`) transaction lines
-- **Pattern**: `DD/MM/YY | Description | Reference | Amounts`
-- **Performance**: ~1-2 minutes for 100MB files
+### Scanned statements
 
-### ICICI Bank (Text-based PDFs)
+```text
+PDF → PyMuPDF render → RapidOCR coordinates → visual rows → Exact_Copy + Table_Data
 ```
-PDF → Text Extraction → Pattern Matching → Transactions
+
+- **Standard**: 150 DPI; **High Quality**: 200 DPI.
+- Tesseract is used only when the primary ONNX path is unavailable or lacks useful coverage.
+- Suspect financial cells may receive a bounded row-band re-read. A value changes only when independent direct OCR renders agree; arithmetic is diagnostic only.
+- Scanned workbooks are always marked for review against the source PDF.
+
+### Text-based statements
+
+```text
+PDF → embedded words and coordinates → visual rows → Exact_Copy + Table_Data
 ```
 - **Method**: PDFPlumber direct text extraction
 - **Format**: Tabular with fixed columns
@@ -264,7 +294,7 @@ PDF → Text Extraction → Pattern Matching → Transactions
 | Issue | Cause | Solution |
 |-------|--------|----------|
 | "No transactions found" | Unsupported PDF format | Try different bank selection |
-| "File too large" | >100MB file | Split PDF or compress |
+| "File too large" | File exceeds 50 MB | Use the linked PDF splitter, then upload each part |
 | OCR errors | Poor image quality | Use higher quality PDF |
 | Missing dependencies | System packages not installed | Install Tesseract/Poppler |
 

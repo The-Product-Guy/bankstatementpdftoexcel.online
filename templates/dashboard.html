@@ -18,35 +18,22 @@
     {% endif %}
     {% endwith %}
 
-{% if beta_mode %}
-    <div class="flash-messages">
-        <div class="alert alert-warning" role="status">
-            <strong>Beta:</strong> Statement Converter is in active testing.
-            {% if english_only_beta %}
-                English statements are currently supported.
-            {% endif %}
-            You can choose whether to retain the source PDF temporarily for issue reports.
-        </div>
-    </div>
-{% endif %}
-
     <div class="dashboard-header">
         <h1 class="display">Convert a statement.</h1>
-        {% if current_user_email %}
-        <p>Upload a bank statement PDF and download a formatted Excel file.</p>
+        {% if conversion_authenticated %}
+        <p>Upload a bank statement PDF and download an Excel workbook designed to preserve its visual rows and column positions.</p>
         {% else %}
-        <p>Upload first. We only ask for your email when the Excel file is ready to download.</p>
+        <p>Sign in with a secure one-time email link before uploading a bank statement PDF.</p>
         {% endif %}
     </div>
 
+    {% if conversion_authenticated %}
     <div class="converter-card" id="convert">
         <div class="converter-header">
             <h2>Upload your PDF</h2>
             <p>Drag and drop or click to browse</p>
         </div>
         <form id="uploadForm" action="{{ url_for('converter.convert') }}" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="bank" value="universal">
-            <input type="hidden" name="extraction_mode" value="layout_replica">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="file-upload-area" id="fileUploadArea">
@@ -68,7 +55,7 @@
                     <p class="upload-text">
                         <strong>Drop your PDF here</strong> or click to browse
                     </p>
-                    <p class="upload-subtext" id="uploadHelp">Max file size: {{ max_upload_mb }}MB &middot; Max pages: {{ max_pages }}</p>
+                    <p class="upload-subtext" id="uploadHelp">Max file size: {{ max_upload_mb }} MB &middot; Max pages: {{ max_pages }}</p>
                 </div>
             </div>
 
@@ -92,7 +79,7 @@
                         <span class="quality-radio"></span>
                         <div class="quality-info">
                             <span class="quality-name">Standard</span>
-                            <span class="quality-desc">Fast, preserves visible PDF layout</span>
+                            <span class="quality-desc">Fast, maps extracted text to the PDF layout</span>
                         </div>
                     </label>
                     <label class="quality-option" data-quality="high">
@@ -109,11 +96,12 @@
             <div class="feedback-field feedback-consent">
                 <label class="consent-label">
                     <input type="checkbox" name="retain_input_pdf" id="retainInputPdf" value="1">
-                    <span>Retain source PDF for feedback reports</span>
+                    <span>Optional: keep this PDF for a feedback report</span>
                 </label>
                 <p class="consent-note">
-                    If selected, the PDF is kept during the download window so it can be attached to feedback.
-                    Attached feedback copies are deleted after {{ feedback_retention_days }} days.
+                    Leave this unchecked to delete the source PDF after processing. If selected, it remains
+                    available during the download window so you can explicitly attach it to a feedback report.
+                    Attached copies are deleted after {{ feedback_retention_days }} days.
                 </p>
             </div>
 
@@ -126,23 +114,37 @@
                 </div>
             </button>
         </form>
-        <p class="converter-note">Supports major bank statement layouts. Output files are available for a limited download window.</p>
-        {% if not current_user_email %}
-        <p class="converter-note subtle">No account is required to upload. Email is collected at download so we can link the result to you.</p>
-        {% endif %}
-        {% if english_only_beta %}
-        <p class="converter-note subtle">Current beta scope: English statement layouts.</p>
-        {% endif %}
+        <p class="converter-note">Exact_Copy preserves every successfully extracted word in visual row order. Table_Data organises detected rows and columns for cleanup. Output files are available for a limited download window.</p>
         <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
     </div>
+    {% else %}
+    <div class="converter-card converter-auth-gate" id="convert">
+        <div class="converter-header">
+            {% if conversion_auth_unavailable %}
+            <p class="eyebrow">Temporarily unavailable</p>
+            <h2>Sign-in verification is unavailable</h2>
+            <p>We cannot safely accept statement uploads right now. Please try again shortly.</p>
+            {% else %}
+            <p class="eyebrow">Secure sign-in required</p>
+            <h2>Verify your email before uploading</h2>
+            <p>A one-time magic link protects the free conversion service from anonymous abuse and links each workbook to its owner. No password or credit card is required.</p>
+            {% endif %}
+        </div>
+        {% if not conversion_auth_unavailable %}
+        <a href="{{ url_for('auth.signin') }}" class="btn-pill btn-pill--coral btn-pill--big">Sign in to convert</a>
+        <p class="converter-note subtle">Your PDF is not uploaded until after sign-in.</p>
+        {% endif %}
+    </div>
+    {% endif %}
 </main>
 
+{% if conversion_authenticated %}
 <!-- Progress Modal -->
 <div id="progressModal" class="progress-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="progressTitle" aria-describedby="progressDesc" aria-hidden="true" tabindex="-1">
     <div class="progress-content">
         <div class="progress-header">
             <h3 id="progressTitle">Processing Your PDF</h3>
-            <p id="progressDesc">Extracting transaction data...</p>
+            <p id="progressDesc">Reconstructing rows and columns...</p>
         </div>
 
         <div class="progress-body">
@@ -170,7 +172,7 @@
                 <div class="step-icon">
                     <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M6 6v8"/></svg>
                 </div>
-                <span class="step-text">Extracting transaction data...</span>
+                <span class="step-text">Reconstructing rows and columns...</span>
                 <div class="step-status">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4l2.5 1.5"/></svg>
                 </div>
@@ -202,7 +204,7 @@
         <div class="result-icon" id="resultIcon"></div>
         <div class="result-body">
             <h3 id="resultTitle">Conversion Complete</h3>
-            <p id="resultMessage">Your file has been downloaded.</p>
+            <p id="resultMessage">Your workbook is ready. Check that its rows and columns match the PDF.</p>
             <div class="result-meta" id="resultMeta"></div>
         </div>
         <div class="result-actions" id="resultActions"></div>
@@ -217,6 +219,7 @@
         <p class="feedback-desc">Your feedback helps us support more bank statement formats.</p>
 
         <form id="feedbackForm">
+            <input type="hidden" name="csrf_token" id="feedbackCsrfToken" value="{{ csrf_token() }}">
             <input type="hidden" name="job_id" id="feedbackJobId">
             <input type="hidden" name="quality_used" id="feedbackQuality">
             <input type="hidden" name="extraction_rows" id="feedbackRows">
@@ -226,8 +229,10 @@
                 <label>What went wrong?</label>
                 <select name="feedback_type" id="feedbackType">
                     <option value="empty_result">No data was extracted</option>
-                    <option value="incorrect_data">Data is incorrect or garbled</option>
-                    <option value="formatting">Table structure is wrong</option>
+                    <option value="missing_or_extra_rows">Rows are missing or duplicated</option>
+                    <option value="column_mismatch">Values are under the wrong columns</option>
+                    <option value="row_split_merge">A row was incorrectly split or merged</option>
+                    <option value="ocr_text">Text or numbers are incorrect or garbled</option>
                     <option value="other">Other issue</option>
                 </select>
             </div>
@@ -261,6 +266,7 @@
         <h3 id="limitTitle">File limit reached</h3>
         <p id="limitMessage">Your file exceeds the allowed limit.</p>
         <div class="limit-actions">
+            <a class="btn-primary" href="{{ file_splitter_url }}" target="_blank" rel="noopener noreferrer">Split your PDF</a>
             <button type="button" class="btn-secondary" id="limitClose">Close</button>
         </div>
     </div>
@@ -288,9 +294,11 @@
         </form>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+{% if conversion_authenticated %}
+<script src="{{ static_asset_url('script.min.js') }}"></script>
+{% endif %}
 {% endblock %}

@@ -2,7 +2,7 @@
 
 {% block title %}Pricing - Statement Converter{% endblock %}
 
-{% block meta_description %}Simple pricing for bank statement conversion. Free tier included. Upgrade for more conversions and larger files.{% endblock %}
+{% block meta_description %}Simple pricing for bank statement conversion. Every plan supports PDFs up to {{ max_upload_mb }} MB; upgrade when you need more monthly conversions.{% endblock %}
 
 {% block meta_keywords %}pdf to excel pricing, bank statement converter pricing, excel converter plans{% endblock %}
 
@@ -12,11 +12,11 @@
 
 {% block og_title %}Pricing - Statement Converter{% endblock %}
 
-{% block og_description %}Simple pricing for bank statement conversion. Free tier included. Upgrade for more conversions and larger files.{% endblock %}
+{% block og_description %}Every plan supports PDFs up to {{ max_upload_mb }} MB. Upgrade when you need more monthly conversions.{% endblock %}
 
 {% block twitter_title %}Pricing - Statement Converter{% endblock %}
 
-{% block twitter_description %}Simple pricing for bank statement conversion. Free tier included. Upgrade for more conversions and larger files.{% endblock %}
+{% block twitter_description %}Every plan supports PDFs up to {{ max_upload_mb }} MB. Upgrade when you need more monthly conversions.{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">
@@ -150,7 +150,7 @@
         <div class="plan-card">
             <div class="plan-name">Free</div>
             <div class="plan-price"><span class="plan-amount display">$0</span><span class="plan-period">/ month</span></div>
-            <p class="plan-blurb">For occasional statements and trying things out.</p>
+            <p class="plan-blurb">For occasional statement conversion and review.</p>
             <div class="plan-cta">
                 {% if current_user_email and current_plan == 'free' %}
                     <span class="btn-pill btn-pill--ghost-light plan-current" aria-disabled="true">Current plan</span>
@@ -161,7 +161,7 @@
             <div class="plan-divider"></div>
             <ul class="plan-features">
                 <li>5 conversions per month</li>
-                <li>Files up to 20 MB</li>
+                <li>Files up to {{ max_upload_mb }} MB</li>
                 <li>Common statement layouts</li>
                 <li>Standard OCR processing</li>
                 <li>Email support</li>
@@ -188,7 +188,7 @@
             <div class="plan-divider"></div>
             <ul class="plan-features">
                 <li>50 conversions per month</li>
-                <li>Files up to 100 MB</li>
+                <li>Files up to {{ max_upload_mb }} MB</li>
                 <li>Advanced OCR processing</li>
                 <li>Priority processing</li>
                 <li>Priority email support</li>
@@ -214,7 +214,7 @@
             <div class="plan-divider"></div>
             <ul class="plan-features">
                 <li>Unlimited conversions</li>
-                <li>Files up to 500 MB</li>
+                <li>Files up to {{ max_upload_mb }} MB</li>
                 <li>Custom statement-format support</li>
                 <li>Premium OCR with AI enhancement</li>
                 <li>24/7 priority support</li>

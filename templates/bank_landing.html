@@ -2,7 +2,7 @@
 
 {% block title %}Convert {{ bank.name }} Statements to Excel - Statement Converter{% endblock %}
 
-{% block meta_description %}Convert {{ bank.name }} bank statement PDFs to Excel. {{ bank.columns|join(', ') }} — the same rows and columns as your statement, typed or scanned.{% endblock %}
+{% block meta_description %}Convert {{ bank.name }} statement PDFs to Excel with layout-preserving Exact_Copy and best-effort Table_Data sheets. Text and scanned PDFs supported.{% endblock %}
 
 {% block canonical_url %}{{ public_url_for('pages.bank_landing', slug=bank.slug) }}{% endblock %}
 
@@ -22,9 +22,16 @@
 {% block content %}
 <main>
     <header class="pricing-intro page">
+        <nav class="breadcrumbs" aria-label="Breadcrumb">
+            <a href="{{ url_for('pages.home') }}">Home</a>
+            <span aria-hidden="true">/</span>
+            <a href="{{ url_for('pages.bank_index') }}">Bank guides</a>
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{{ bank.name }}</span>
+        </nav>
         <p class="eyebrow">{{ bank.country }}</p>
         <h1 class="display">Convert {{ bank.name }} Statements to Excel</h1>
-        <p class="muted">Upload a {{ bank.name }} statement PDF — typed or scanned — and download the same rows and columns in Excel. Nothing reformatted, nothing silently dropped.</p>
+        <p class="muted">Upload a {{ bank.name }} statement PDF — typed or scanned — and download an Excel workbook with two views: layout-preserving Exact_Copy and best-effort Table_Data.</p>
     </header>
 
     <section class="section page bank-format" aria-labelledby="formatTitle">
@@ -38,7 +45,7 @@
                 <div class="spec-row"><span class="label">Currency</span><span class="value">{{ bank.currency }}</span></div>
                 <div class="spec-row"><span class="label">Date format</span><span class="value">{{ bank.date_format }}</span></div>
                 <div class="spec-row"><span class="label">Typical columns</span><span class="value">{{ bank.columns|join(' · ') }}</span></div>
-                <div class="spec-row"><span class="label">Wrapped descriptions</span><span class="value">merged into one row</span></div>
+                <div class="spec-row"><span class="label">Wrapped descriptions</span><span class="value">best-effort merge in Table_Data</span></div>
             </div>
         </div>
     </section>
@@ -59,13 +66,13 @@
             </article>
             <article>
                 <div class="step-num" aria-hidden="true">02</div>
-                <h3>Recreate the layout</h3>
-                <p class="muted">Text and coordinates are placed into Excel cells the way they appeared on the page — {{ bank.name }}'s own headings included.</p>
+                <h3>Preserve the visual rows</h3>
+                <p class="muted">Exact_Copy keeps every successfully extracted word in visual row order and places it using approximate page geometry.</p>
             </article>
             <article>
                 <div class="step-num" aria-hidden="true">03</div>
                 <h3>Download and review</h3>
-                <p class="muted">One row per printed transaction, plus a Full_Text sheet carrying every line of the PDF so nothing is lost.</p>
+                <p class="muted">Use Exact_Copy to check the extracted page and Table_Data as a best-effort transaction view. Review rows, columns, and OCR text against the PDF.</p>
             </article>
         </div>
     </section>
@@ -82,9 +89,23 @@
         </div>
     </section>
 
+    <section class="section page related-guides" aria-labelledby="relatedBankGuidesTitle">
+        <p class="eyebrow">More statement formats</p>
+        <h2 id="relatedBankGuidesTitle" class="display section-title">Related bank conversion guides</h2>
+        <div class="related-guide-grid">
+            {% for related in related_banks %}
+            <article class="related-guide-card">
+                <p class="legal-updated">{{ related.country }}</p>
+                <h3><a href="{{ url_for('pages.bank_landing', slug=related.slug) }}">{{ related.name }} statement to Excel</a></h3>
+                <p>See the typical dates, amounts, headings, and wrapped descriptions used on {{ related.name }} statements.</p>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+
     <section class="cta-band" aria-labelledby="bankCtaTitle">
         <h2 id="bankCtaTitle" class="display cta-title">Convert your {{ bank.name }} statement now.</h2>
-        <p class="cta-sub">1 free conversion as a guest — 5 a month with a free account. No credit card needed.</p>
+        <p class="cta-sub">A free account includes 5 conversions a month. Secure one-time email sign-in; no password or credit card needed.</p>
         <div class="cta-actions">
             <a href="{{ url_for('converter.dashboard') }}" class="btn-pill btn-pill--coral btn-pill--big" data-track-event="bank_page_cta_click">Convert a PDF free</a>
             <a href="{{ url_for('pages.bank_index') }}" class="btn-pill btn-pill--ghost-dark btn-pill--big">All banks</a>

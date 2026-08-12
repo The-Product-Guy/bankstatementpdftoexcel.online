@@ -216,7 +216,7 @@ flowchart LR
 ```
 
 1.  **Web Tier**: Lightweight, handles uploads only. Returns a Job ID immediately.
-2.  **Queue**: Redis/BullMQ buffers bursts of traffic.
+2.  **Queue**: Redis/Celery buffers bursts of traffic.
 3.  **Worker Tier**: Auto-scaling cluster of workers that process documents.
     *   Can scale horizontally (add more servers).
     *   Isolates CPU-heavy OCR tasks from the web server.
@@ -226,7 +226,7 @@ flowchart LR
 ## Security & Data Privacy
 
 ### 1. Data Retention
-*   **Ephemeral Processing**: Files are processed in memory or temp storage and deleted immediately after processing.
+*   **Bounded Retention**: Temporary inputs and outputs are removed automatically after their configured processing, download, or feedback window.
 *   **OpenAI Zero Retention**: Negotiate "Zero Data Retention" usage with OpenAI (API data is not trained on).
 
 ### 2. Encryption
@@ -263,8 +263,9 @@ flowchart LR
 4.  **Scaling**: Can easily scale worker services independently of the web frontend.
 
 ### Service Structure
-*   `web`: Flask application (handles uploads, WebSocket connections).
+*   `web`: Flask application (handles uploads and authenticated status polling).
 *   `worker`: Celery worker (processes PDFs).
+*   `scheduler`: One Celery Beat replica (enqueues hourly retention sweeps).
 *   `redis`: Message broker and status store.
 
 ---
@@ -274,13 +275,13 @@ flowchart LR
 To handle long-running jobs (e.g., 3-5 mins), we need real-time feedback.
 
 ### Architecture
-1.  **WebSocket (Socket.IO)**: Used for real-time bidirectional communication.
-2.  **Redis Pub/Sub**: Workers publish progress updates to Redis channels.
+1.  **Redis status snapshots**: Workers store expiring JSON progress records.
+2.  **Authenticated polling**: The browser polls `/status/<job_id>` every two seconds while visible and more slowly while hidden.
 3.  **Flow**:
-    *   User uploads file -> Client subscribes to `job:<job_id>`.
-    *   Worker updates progress (e.g., "Processing Page 5/20") -> Redis.
-    *   Web server forwards Redis message -> WebSocket -> Client.
-    *   Client UI updates progress bar and log console.
+    *   User uploads a file and receives a job ID.
+    *   Worker updates progress (for example, "Processing Page 5/20") in Redis.
+    *   The web service verifies job ownership and returns the latest snapshot.
+    *   The client updates the progress bar and stops polling on completion or error.
 
 ---
 

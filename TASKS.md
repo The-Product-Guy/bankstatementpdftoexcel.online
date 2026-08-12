@@ -1,12 +1,12 @@
 # StatementFlow - Pending Tasks
 
-Last updated: 2026-07-03
+Last updated: 2026-08-11
 
 ---
 
 ## 2026-07-03 — Exact-Copy Fidelity Round (PR #1)
 
-Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/columns, nothing silently dropped, users delete unwanted content themselves). Spec: `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`. PR: https://github.com/The-Product-Guy/bankstatementpdftoexcel.online/pull/1 (merge = Railway deploy).
+Product direction locked: **preserve before interpreting**. `Exact_Copy` contains every successfully extracted word in visual row order and approximate page geometry; `Table_Data` is a best-effort convenience view that must not truncate rows when schemas change. Users clean the workbook themselves and verify scanned/OCR output against the PDF. Historical design spec: `docs/superpowers/specs/2026-07-03-exact-copy-extraction-design.md`.
 
 ### Shipped
 
@@ -14,7 +14,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **`Full_Text` sheet** — every visual line of every page; no-loss invariant (account info, headers, footers all recoverable).
 - [x] **Multi-token OCR boxes split per token** — poor scans no longer dump date+branch into one column (PART-02: dated rows 17 → 303, orphans 542 → 168).
 - [x] **Header-detected columns outrank positional inference** — one noisy page can't override real bank headers.
-- [x] **Marketing honesty**: free-tier copy matches code (guest = 1, free account = 5/mo); removed fake "API access" from pricing; removed third-party smallpdfsplit.online link; "Retry in high quality" reuses the selected file.
+- [x] **Marketing honesty**: free-tier copy matches code (verified free account = 5/mo); removed fake "API access" from pricing; removed third-party smallpdfsplit.online link; "Retry in high quality" reuses the selected file.
 - [x] 152 tests green; full OCR verification on both KVB sample statements.
 
 ### Open follow-ups
@@ -23,6 +23,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **Pricing still claims "Unlimited batch processing"** (enterprise) — no batch upload exists; same honesty issue as the removed API claim. Needs owner call.
 - [x] **Quota gating silently disables when `RESEND_API_KEY` is missing** (app.py) — a misconfigured deploy turns off all limits.
 - [x] **SEO content round — round one shipped 2026-07-09** (spec: `docs/superpowers/specs/2026-07-08-seo-round-design.md`): 12 US/UK/EU bank landing pages + `/convert/` index (parser format-validated first via synthetic fixtures — 4 parser gaps fixed); blog restructured to excerpt-only listing + 2 new posts (exact-copy deep dive, QuickBooks/Xero workflow); og-image 1.45 MB → 40 KB; socket.io scoped to dashboard; Western demo sample. **Later round:** India bank pages (HDFC/SBI/ICICI/KVB — samples already proven).
+- [x] **Semrush audit fixes (2026-07-11)** — report `Semrush-Site_Audit__Overview-...-10th_Jul_2026.pdf` root-caused to a scheme-less `CANONICAL_BASE_URL` on Railway: canonical/og/sitemap/robots URLs rendered without `https://`, so crawlers resolved them as relative paths → 25 broken canonicals, 25 broken internal links, 30 4XX pages, "sitemap not found", "invalid robots.txt". Fix: shared `site_urls.py` normalizer (forces `https://`) used by app.py + routes/pages.py + SocketIO CORS origin. Also `Disallow: /convert` → `/convert$` so the 26 `/convert/<bank>` landing pages are no longer robots-blocked (added `/convert/preflight` disallow). **Ops still required:** set `CANONICAL_BASE_URL=https://multistatementpdftoexcel.online` on Railway; Cloudflare "managed robots.txt" injects `Disallow: /` for Google-Extended/ClaudeBot/GPTBot/CCBot (blocks AI search) — disable the toggle in Cloudflare if AI visibility wanted.
 - [x] **UI trust round**: fake hero data eliminated — the 2026-07-08 ledger redesign ships an abstract PDF→XLSX hero visual (spec: `docs/superpowers/specs/2026-07-08-ledger-redesign-design.md`). Downloadable real sample shipped 2026-07-08: `static/sample-statement.pdf` → `static/sample-statement.xlsx`, linked from the home hero.
 
 ---
@@ -73,7 +74,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [x] **`app.py` is 1100+ lines** - Split into Flask Blueprints: `routes/auth.py` (254), `routes/billing.py` (277), `routes/converter.py` (280), `routes/pages.py` (212). `app.py` down to 407 lines (shared config + utilities). All 83 tests pass.
 - [x] **`print()` statements scattered** - Replaced all `print()` with `logger.warning()` in `app.py`.
 - [x] **Health check doesn't verify Redis/Celery** - `/health/detailed` now pings Redis and returns `degraded` (503) if any check fails.
-- [x] **No file cleanup job for expired S3 files** - Added `cleanup_expired_s3_results()` with configurable `S3_RESULT_RETENTION_HOURS` (default 24h). Runs hourly from home route.
+- [x] **No file cleanup job for expired S3 files** - Added scheduled retention cleanup with configurable input, output, feedback, and analytics windows. Runs hourly from the dedicated maintenance scheduler.
 - [x] **Version hardcoded as `1.0.0`** - Now reads from `APP_VERSION` env var (defaults to `dev`).
 
 ### Testing
@@ -89,7 +90,7 @@ Product direction locked: **Excel = exact copy of the PDF** (bank's own rows/col
 - [ ] **Multi-file upload / batch processing** - Upload and convert multiple PDFs at once.
 - [ ] **Conversion history retention** - Let users re-download past conversions (currently files deleted after download).
 - [ ] **Password-protected PDF support** - Common for bank statements; currently these fail silently.
-- [ ] **Non-English statement support** - Currently gated by `ENGLISH_ONLY_BETA` flag.
+- [ ] **Non-English statement validation** - The public geometry-first path no longer rejects non-English files, but OCR scripts and representative fixtures still need explicit coverage.
 - [ ] **Rate limiting feedback to user** - When rate limited, show remaining cooldown time.
 - [ ] **Admin dashboard improvements** - Currently minimal (job count + recent jobs). Could show conversion success rate, error breakdown, revenue metrics.
 - [ ] **Run full 128-page HDFC benchmark on Railway** - Record production baseline on real hardware.

@@ -31,32 +31,11 @@ const limitMessage = document.getElementById('limitMessage');
 const limitClose = document.getElementById('limitClose');
 const qualitySelector = document.getElementById('qualitySelector');
 
-// Initialize WebSocket connection
-let socket = null;
-
 // Initialize page
 document.addEventListener('DOMContentLoaded', function () {
     checkFormValidity();
     setupEventListeners();
-    initializeWebSocket();
 });
-
-// Initialize WebSocket connection
-function initializeWebSocket() {
-    socket = io();
-
-    socket.on('connect', function () {
-        console.log('Connected to server');
-    });
-
-    socket.on('progress_update', function (data) {
-        updateProgress(data);
-    });
-
-    socket.on('disconnect', function () {
-        console.log('Disconnected from server');
-    });
-}
 
 // Setup event listeners
 function setupEventListeners() {
@@ -119,6 +98,20 @@ function setupEventListeners() {
     // Prevent default drag behaviors on document
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         document.addEventListener(eventName, preventDefaults, false);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (activeJobId) {
+            scheduleStatusPoll(document.hidden ? 10000 : 0);
+        }
+    });
+
+    window.addEventListener('pagehide', event => {
+        if (event.persisted) pauseStatusPolling();
+        else stopStatusPolling();
+    });
+    window.addEventListener('pageshow', event => {
+        if (event.persisted && activeJobId) scheduleStatusPoll(0);
     });
 }
 
@@ -185,7 +178,7 @@ function validateFile(file) {
         return false;
     }
 
-    const maxSizeMb = parseInt(fileInput.dataset.maxSize || '100', 10);
+    const maxSizeMb = parseInt(fileInput.dataset.maxSize || '50', 10);
     const maxSize = maxSizeMb * 1024 * 1024;
     if (file.size > maxSize) {
         showLimitModal('FILE_TOO_LARGE', maxSizeMb);
@@ -200,7 +193,7 @@ function showLimitModal(type, limitValue, pageCount) {
 
     if (type === 'FILE_TOO_LARGE') {
         limitTitle.textContent = 'File too large';
-        limitMessage.textContent = `This file exceeds the ${limitValue}MB limit. Split the PDF and try again.`;
+        limitMessage.textContent = `This file exceeds the ${limitValue} MB limit. Split the PDF and try again.`;
     } else if (type === 'PAGE_LIMIT_EXCEEDED') {
         const pageText = pageCount ? ` (${pageCount} pages)` : '';
         limitTitle.textContent = 'Too many pages';
@@ -287,6 +280,10 @@ function handleFormSubmit(e) {
 
 function showConversionRequestError(data, fallbackMessage = 'Request failed.') {
     const errorCode = data?.error_code || '';
+    if (errorCode === 'LOGIN_REQUIRED') {
+        window.location.assign(data.signin_url || '/signin');
+        return;
+    }
     if (errorCode === 'FILE_TOO_LARGE') {
         showLimitModal('FILE_TOO_LARGE', data.max_mb);
         return;
@@ -456,8 +453,34 @@ let downloadTriggered = false;
 let completionPolls = 0;
 let lastJobData = null;
 let pendingDownload = null;
+let statusPollTimer = null;
+let statusPollController = null;
+
+function pauseStatusPolling() {
+    if (statusPollTimer) {
+        clearTimeout(statusPollTimer);
+        statusPollTimer = null;
+    }
+    if (statusPollController) {
+        statusPollController.abort();
+        statusPollController = null;
+    }
+}
+
+function stopStatusPolling() {
+    pauseStatusPolling();
+    activeJobId = null;
+}
+
+function scheduleStatusPoll(delay) {
+    if (!activeJobId) return;
+    if (statusPollTimer) clearTimeout(statusPollTimer);
+    const nextDelay = delay === undefined ? (document.hidden ? 10000 : 2000) : delay;
+    statusPollTimer = setTimeout(pollJobStatus, nextDelay);
+}
 
 function startStatusPolling(jobId) {
+    stopStatusPolling();
     activeJobId = jobId;
     downloadTriggered = false;
     completionPolls = 0;
@@ -468,15 +491,42 @@ function startStatusPolling(jobId) {
 function pollJobStatus() {
     if (!activeJobId) return;
 
-    fetch(`/status/${activeJobId}`)
-        .then(response => response.json())
+    statusPollTimer = null;
+    const controller = new AbortController();
+    statusPollController = controller;
+    fetch(`/status/${activeJobId}`, { signal: controller.signal })
+        .then(async response => {
+            if (response.status === 429) {
+                scheduleStatusPoll(5000);
+                return null;
+            }
+            if (!response.ok) {
+                let message = 'Conversion status is no longer available. Please try again.';
+                try {
+                    const payload = await response.json();
+                    if (payload && payload.error) message = payload.error;
+                } catch (error) {
+                    // Keep the generic message for non-JSON error responses.
+                }
+                const statusError = new Error(message);
+                statusError.terminal = response.status >= 400 && response.status < 500;
+                throw statusError;
+            }
+            return response.json();
+        })
         .then(data => {
+            if (!data || !activeJobId) return;
             updateProgress(data);
 
             const status = data.status || '';
 
-            if (status.startsWith('Error')) {
-                activeJobId = null;
+            if (
+                data.state === 'failed' ||
+                data.state === 'unsupported_language' ||
+                status.startsWith('Error') ||
+                status.startsWith('Unsupported language')
+            ) {
+                stopStatusPolling();
                 hideProgressModal();
                 showAlert(status, 'error');
                 return;
@@ -484,7 +534,7 @@ function pollJobStatus() {
 
             if (data.download_url && !downloadTriggered) {
                 const jobId = activeJobId;
-                activeJobId = null;
+                stopStatusPolling();
                 downloadTriggered = true;
                 lastJobData = data;
                 hideProgressModal();
@@ -497,7 +547,7 @@ function pollJobStatus() {
                 const confidence = data.confidence || '';
                 if (confidence === 'empty' || confidence === 'low' || completionPolls >= 5) {
                     const jobId = activeJobId;
-                    activeJobId = null;
+                    stopStatusPolling();
                     lastJobData = data;
                     hideProgressModal();
                     showResultBanner(data, jobId);
@@ -505,10 +555,19 @@ function pollJobStatus() {
                 }
             }
 
-            setTimeout(pollJobStatus, 1000);
+            scheduleStatusPoll();
         })
-        .catch(() => {
-            setTimeout(pollJobStatus, 2000);
+        .catch(error => {
+            if (error.terminal) {
+                stopStatusPolling();
+                hideProgressModal();
+                showAlert(error.message, 'error');
+            } else if (error.name !== 'AbortError') {
+                scheduleStatusPoll(document.hidden ? 15000 : 5000);
+            }
+        })
+        .finally(() => {
+            if (statusPollController === controller) statusPollController = null;
         });
 }
 
@@ -553,23 +612,32 @@ function showResultBanner(data, jobId) {
 
     if (!banner) return;
 
-    const confidence = data.confidence || 'good';
+    const confidence = data.confidence || 'unknown';
+    const reviewRequired = Boolean(data.review_required);
     const rows = data.extraction_rows || 0;
     const cols = data.extraction_cols || 0;
+    const sourceRows = data.source_line_count || rows;
+    const tableRows = data.table_row_count || 0;
+    const tableCols = data.table_column_count || 0;
     const qualityUsed = data.quality_used || 'standard';
     const qualityMsg = data.quality_message || '';
     const docHint = data.document_hint || 'statement';
+    const reconstructionMeta = sourceRows > 0
+        ? `${sourceRows} extracted visual rows written${tableRows > 0 ? ` \u00b7 ${tableRows} table rows detected${tableCols > 0 ? ` across ${tableCols} columns` : ''}` : ''}`
+        : (tableRows > 0
+            ? `${tableRows} table rows detected${tableCols > 0 ? ` across ${tableCols} columns` : ''}`
+            : (rows > 0 ? `${rows} rows \u00d7 ${cols} columns reconstructed` : 'Workbook generated'));
 
     banner.className = 'result-banner';
     actions.innerHTML = '';
     meta.textContent = '';
 
-    if (confidence === 'good' && rows > 0) {
+    if (confidence === 'good' && !reviewRequired) {
         banner.classList.add('success');
         icon.innerHTML = ICONS.checkCircle;
         title.textContent = 'Conversion Complete';
-        message.textContent = 'Your file has been downloaded successfully. Was the Excel output accurate?';
-        meta.textContent = `${rows} rows \u00d7 ${cols} columns extracted`;
+        message.textContent = 'Your workbook is ready. Do its rows and columns match the PDF?';
+        meta.textContent = reconstructionMeta;
 
         const successBtn = document.createElement('button');
         successBtn.className = 'btn-feedback';
@@ -583,12 +651,12 @@ function showResultBanner(data, jobId) {
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
 
-    } else if (confidence === 'low') {
+    } else if (confidence === 'low' || reviewRequired) {
         banner.classList.add('warning');
         icon.innerHTML = ICONS.warning;
-        title.textContent = 'Partial Extraction';
-        message.textContent = qualityMsg || 'Some data may be missing or incomplete.';
-        meta.textContent = `${rows} rows extracted \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
+        title.textContent = 'Workbook Ready \u2014 Review Recommended';
+        message.textContent = qualityMsg || 'The extracted rows or columns need comparison with the PDF.';
+        meta.textContent = `${reconstructionMeta} \u00b7 ${qualityUsed === 'standard' ? 'Standard' : 'High'} quality`;
 
         if (qualityUsed === 'standard') {
             const retryBtn = document.createElement('button');
@@ -604,7 +672,7 @@ function showResultBanner(data, jobId) {
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
 
-    } else {
+    } else if (confidence === 'empty') {
         banner.classList.add('error');
         icon.innerHTML = ICONS.error;
 
@@ -629,11 +697,23 @@ function showResultBanner(data, jobId) {
         fbBtn.textContent = 'Submit feedback';
         fbBtn.onclick = () => openFeedbackModal(jobId, data);
         actions.appendChild(fbBtn);
+    } else {
+        banner.classList.add('warning');
+        icon.innerHTML = ICONS.warning;
+        title.textContent = 'Workbook Ready \u2014 Please Review';
+        message.textContent = qualityMsg || 'Compare the workbook rows and columns with the source PDF before using it.';
+        meta.textContent = reconstructionMeta;
+
+        const fbBtn = document.createElement('button');
+        fbBtn.className = 'btn-feedback';
+        fbBtn.textContent = 'Report a mismatch';
+        fbBtn.onclick = () => openFeedbackModal(jobId, data);
+        actions.appendChild(fbBtn);
     }
 
     banner.style.display = 'block';
 
-    if (confidence === 'good') {
+    if (confidence === 'good' && !reviewRequired) {
         setTimeout(() => { banner.style.display = 'none'; }, 45000);
     }
 }
@@ -743,8 +823,8 @@ function openFeedbackModal(jobId, data) {
     const confidence = data.confidence || '';
     if (confidence === 'empty') {
         typeSelect.value = 'empty_result';
-    } else if (confidence === 'low') {
-        typeSelect.value = 'incorrect_data';
+    } else if (confidence === 'low' || data.review_required) {
+        typeSelect.value = 'column_mismatch';
     }
 
     modal.style.display = 'flex';
@@ -804,6 +884,10 @@ async function submitQuickFeedback(jobId, data, feedbackType, button) {
 
     try {
         const formData = new FormData();
+        const csrfInput = document.getElementById('feedbackCsrfToken');
+        if (csrfInput) {
+            formData.append('csrf_token', csrfInput.value);
+        }
         formData.append('job_id', jobId);
         formData.append('feedback_type', feedbackType);
         formData.append('quality_used', data.quality_used || 'standard');
@@ -948,11 +1032,21 @@ function showAlert(message, type = 'error') {
     else if (type === 'success') iconSvg = ICONS.checkCircle;
     else iconSvg = ICONS.info;
 
-    alertDiv.innerHTML = `
-        ${iconSvg}
-        ${message}
-        <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
-    `;
+    const iconContainer = document.createElement('span');
+    iconContainer.innerHTML = iconSvg;
+    while (iconContainer.firstChild) alertDiv.appendChild(iconContainer.firstChild);
+
+    const messageSpan = document.createElement('span');
+    messageSpan.textContent = String(message || '');
+    alertDiv.appendChild(messageSpan);
+
+    const closeButton = document.createElement('button');
+    closeButton.className = 'close-btn';
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Dismiss message');
+    closeButton.textContent = '\u00d7';
+    closeButton.addEventListener('click', () => alertDiv.remove());
+    alertDiv.appendChild(closeButton);
 
     const mainContent = document.querySelector('.main-content');
     mainContent.insertBefore(alertDiv, mainContent.firstChild);

@@ -4,18 +4,20 @@
 # =============================================================================
 # SCALING GUIDE (Railway Pro Plan):
 #
-# Architecture: Web service + Worker service (separate Railway services)
-# - Web:    Handles HTTP/WebSocket, no OCR models loaded, lightweight
-# - Worker: Runs Celery tasks, loads PaddleOCR + ONNX Runtime (~2-3 GB RAM)
+# Architecture: Web + Worker + one Scheduler (separate Railway services)
+# - Web:       Handles HTTP and polling, no OCR models loaded, lightweight
+# - Worker:    Runs Celery tasks and loads RapidOCR + ONNX Runtime
+# - Scheduler: Enqueues hourly retention maintenance; exactly one replica
 #
 # Horizontal scaling:
-#   1. Create TWO Railway services from the same repo
+#   1. Create THREE Railway services from the same repo
 #   2. Web service:   SERVICE_ROLE=web   (1 replica, small instance)
 #   3. Worker service: SERVICE_ROLE=worker (N replicas for N concurrent jobs)
-#   4. Both share the same REDIS_URL and DATABASE_URL
-#   5. Increase worker replicas to handle more concurrent users
+#   4. Scheduler service: SERVICE_ROLE=scheduler (exactly 1 replica)
+#   5. All services share the same REDIS_URL and DATABASE_URL
+#   6. Increase worker replicas to handle more concurrent users
 #
-# Each worker replica uses ~2-3 GB RAM (ONNX Runtime backend).
+# Each worker replica owns one ONNX Runtime OCR engine.
 # With 32 GB / 32 vCPU per replica, you can comfortably run 1 job per replica.
 # 10 replicas = 10 concurrent PDF conversions.
 #
@@ -40,9 +42,21 @@ if [ "${SERVICE_ROLE}" = "worker" ]; then
   # memory leaks from accumulating over long-running deployments.
   exec celery -A celery_config.celery_app worker \
     --loglevel=info \
+    --queues=conversion,celery \
     --pool=solo \
     --concurrency=1 \
     --max-tasks-per-child=50
+fi
+
+if [ "${SERVICE_ROLE}" = "scheduler" ]; then
+  echo "Starting lightweight maintenance worker with Celery Beat..."
+  exec celery -A celery_config.celery_app worker \
+    --loglevel=info \
+    --pool=solo \
+    --concurrency=1 \
+    --queues=maintenance \
+    --beat \
+    --schedule=/tmp/statement-converter-celerybeat-schedule
 fi
 
 # Railway injects PORT - bind on IPv4 with fallback to 8080

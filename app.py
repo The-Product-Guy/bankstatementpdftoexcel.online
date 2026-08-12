@@ -8,29 +8,43 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import hashlib
+import hmac
 import os
 import secrets
-import shutil
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
+from ipaddress import ip_address
+from typing import Optional, Tuple
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 from flask import Flask, jsonify, flash, redirect, url_for, request, session
 from werkzeug.exceptions import RequestEntityTooLarge
-from flask_socketio import SocketIO
 
-# Import parsers
-from parsers.universal_parser import UniversalBankParser, ProcessingConfig
-from storage_utils import get_storage_config, delete_file
+from site_urls import normalize_base_url, public_base_url
+from redis_utils import get_redis_client
 from db import init_db, get_db_session
-from models import User, UsageCounter, Job, FeedbackSubmission
+from models import User, UsageCounter, Job
+from retention import (
+    FEEDBACK_RETENTION_DAYS,
+    FIRST_PARTY_ANALYTICS_RETENTION_DAYS,
+    LOCAL_RESULT_RETENTION_HOURS,
+    PROCESSED_FOLDER,
+    RESULT_RETENTION_HOURS,
+    S3_RESULT_RETENTION_HOURS,
+    UPLOAD_FOLDER,
+    cleanup_expired_s3_results,
+    cleanup_feedback_shared_pdfs,
+    cleanup_first_party_analytics,
+    cleanup_old_files,
+)
 from tracking import (
     VISITOR_COOKIE,
     VISITOR_COOKIE_MAX_AGE,
     normalize_visitor_id,
-    record_page_view,
+    enqueue_page_view,
     should_track_page_view,
-    cleanup_tracking_logs,
 )
 
 
@@ -52,26 +66,70 @@ def _is_production_runtime() -> bool:
     )
 
 
+def cloudflare_proxy_config():
+    """Return validated Cloudflare-origin settings from the environment.
+
+    The origin secret is deliberately read at request time instead of being
+    cached globally.  That makes a bad deployment fail safely and lets the
+    configuration be exercised without re-importing the Flask application.
+    """
+    enabled = _env_bool('CLOUDFLARE_PROXY_ENABLED', False)
+    secret = os.environ.get('CLOUDFLARE_ORIGIN_SECRET', '')
+    if enabled and len(secret) < 32:
+        raise RuntimeError(
+            'CLOUDFLARE_ORIGIN_SECRET must be at least 32 characters when '
+            'CLOUDFLARE_PROXY_ENABLED is enabled.'
+        )
+    return enabled, secret
+
+
 IS_PRODUCTION = _is_production_runtime()
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if IS_PRODUCTION and not SECRET_KEY:
     raise RuntimeError("SECRET_KEY must be set in production.")
+PUBLIC_ORIGIN_SETTING = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+if IS_PRODUCTION and not PUBLIC_ORIGIN_SETTING:
+    raise RuntimeError("CANONICAL_BASE_URL or PUBLIC_BASE_URL must be set in production.")
+if PUBLIC_ORIGIN_SETTING:
+    try:
+        normalize_base_url(PUBLIC_ORIGIN_SETTING)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid public base URL: {exc}") from exc
+cloudflare_proxy_config()
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY or 'dev-secret-key-change-in-production'
-MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '20'))
+STATIC_ASSET_VERSIONS = {}
+for _asset_name in ('styles.min.css', 'ui.min.js', 'script.min.js'):
+    try:
+        with open(os.path.join(app.static_folder, _asset_name), 'rb') as _asset_file:
+            STATIC_ASSET_VERSIONS[_asset_name] = hashlib.sha256(_asset_file.read()).hexdigest()[:12]
+    except OSError:
+        logger.warning("Static asset is missing: %s", _asset_name)
+PUBLIC_UPLOAD_LIMIT_MB = 50
+try:
+    _configured_upload_limit_mb = int(os.environ.get('MAX_UPLOAD_MB', str(PUBLIC_UPLOAD_LIMIT_MB)))
+except ValueError as exc:
+    raise RuntimeError('MAX_UPLOAD_MB must be a whole number of megabytes.') from exc
+if _configured_upload_limit_mb <= 0:
+    raise RuntimeError('MAX_UPLOAD_MB must be greater than zero.')
+if _configured_upload_limit_mb > PUBLIC_UPLOAD_LIMIT_MB:
+    logger.warning(
+        'MAX_UPLOAD_MB=%s exceeds the public product cap; using %s MB.',
+        _configured_upload_limit_mb,
+        PUBLIC_UPLOAD_LIMIT_MB,
+    )
+MAX_UPLOAD_MB = min(_configured_upload_limit_mb, PUBLIC_UPLOAD_LIMIT_MB)
+FILE_SPLITTER_URL = (
+    os.environ.get('FILE_SPLITTER_URL', '').strip()
+    or 'https://smallpdfsplit.online/'
+)
 MAX_PAGES = int(os.environ.get('MAX_PAGES', '250'))
 GUEST_CONVERSION_LIMIT = int(os.environ.get('GUEST_CONVERSION_LIMIT', '1'))
 USER_CONVERSION_LIMIT = int(os.environ.get('USER_CONVERSION_LIMIT', '5'))
 MAGIC_LINK_EXP_MINUTES = int(os.environ.get('MAGIC_LINK_EXP_MINUTES', '15'))
 DISABLE_QUOTAS = _env_bool('DISABLE_QUOTAS')
-BETA_MODE = _env_bool('BETA_MODE', True)
-ENGLISH_ONLY_BETA = _env_bool('ENGLISH_ONLY_BETA', True)
-RATE_LIMIT_FAIL_CLOSED = _env_bool('RATE_LIMIT_FAIL_CLOSED')
-FEEDBACK_RETENTION_DAYS = int(os.environ.get('FEEDBACK_RETENTION_DAYS', '30'))
-FEEDBACK_RETENTION_SWEEP_MINS = int(os.environ.get('FEEDBACK_RETENTION_SWEEP_MINS', '60'))
-FIRST_PARTY_ANALYTICS_RETENTION_DAYS = int(os.environ.get('FIRST_PARTY_ANALYTICS_RETENTION_DAYS', '180'))
-FIRST_PARTY_ANALYTICS_SWEEP_MINS = int(os.environ.get('FIRST_PARTY_ANALYTICS_SWEEP_MINS', '1440'))
+RATE_LIMIT_FAIL_CLOSED = _env_bool('RATE_LIMIT_FAIL_CLOSED', IS_PRODUCTION)
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in os.environ.get('ADMIN_EMAILS', '').split(',')
@@ -82,9 +140,9 @@ import stripe
 stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
 
 PLAN_CONFIG = {
-    'free':       {'monthly_conversions': 5,    'max_upload_mb': 20,  'stripe_price_id': None},
-    'pro':        {'monthly_conversions': 50,   'max_upload_mb': 100, 'stripe_price_id': os.environ.get('STRIPE_PRO_PRICE_ID')},
-    'enterprise': {'monthly_conversions': None, 'max_upload_mb': 500, 'stripe_price_id': os.environ.get('STRIPE_ENTERPRISE_PRICE_ID')},
+    'free':       {'monthly_conversions': 5,    'max_upload_mb': MAX_UPLOAD_MB, 'stripe_price_id': None},
+    'pro':        {'monthly_conversions': 50,   'max_upload_mb': MAX_UPLOAD_MB, 'stripe_price_id': os.environ.get('STRIPE_PRO_PRICE_ID')},
+    'enterprise': {'monthly_conversions': None, 'max_upload_mb': MAX_UPLOAD_MB, 'stripe_price_id': os.environ.get('STRIPE_ENTERPRISE_PRICE_ID')},
 }
 
 
@@ -99,60 +157,22 @@ def unlimited_quota_emails():
 def has_unlimited_quota_email(email: str = '') -> bool:
     return bool(email and email.strip().lower() in unlimited_quota_emails())
 
-# Allow up to Enterprise max; per-plan size check happens in route logic
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
+# Multipart framing adds a small amount beyond the file itself. The converter
+# enforces the exact file-byte cap before parsing, storage, or task dispatch.
+app.config['MAX_CONTENT_LENGTH'] = (MAX_UPLOAD_MB + 1) * 1024 * 1024
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = _env_bool('SESSION_COOKIE_SECURE', IS_PRODUCTION)
 app.config['GA_MEASUREMENT_ID'] = os.environ.get('GA_MEASUREMENT_ID', '')
 app.config['GTM_CONTAINER_ID'] = os.environ.get('GTM_CONTAINER_ID', '')
-_last_feedback_retention_sweep = None
-_last_analytics_retention_sweep = None
-
-# Initialize SocketIO with proper configuration for production
-allowed_origins_env = os.environ.get('SOCKETIO_CORS_ORIGINS') or os.environ.get('ALLOWED_ORIGINS')
-if allowed_origins_env:
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(',') if origin.strip()]
-elif IS_PRODUCTION:
-    public_origin = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-    allowed_origins = [public_origin.rstrip('/')] if public_origin else []
-    if not allowed_origins:
-        logger.warning("SocketIO CORS origins are empty in production; set SOCKETIO_CORS_ORIGINS or PUBLIC_BASE_URL.")
-else:
-    allowed_origins = "*"
-
-socketio = SocketIO(
-    app,
-    cors_allowed_origins=allowed_origins,
-    async_mode=os.environ.get('SOCKETIO_ASYNC_MODE', 'threading'),
-    logger=False,
-    engineio_logger=False,
-    ping_timeout=60,
-    ping_interval=25
-)
-
 # Create uploads directory if it doesn't exist
-STORAGE_ROOT = os.environ.get('SHARED_STORAGE_PATH')
-UPLOAD_FOLDER = os.path.join(STORAGE_ROOT, 'uploads') if STORAGE_ROOT else 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
-PROCESSED_FOLDER = os.path.join(STORAGE_ROOT, 'processed') if STORAGE_ROOT else 'processed'
 
 try:
     init_db()
 except Exception as e:
     logger.warning(f"Database initialization failed: {e}")
-
-# Supported banks and their parsers
-SUPPORTED_BANKS = {
-    'universal': {
-        'name': 'Universal (Any Bank)',
-        'parser': UniversalBankParser,
-        'description': 'AI-powered parser for any bank statement (uses OpenAI)',
-        'is_ai': True
-    }
-}
-
 
 # ── Shared Utility Functions ─────────────────────────────────────────────
 
@@ -178,24 +198,140 @@ def is_pdf_file(file_storage):
 def is_ajax_request():
     return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
-def get_client_ip():
-    forwarded = request.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
-    return request.remote_addr or 'unknown'
 
-def rate_limited(key, limit, window_seconds):
+def _single_request_header(name: str) -> Optional[str]:
+    """Return a single, non-list HTTP header value, otherwise ``None``.
+
+    A comma-delimited value can be produced by duplicate headers at a proxy.
+    It is never safe to guess which member supplied the client identity.
+    """
+    values = request.headers.getlist(name)
+    if len(values) != 1:
+        return None
+    value = values[0].strip()
+    if not value or ',' in value:
+        return None
+    return value
+
+
+def _cloudflare_client_ip() -> Optional[str]:
+    """Return the Cloudflare-provided client IP only for a trusted request."""
+    enabled, expected_secret = cloudflare_proxy_config()
+    if not enabled:
+        return None
+
+    supplied_secret = _single_request_header('X-Statement-Origin')
+    if not supplied_secret or not hmac.compare_digest(supplied_secret, expected_secret):
+        return None
+
+    candidate = _single_request_header('CF-Connecting-IP')
+    if not candidate:
+        return None
     try:
-        import redis
-        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-        r = redis.StrictRedis.from_url(redis_url)
-        count = r.incr(key)
-        if count == 1:
-            r.expire(key, window_seconds)
+        return str(ip_address(candidate))
+    except ValueError:
+        return None
+
+
+def get_client_ip():
+    """Return a validated visitor address without trusting client headers.
+
+    Direct-origin deployments only use the TCP peer address.  With the
+    Cloudflare origin secret enabled, a valid CF-Connecting-IP is accepted
+    only after the shared origin header has authenticated the request.
+    """
+    cloudflare_client_ip = _cloudflare_client_ip()
+    if cloudflare_client_ip:
+        return cloudflare_client_ip
+    try:
+        return str(ip_address(request.remote_addr or ''))
+    except ValueError:
+        pass
+    return 'unknown'
+
+
+def hmac_rate_limit_subject(value: str, namespace: str) -> str:
+    """Return a non-reversible, namespaced subject for Redis rate-limit data."""
+    if not isinstance(value, str) or not isinstance(namespace, str) or not namespace:
+        raise ValueError('Rate-limit subject and namespace must be non-empty strings.')
+    subject = value.strip().lower()
+    if not subject:
+        raise ValueError('Rate-limit subject and namespace must be non-empty strings.')
+    secret = app.secret_key
+    if not isinstance(secret, (str, bytes)):
+        raise RuntimeError('Flask SECRET_KEY must be configured for rate-limit subjects.')
+    secret_bytes = secret.encode('utf-8') if isinstance(secret, str) else secret
+    message = f'{namespace}:{subject}'.encode('utf-8')
+    return hmac.new(secret_bytes, message, hashlib.sha256).hexdigest()
+
+
+def observe_distinct_rate_limit_subject(
+    key: str,
+    subject: str,
+    window_seconds: int,
+    threshold: int,
+) -> Optional[Tuple[int, bool]]:
+    """Atomically count distinct HMAC subjects in a Redis set.
+
+    The Redis key may identify an IP bucket, but neither it nor the set member
+    contains the raw subject (for example, an email address).  ``None`` means
+    the observer could not record an event; callers must not fail an otherwise
+    valid request solely because this telemetry is unavailable.
+    """
+    if threshold < 1:
+        raise ValueError('Distinct-subject threshold must be at least one.')
+    subject_digest = hmac_rate_limit_subject(subject, 'distinct-subject')
+    try:
+        r = get_redis_client()
+        result = r.eval(
+            """
+            local was_new = redis.call('SADD', KEYS[1], ARGV[1])
+            if redis.call('TTL', KEYS[1]) < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            local count = redis.call('SCARD', KEYS[1])
+            local crossed = 0
+            if was_new == 1 and count == tonumber(ARGV[3]) then
+                crossed = 1
+            end
+            return {count, crossed}
+            """,
+            1,
+            key,
+            subject_digest,
+            int(window_seconds),
+            int(threshold),
+        )
+        # redis-py returns the Lua boolean as 0/1 in a two-item sequence.
+        if isinstance(result, (list, tuple)):
+            return int(result[0]), bool(int(result[1]))
+        # Defensive fallback for unusual Redis clients; do not claim a crossing.
+        return int(result), False
+    except Exception as exc:
+        logger.warning('Distinct-subject observer unavailable: %s', exc)
+        return None
+
+def rate_limited(key, limit, window_seconds, *, fail_closed=None):
+    try:
+        r = get_redis_client()
+        count = r.eval(
+            """
+            local current = redis.call('INCR', KEYS[1])
+            if current == 1 or redis.call('TTL', KEYS[1]) < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            return current
+            """,
+            1,
+            key,
+            int(window_seconds),
+        )
         return count > limit
     except Exception as exc:
         logger.warning(f"Rate-limit backend unavailable: {exc}")
-        return RATE_LIMIT_FAIL_CLOSED
+        if fail_closed is None:
+            fail_closed = RATE_LIMIT_FAIL_CLOSED
+        return bool(fail_closed)
 
 def get_csrf_token():
     token = session.get('csrf_token')
@@ -309,190 +445,6 @@ def is_admin_user():
         return False
 
 
-# ── Cleanup Jobs ─────────────────────────────────────────────────────────
-
-def cleanup_old_files():
-    """Clean up stale local uploads and generated result files."""
-    try:
-        current_time = datetime.now().timestamp()
-        for filename in os.listdir(UPLOAD_FOLDER):
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
-            if os.path.isfile(filepath):
-                if current_time - os.path.getctime(filepath) > 3600:
-                    os.remove(filepath)
-    except Exception:
-        pass
-
-    try:
-        if LOCAL_RESULT_RETENTION_HOURS <= 0 or not os.path.exists(PROCESSED_FOLDER):
-            return
-
-        cutoff_seconds = LOCAL_RESULT_RETENTION_HOURS * 3600
-        current_time = datetime.now().timestamp()
-        for name in os.listdir(PROCESSED_FOLDER):
-            path = os.path.join(PROCESSED_FOLDER, name)
-            if current_time - os.path.getmtime(path) <= cutoff_seconds:
-                continue
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            elif os.path.isfile(path):
-                os.remove(path)
-    except Exception as exc:
-        logger.warning(f"Local result cleanup failed: {exc}")
-
-def cleanup_feedback_shared_pdfs(force: bool = False):
-    """Delete user-consented shared PDFs after retention period."""
-    global _last_feedback_retention_sweep
-
-    if FEEDBACK_RETENTION_DAYS <= 0:
-        return
-
-    now = datetime.utcnow()
-    if (
-        not force
-        and _last_feedback_retention_sweep
-        and now - _last_feedback_retention_sweep < timedelta(minutes=FEEDBACK_RETENTION_SWEEP_MINS)
-    ):
-        return
-
-    storage = get_storage_config()
-    if not storage:
-        _last_feedback_retention_sweep = now
-        return
-
-    cutoff = now - timedelta(days=FEEDBACK_RETENTION_DAYS)
-    try:
-        with get_db_session() as db:
-            stale = (
-                db.query(FeedbackSubmission)
-                .filter(FeedbackSubmission.pdf_shared.is_(True))
-                .filter(FeedbackSubmission.pdf_storage_key.isnot(None))
-                .filter(FeedbackSubmission.created_at < cutoff)
-                .limit(200)
-                .all()
-            )
-            for item in stale:
-                key = item.pdf_storage_key
-                if key:
-                    try:
-                        delete_file(storage, key)
-                    except Exception as exc:
-                        logger.warning(f"Feedback retention delete failed for {key}: {exc}")
-                        continue
-                item.pdf_storage_key = None
-                if item.status == "new":
-                    item.status = "expired"
-    except Exception as exc:
-        logger.warning(f"Feedback retention sweep failed: {exc}")
-    finally:
-        _last_feedback_retention_sweep = now
-
-
-def cleanup_first_party_analytics(force: bool = False):
-    """Delete old first-party analytics and login-event rows."""
-    global _last_analytics_retention_sweep
-
-    if FIRST_PARTY_ANALYTICS_RETENTION_DAYS <= 0:
-        return
-
-    now = datetime.utcnow()
-    if (
-        not force
-        and _last_analytics_retention_sweep
-        and now - _last_analytics_retention_sweep < timedelta(minutes=FIRST_PARTY_ANALYTICS_SWEEP_MINS)
-    ):
-        return
-
-    try:
-        deleted = cleanup_tracking_logs(FIRST_PARTY_ANALYTICS_RETENTION_DAYS)
-        if deleted.get("site_visits") or deleted.get("login_events"):
-            logger.info(
-                "Analytics retention sweep deleted site_visits=%s login_events=%s",
-                deleted.get("site_visits", 0),
-                deleted.get("login_events", 0),
-            )
-    except Exception as exc:
-        logger.warning(f"Analytics retention sweep failed: {exc}")
-    finally:
-        _last_analytics_retention_sweep = now
-
-_last_s3_cleanup_sweep = None
-RESULT_RETENTION_HOURS = int(os.environ.get(
-    'RESULT_RETENTION_HOURS',
-    os.environ.get('S3_RESULT_RETENTION_HOURS', '24')
-))
-S3_RESULT_RETENTION_HOURS = RESULT_RETENTION_HOURS
-LOCAL_RESULT_RETENTION_HOURS = int(os.environ.get(
-    'LOCAL_RESULT_RETENTION_HOURS',
-    str(RESULT_RETENTION_HOURS)
-))
-
-def cleanup_expired_s3_results(force: bool = False):
-    """Delete S3 job files older than the retention window."""
-    global _last_s3_cleanup_sweep
-
-    if S3_RESULT_RETENTION_HOURS <= 0:
-        return
-
-    now = datetime.utcnow()
-    if (
-        not force
-        and _last_s3_cleanup_sweep
-        and now - _last_s3_cleanup_sweep < timedelta(hours=1)
-    ):
-        return
-
-    storage = get_storage_config()
-    if not storage:
-        _last_s3_cleanup_sweep = now
-        return
-
-    cutoff = now - timedelta(hours=S3_RESULT_RETENTION_HOURS)
-    try:
-        with get_db_session() as db:
-            stale_jobs = (
-                db.query(Job)
-                .filter(Job.finished_at < cutoff)
-                .filter(
-                    Job.input_storage_key.isnot(None)
-                    | Job.output_storage_key.isnot(None)
-                    | Job.storage_key.isnot(None)
-                )
-                .limit(100)
-                .all()
-            )
-            for job in stale_jobs:
-                candidate_keys = [
-                    job.input_storage_key,
-                    job.output_storage_key,
-                    job.storage_key,
-                ]
-                for key in dict.fromkeys(k for k in candidate_keys if k):
-                    try:
-                        delete_file(storage, key)
-                    except Exception as exc:
-                        logger.warning(f"S3 cleanup failed for {key}: {exc}")
-                        continue
-
-                    if key == job.input_storage_key:
-                        job.input_storage_key = None
-                        job.input_deleted_at = now
-                    if key == job.output_storage_key:
-                        job.output_storage_key = None
-                        job.output_deleted_at = now
-                    if key == job.storage_key:
-                        job.storage_key = None
-    except Exception as exc:
-        logger.warning(f"S3 cleanup sweep failed: {exc}")
-    finally:
-        _last_s3_cleanup_sweep = now
-
-
-def progress_callback(progress_data):
-    """Callback function to emit progress updates via WebSocket."""
-    socketio.emit('progress_update', progress_data)
-
-
 # ── Context Processors & Middleware ──────────────────────────────────────
 
 @app.context_processor
@@ -504,11 +456,7 @@ def inject_user_context():
     user_email = session.get('user_email')
     normalized_email = (user_email or '').lower()
 
-    def site_base_url():
-        configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
-        if configured:
-            return configured.rstrip('/')
-        return request.url_root.rstrip('/')
+    site_base_url = public_base_url
 
     def public_url_for(endpoint, **values):
         anchor = values.pop('_anchor', None)
@@ -521,6 +469,12 @@ def inject_user_context():
     def canonical_current_url():
         return f"{site_base_url()}{request.path}"
 
+    def static_asset_url(filename):
+        version = STATIC_ASSET_VERSIONS.get(filename)
+        if version:
+            return url_for('static', filename=filename, v=version)
+        return url_for('static', filename=filename)
+
     return {
         'current_user_email': user_email,
         'current_user_is_admin': bool(
@@ -531,20 +485,59 @@ def inject_user_context():
         'site_base_url': site_base_url,
         'public_url_for': public_url_for,
         'canonical_current_url': canonical_current_url,
+        'static_asset_url': static_asset_url,
+        'max_upload_mb': MAX_UPLOAD_MB,
+        'file_splitter_url': FILE_SPLITTER_URL,
     }
+
+
+@app.before_request
+def enforce_cloudflare_origin():
+    """Keep direct callers from bypassing Cloudflare's authenticated edge."""
+    enabled, _ = cloudflare_proxy_config()
+    if (
+        not enabled
+        or not IS_PRODUCTION
+        or request.path in {'/health', '/health/detailed'}
+    ):
+        return None
+    if not _cloudflare_client_ip():
+        return 'Misdirected request', 421
+    return None
+
+
+@app.before_request
+def enforce_canonical_host():
+    """Redirect the www alias and reject production host-header bypasses."""
+    configured = os.environ.get('CANONICAL_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+    if not configured:
+        return None
+
+    canonical_origin = normalize_base_url(configured)
+    canonical_host = urlsplit(canonical_origin).hostname
+    request_host = (request.host.split(':', 1)[0] or '').lower().rstrip('.')
+    if canonical_host and not canonical_host.startswith('www.') and request_host == f'www.{canonical_host}':
+        target_path = request.full_path[:-1] if request.full_path.endswith('?') else request.full_path
+        return redirect(f'{canonical_origin}{target_path}', code=308)
+    if (
+        IS_PRODUCTION
+        and canonical_host
+        and request_host != canonical_host
+        and request.path not in {'/health', '/health/detailed'}
+    ):
+        return 'Misdirected request', 421
+    return None
 
 @app.after_request
 def add_security_headers(response):
     csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdnjs.cloudflare.com "
-        "https://www.googletagmanager.com https://www.google-analytics.com "
-        "https://umami-production-9269.up.railway.app; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com "
+        "https://www.googletagmanager.com https://www.google-analytics.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob: https://www.google-analytics.com; "
-        "connect-src 'self' ws: wss: https://www.google-analytics.com https://www.googletagmanager.com "
-        "https://umami-production-9269.up.railway.app; "
+        "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "object-src 'none'"
@@ -577,11 +570,14 @@ def add_security_headers(response):
         '/admin',
         '/auth/',
         '/download/',
-        '/socket.io/',
         '/status/',
     )
     if request.path in noindex_exact_paths or any(request.path.startswith(prefix) for prefix in noindex_prefixes):
         response.headers.setdefault('X-Robots-Tag', 'noindex, nofollow')
+    if request.path in {'/static/sample-statement.pdf', '/static/sample-statement.xlsx'}:
+        response.headers.setdefault('X-Robots-Tag', 'noindex, noarchive')
+    if request.path.endswith(('.min.css', '.min.js')):
+        response.headers['Cache-Control'] = 'public, max-age=604800'
     try:
         user_agent = request.headers.get('User-Agent', '')
         if should_track_page_view(
@@ -600,7 +596,7 @@ def add_security_headers(response):
                 secure=app.config['SESSION_COOKIE_SECURE'],
                 samesite='Lax',
             )
-            record_page_view(
+            enqueue_page_view(
                 visitor_id=visitor_id,
                 user_id=session.get('user_id'),
                 path=request.path,
@@ -614,7 +610,7 @@ def add_security_headers(response):
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_large_upload(error):
-    message = f'File too large. Maximum allowed size is {MAX_UPLOAD_MB}MB.'
+    message = f'File too large. Maximum allowed size is {MAX_UPLOAD_MB} MB.'
     if is_ajax_request():
         return jsonify({
             'status': 'error',
@@ -623,7 +619,7 @@ def handle_large_upload(error):
             'max_mb': MAX_UPLOAD_MB
         }), 413
     flash(message, 'error')
-    return redirect(url_for('pages.home'))
+    return redirect(url_for('converter.dashboard'))
 
 
 # ── Register Blueprints ──────────────────────────────────────────────────
@@ -633,10 +629,7 @@ for bp in all_blueprints:
     app.register_blueprint(bp)
 
 
-# For deployment with gunicorn, we need to expose the SocketIO app
-# This allows gunicorn to use: gunicorn app:socketio
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     print(f"Starting Flask app on port {port}")
-    socketio.run(app, debug=False, host='0.0.0.0', port=port)
+    app.run(debug=False, host='0.0.0.0', port=port)

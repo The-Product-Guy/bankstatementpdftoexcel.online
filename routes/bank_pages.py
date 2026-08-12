@@ -3,7 +3,10 @@
 Each entry describes how that bank actually formats statements — columns,
 date style, quirks — so every page carries genuinely distinct, truthful
 content. Honesty rules (see docs/superpowers/specs/2026-07-08-seo-round-design.md):
-no "official"/"partner"/"supported bank" claims, no accuracy percentages.
+no "official"/"partner"/"supported bank" claims, no accuracy percentages or
+lossless-conversion promises. Exact_Copy preserves all successfully extracted
+words and visual rows with approximate geometry. Table_Data is best effort,
+and OCR results require review against the PDF.
 The parser is universal (geometry-first); these pages describe formats, not
 integrations.
 """
@@ -22,20 +25,21 @@ BANK_PAGES = [
             "summary block, with deposits and withdrawals in a signed amount "
             "column and a running balance. Card statements group purchases by "
             "billing cycle with short MM/DD dates. The converter reads the "
-            "column positions printed on your PDF, so either layout comes out "
-            "under Chase's own headings — one Excel row per printed transaction."
+            "page geometry printed in each PDF. Exact_Copy retains the extracted "
+            "visual rows, while Table_Data makes a best-effort attempt to organise "
+            "detected transactions under the printed headings."
         ),
         "faqs": [
             {"q": "Does this work with Chase credit card statements as well as checking?",
-             "a": "Yes. The parser reads the table geometry printed on the page rather than a fixed template, so checking, savings, and card statements each come out with their own printed columns."},
-            {"q": "Will the Excel match my Chase statement exactly?",
-             "a": "The first sheet mirrors the statement's own table — Chase's column headings, one row per transaction, amounts kept as printed text. A Full_Text sheet carries every other line on the statement so nothing is dropped."},
+             "a": "The parser reads page geometry rather than a fixed Chase template, so it can process checking, savings, and card layouts. Review the resulting rows and columns against your PDF."},
+            {"q": "What will the Chase Excel workbook contain?",
+             "a": "Exact_Copy retains every successfully extracted word in visual row order with approximate page geometry. Table_Data is a best-effort transaction view and may need row or column cleanup."},
             {"q": "Do I need to tell the converter which bank the PDF is from?",
-             "a": "No. Column layout is detected from the document itself."},
+             "a": "No. The converter reads the document itself; any Table_Data columns are inferred from that page rather than selected from a Chase template."},
             {"q": "Is a scanned Chase statement supported?",
-             "a": "Yes — scanned pages route through OCR and the same layout reconstruction. Very poor scans are flagged so you can retry in high quality."},
+             "a": "Scanned pages route through OCR before layout placement. OCR can miss or misread text, so compare dates, amounts, rows, and columns with the source PDF."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "bank-of-america-statement-to-excel",
@@ -48,19 +52,19 @@ BANK_PAGES = [
             "Bank of America statements split activity into separate sections — "
             "\"Deposits and other additions\" and \"Withdrawals and other "
             "subtractions\" — each printed as its own small table of date, "
-            "description, and amount. The converter rebuilds each printed table "
-            "as it appears, and the Full_Text sheet keeps the section headings, "
-            "so you can see exactly which block a row came from."
+            "description, and amount. Exact_Copy retains the extracted section "
+            "headings and visual rows with approximate page placement. Table_Data "
+            "then attempts to organise detected transactions for easier cleanup."
         ),
         "faqs": [
             {"q": "How are the separate deposits and withdrawals sections handled?",
-             "a": "Each printed section is reconstructed as printed. Section headings and daily-balance blocks are preserved in the Full_Text sheet, so nothing between the tables is lost."},
+             "a": "Extracted section headings and daily-balance blocks remain visible in Exact_Copy. Table_Data is a best-effort transaction view, so check which section each row belongs to before analysis."},
             {"q": "Do MM/DD/YY dates come through correctly?",
-             "a": "Yes — dates are kept exactly as printed text, so 06/03/26 stays 06/03/26 rather than being reinterpreted."},
+             "a": "Extracted dates are written as text rather than intentionally converted to another date format. Check OCR characters and ambiguous dates against the PDF."},
             {"q": "Can I convert both bank and card statements?",
-             "a": "Yes. Layouts are detected per document from the printed columns, not from a per-product template."},
+             "a": "The converter reads each document's page geometry rather than a per-product template, so it can process both. Review each workbook because their layouts differ."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "wells-fargo-statement-to-excel",
@@ -72,20 +76,20 @@ BANK_PAGES = [
         "layout_notes": (
             "Wells Fargo's transaction history is one wide table: date, check "
             "number, description, separate deposits and withdrawals columns, "
-            "and an ending daily balance that only prints on the last "
-            "transaction of each day. The converter keeps those blanks blank — "
-            "cells are never invented — so the Excel reads exactly like the "
-            "printed history."
+            "and an ending daily balance that only prints on the last transaction "
+            "of each day. Exact_Copy retains the extracted visual rows and blank "
+            "spacing. Table_Data attempts to assign those values to detected "
+            "columns and should be checked against the PDF."
         ),
         "faqs": [
             {"q": "The balance column is empty on most rows of my statement — is that kept?",
-             "a": "Yes. Wells Fargo prints the ending daily balance once per day, and the Excel mirrors that: the balance cell is filled only where the statement fills it."},
+             "a": "Exact_Copy retains the extracted visual placement, including blank space around daily balances. Check Table_Data against it and the PDF because automated column assignment can move or omit a value."},
             {"q": "Are check numbers kept in their own column?",
-             "a": "Yes — the Number column is detected from the printed header row and stays separate from the description."},
+             "a": "Table_Data attempts to detect the printed Number column separately from Description. Exact_Copy keeps the extracted words and positions so you can verify that split."},
             {"q": "What about long descriptions that wrap to a second line?",
-             "a": "Wrapped description lines are merged back into their transaction's row, so row counts match the statement."},
+             "a": "Exact_Copy keeps wrapped lines in visual order. Table_Data may combine them with a detected transaction row, but review row boundaries before counting or summing."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "citi-statement-to-excel",
@@ -98,18 +102,19 @@ BANK_PAGES = [
             "Citibank checking statements use separate debit and credit columns "
             "with a running balance, while Citi card statements print sale and "
             "post dates side by side with a single signed amount column. Both "
-            "shapes are read from the page geometry — the Excel keeps whichever "
-            "column set your document actually uses."
+            "shapes are read from the page geometry. Exact_Copy retains the "
+            "successfully extracted visual rows; Table_Data attempts to identify "
+            "the relevant transaction columns for that document."
         ),
         "faqs": [
             {"q": "My card statement has both a sale date and a post date — are both kept?",
-             "a": "Yes. Every printed column becomes an Excel column under its own heading; neither date is discarded or merged."},
+             "a": "Both extracted dates remain visible in Exact_Copy. Table_Data attempts to place them under separate detected headings; verify the split before using the dates."},
             {"q": "Are debits and credits kept apart?",
-             "a": "Yes — when the statement prints separate Debits and Credits columns, the workbook keeps them separate, exactly as printed."},
+             "a": "Exact_Copy preserves their extracted page positions. Table_Data attempts to keep printed Debit and Credit columns separate, but you should review the column assignment."},
             {"q": "Does a scanned Citi statement work?",
-             "a": "Yes. Scans route through OCR into the same layout reconstruction, and poor-quality pages are flagged for a high-quality retry."},
+             "a": "Scans route through OCR before layout placement. OCR may misread amounts, dates, or headings, so compare both workbook views with the statement."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "capital-one-statement-to-excel",
@@ -122,18 +127,19 @@ BANK_PAGES = [
             "Capital One card statements print a transaction date and a posting "
             "date before each description, with a single signed amount column; "
             "360 banking statements use a simpler date/description/amount/"
-            "balance layout. Month-name dates like \"Jun 3\" are recognized "
-            "when rows are assembled, and both date columns survive into Excel."
+            "balance layout. Exact_Copy retains successfully extracted dates and "
+            "visual rows; Table_Data makes a best-effort attempt to recognise "
+            "month-name dates and separate transaction columns."
         ),
         "faqs": [
             {"q": "Do Trans Date and Post Date both come through?",
-             "a": "Yes — every printed column becomes its own Excel column under the statement's own heading."},
+             "a": "Both successfully extracted dates remain in Exact_Copy. Table_Data attempts to place them in separate columns under the detected headings; check the result against the PDF."},
             {"q": "Are month-name dates like \"Jun 3\" a problem?",
-             "a": "No. Rows are recognized by the printed table geometry, and month-name dates are treated as dates when rows are classified."},
+             "a": "They can be read from the printed text, but Table_Data row classification is best effort. Confirm the date text and its row in Exact_Copy and the PDF."},
             {"q": "Does this cover Capital One 360 checking as well as cards?",
-             "a": "Yes. The layout is detected from each document's printed columns rather than a per-product template."},
+             "a": "The converter reads each document's page geometry rather than a per-product template, so it can process both. Their different layouts should be reviewed separately."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     # ---------------- United Kingdom ----------------
     {
@@ -146,19 +152,20 @@ BANK_PAGES = [
         "layout_notes": (
             "Barclays current-account statements use separate Money out and "
             "Money in columns with a running balance, and spell dates like "
-            "3 Jun 2026. Long payee references wrap onto continuation lines — "
-            "the converter merges those back into one row, so a wrapped Direct "
-            "Debit reference doesn't become two transactions in Excel."
+            "3 Jun 2026. Long payee references wrap onto continuation lines. "
+            "Exact_Copy retains those extracted lines in visual order, while "
+            "Table_Data makes a best-effort attempt to combine them with the "
+            "detected transaction."
         ),
         "faqs": [
             {"q": "Are Money out and Money in kept as separate columns?",
-             "a": "Yes — the Excel uses the statement's own printed headings, so Money out and Money in stay separate exactly as Barclays prints them."},
+             "a": "Exact_Copy retains their extracted words and page positions. Table_Data attempts to keep Money out and Money in under separate detected headings; verify the assignment before summing."},
             {"q": "What about wrapped payment references?",
-             "a": "Description lines that wrap over several printed lines are merged into their parent transaction's row, so row counts match your statement."},
+             "a": "Exact_Copy keeps continuation lines in visual order. Table_Data may merge them with a detected transaction row, but review the row boundaries against the statement."},
             {"q": "Does it handle £ amounts and UK dates?",
-             "a": "Yes. Values are kept as printed text — £1,234.56 stays £1,234.56 — and D Mon YYYY dates are recognised when rows are assembled."},
+             "a": "Successfully extracted values are written as text, and Table_Data attempts to recognise D Mon YYYY rows. Check symbols, digits, and dates against the PDF, especially after OCR."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "hsbc-statement-to-excel",
@@ -171,18 +178,18 @@ BANK_PAGES = [
             "HSBC UK statements combine the payment type (VIS, DD, BP, TFR) and "
             "the payee into one wide details column, flanked by Paid out and "
             "Paid in columns and a balance. Because that details column often "
-            "wraps, the converter folds continuation lines back into the row "
-            "they belong to and keeps the type codes exactly as printed."
+            "wraps, Exact_Copy retains its extracted visual lines, and Table_Data "
+            "attempts to associate continuation text with a detected transaction."
         ),
         "faqs": [
             {"q": "Are HSBC's payment-type codes (DD, VIS, BP) preserved?",
-             "a": "Yes — the details column is copied as printed, codes included. Nothing is reworded or normalised."},
+             "a": "Successfully extracted codes remain visible in Exact_Copy without intentional rewriting. Check OCR characters and any Table_Data grouping against the PDF."},
             {"q": "Paid out and Paid in stay separate?",
-             "a": "Yes, under HSBC's own printed headings, with amounts kept as text so £ signs and formatting survive."},
+             "a": "Table_Data attempts to keep Paid out and Paid in under separate detected headings. Exact_Copy retains the extracted positions so you can verify amounts and £ symbols."},
             {"q": "My statement is a scan from a branch printer — will it work?",
-             "a": "Scanned pages go through OCR into the same layout reconstruction. Poor scans are flagged so you can retry in high quality."},
+             "a": "Scanned pages go through OCR before layout placement. OCR can miss or confuse text, so use the clearest scan available and review every important row and column."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "lloyds-statement-to-excel",
@@ -195,18 +202,18 @@ BANK_PAGES = [
             "Lloyds statements put the payment type (DEB, DD, FPI, SO) in its "
             "own narrow column next to the details, then Money Out, Money In, "
             "and Balance — all with the pound sign in the heading rather than "
-            "in each cell. The converter keeps that exact column split, so you "
-            "can filter by payment type in Excel immediately."
+            "in each cell. Exact_Copy retains the extracted page structure, while "
+            "Table_Data attempts to reproduce that useful column split."
         ),
         "faqs": [
             {"q": "Is the payment-type column kept separate from the details?",
-             "a": "Yes — Lloyds prints them as separate columns and the Excel keeps them separate, which makes type-based filtering easy."},
+             "a": "Table_Data attempts to detect Payment type separately from Details. Confirm that split in Exact_Copy and the PDF before filtering."},
             {"q": "Do the (£) headings come through?",
-             "a": "Yes. Headings are copied as printed, including the currency marker."},
+             "a": "Successfully extracted headings and currency markers remain visible in Exact_Copy. OCR can misread small symbols, so check scanned statements carefully."},
             {"q": "How are wrapped payee references handled?",
-             "a": "Continuation lines are merged into their transaction's row, so a long reference stays one transaction."},
+             "a": "Exact_Copy keeps continuation lines in visual order. Table_Data may join them to a detected transaction, but row merging is best effort and should be reviewed."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "natwest-statement-to-excel",
@@ -218,19 +225,19 @@ BANK_PAGES = [
         "layout_notes": (
             "NatWest statements print a short type column (BAC, D/D, CHQ, POS) "
             "before the description, with Paid in and Withdrawn columns and a "
-            "running balance. Dates repeat only when the day changes — the "
-            "converter keeps those blanks as printed rather than filling them "
-            "in, so the Excel stays a faithful copy you can audit."
+            "running balance. Dates repeat only when the day changes. Exact_Copy "
+            "retains the extracted visual rows and spacing, while Table_Data "
+            "attempts to organise values under the detected headings."
         ),
         "faqs": [
             {"q": "NatWest only prints the date when it changes — is that preserved?",
-             "a": "Yes. Cells are never invented: rows without a printed date keep an empty date cell, exactly like the statement."},
+             "a": "Exact_Copy retains the extracted visual placement, including the gap where no date was printed. Check Table_Data because automated row assembly may handle repeated-date groups differently."},
             {"q": "Are Paid in and Withdrawn kept as separate columns?",
-             "a": "Yes, under the statement's own printed headings."},
+             "a": "Table_Data attempts to keep Paid in and Withdrawn under separate detected headings. Verify each amount column against Exact_Copy and the PDF."},
             {"q": "Can I convert several months of statements?",
-             "a": "Yes — each PDF converts on its own, and multi-page documents keep their layout page by page."},
+             "a": "Each PDF converts as its own job. Exact_Copy preserves successfully extracted visual rows page by page; review page transitions and repeated headers."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     # ---------------- Europe ----------------
     {
@@ -243,19 +250,19 @@ BANK_PAGES = [
         "layout_notes": (
             "ING afschriften use Dutch column headings — Datum, Naam/"
             "Omschrijving, Af, Bij — with DD-MM-YYYY dates and decimal-comma "
-            "amounts like 1.234,56. The converter recognises the Dutch headings "
-            "and the European number format, and keeps both exactly as printed: "
-            "no reformatting into US-style numbers."
+            "amounts like 1.234,56. Exact_Copy retains the successfully extracted "
+            "Dutch text and visual positions without intentionally converting the "
+            "number format. Table_Data attempts to detect the transaction columns."
         ),
         "faqs": [
             {"q": "Are Dutch headings like Af and Bij recognised?",
-             "a": "Yes — the header row is detected from the document, so the Excel columns are titled Datum, Omschrijving, Af, Bij, Saldo, exactly as ING prints them."},
+             "a": "Extracted headings such as Af and Bij remain visible in Exact_Copy. Table_Data attempts to use the detected headings for its columns; verify them against the PDF."},
             {"q": "Do decimal-comma amounts (1.234,56) survive?",
-             "a": "Yes. Amounts are kept as printed text, so European formatting is untouched — you decide in Excel how to parse them."},
+             "a": "Successfully extracted amounts are written as text without intentional US-style conversion. Check digits and separators, then decide in Excel how to parse them."},
             {"q": "Does it work for both betaalrekening and spaarrekening statements?",
-             "a": "Yes. The layout is read from each document's printed columns, not from an account-type template."},
+             "a": "The converter reads each document's geometry rather than an account-type template, so it can process both. Review their different layouts separately."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "deutsche-bank-statement-to-excel",
@@ -268,18 +275,19 @@ BANK_PAGES = [
             "Deutsche Bank Kontoauszüge print a booking date and value date, a "
             "Verwendungszweck column that regularly wraps over several lines, "
             "and separate Soll and Haben amount columns with German number "
-            "formatting. The converter merges the wrapped Verwendungszweck back "
-            "into one row and recognises Soll/Haben as amount columns."
+            "formatting. Exact_Copy retains the extracted visual lines and "
+            "positions. Table_Data attempts to combine wrapped purpose text and "
+            "identify the Soll and Haben columns."
         ),
         "faqs": [
-            {"q": "Is the multi-line Verwendungszweck merged correctly?",
-             "a": "Yes — continuation lines are folded into their transaction's row, so a long reference stays one row in Excel."},
+            {"q": "How is a multi-line Verwendungszweck handled?",
+             "a": "Exact_Copy keeps all successfully extracted continuation lines in visual order. Table_Data may combine them with a transaction row, but review that best-effort merge."},
             {"q": "Are Buchungstag and Wert both kept?",
-             "a": "Yes. Every printed column becomes its own Excel column under the German heading."},
+             "a": "Both successfully extracted headings and dates remain visible in Exact_Copy. Table_Data attempts to keep them in separate columns; confirm the split against the PDF."},
             {"q": "Do DD.MM.YYYY dates and 1.234,56 amounts survive?",
-             "a": "Yes — both are recognised during row assembly and copied as printed text, without reformatting."},
+             "a": "Extracted values are written as text without intentional locale conversion. Review OCR characters and Table_Data row assembly before parsing them in Excel."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
     {
         "slug": "santander-statement-to-excel",
@@ -292,18 +300,18 @@ BANK_PAGES = [
             "Santander UK statements use Money in / Money out columns with "
             "DD/MM/YYYY dates, while Spanish extractos print Fecha, Concepto, "
             "Importe and Saldo with decimal-comma amounts. Both shapes are read "
-            "from the printed page — the Excel keeps whichever headings and "
-            "number format your statement actually uses."
+            "from the printed page. Exact_Copy retains the extracted text and "
+            "visual geometry; Table_Data attempts to organise detected columns."
         ),
         "faqs": [
             {"q": "Does this handle both UK and Spanish Santander statements?",
-             "a": "Yes. The header row and columns are detected from the document itself, so English and Spanish headings each come through as printed."},
+             "a": "The converter reads headings and geometry from the document rather than a language-specific template, so it can process both. Review each result against its source PDF."},
             {"q": "Are DD/MM/YYYY dates kept without being reinterpreted?",
-             "a": "Yes — dates stay text, exactly as printed, so 03/06/2026 is never silently flipped into a US-style date."},
+             "a": "Successfully extracted dates are written as text without intentional US-style conversion. Confirm ambiguous dates and OCR characters against the PDF."},
             {"q": "What happens to transaction references that wrap?",
-             "a": "Wrapped lines merge into their parent row, keeping one row per transaction."},
+             "a": "Exact_Copy keeps wrapped lines in visual order. Table_Data may merge them into a detected transaction row, but check the row boundary before using it."},
         ],
-        "lastmod": "2026-07-08",
+        "lastmod": "2026-08-09",
     },
 ]
 

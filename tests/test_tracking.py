@@ -3,6 +3,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,8 +14,9 @@ os.environ.setdefault("DISABLE_QUOTAS", "true")
 def test_should_track_page_view_filters_non_content_routes():
     from tracking import is_probable_bot, should_track_page_view
 
-    assert should_track_page_view("/", "GET", 200, "text/html") is True
-    assert should_track_page_view("/pricing", "GET", 200, "text/html") is True
+    human_agent = "Mozilla/5.0 AppleWebKit/537.36"
+    assert should_track_page_view("/", "GET", 200, "text/html", human_agent) is True
+    assert should_track_page_view("/pricing", "GET", 200, "text/html", human_agent) is True
     assert should_track_page_view("/", "GET", 200, "text/html", "Googlebot/2.1") is False
     assert should_track_page_view("/static/styles.css", "GET", 200, "text/css") is False
     assert should_track_page_view("/auth/verify", "GET", 302, "text/html") is False
@@ -23,6 +25,8 @@ def test_should_track_page_view_filters_non_content_routes():
     assert should_track_page_view("/", "GET", 404, "text/html") is False
     assert is_probable_bot("Mozilla/5.0 AppleWebKit/537.36") is False
     assert is_probable_bot("Mozilla/5.0 (compatible; Googlebot/2.1)") is True
+    assert is_probable_bot("SiteAuditBot/1.0") is True
+    assert is_probable_bot("") is True
 
 
 def test_public_page_sets_visitor_cookie():
@@ -53,6 +57,43 @@ def test_bot_page_view_does_not_set_visitor_cookie():
     assert not any(cookie.startswith(f"{VISITOR_COOKIE}=") for cookie in cookies)
 
 
+def test_tracking_enqueue_is_fail_open_and_disables_publish_retry(monkeypatch):
+    from tracking import enqueue_page_view
+
+    calls = []
+
+    def send_task(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "celery_config",
+        SimpleNamespace(celery_app=SimpleNamespace(send_task=send_task)),
+    )
+
+    enqueue_page_view(
+        visitor_id=str(uuid.uuid4()),
+        user_id=None,
+        path="/pricing",
+        referrer="",
+        ip="127.0.0.1",
+        user_agent="Mozilla/5.0",
+    )
+
+    assert calls[0][0][0] == "maintenance.persist_page_view"
+    assert calls[0][1]["retry"] is False
+
+
+def test_retention_sweep_is_scheduled_hourly():
+    config_source = (Path(__file__).parent.parent / "celery_config.py").read_text()
+
+    assert "'hourly-retention-sweep'" in config_source
+    assert "'task': 'maintenance.run_retention_sweep'" in config_source
+    assert "'schedule': 3600.0" in config_source
+    assert "'options': {'queue': 'maintenance'}" in config_source
+
+
 def test_auth_verify_logs_successful_login():
     from db import get_db_session, init_db
     from models import AuthToken, LoginEvent, User
@@ -78,7 +119,28 @@ def test_auth_verify_logs_successful_login():
 
     app.config["TESTING"] = True
     with app.test_client() as client:
+        guest_id = f"tracking-guest-{suffix}"
+        with client.session_transaction() as sess:
+            sess["guest_id"] = guest_id
+            sess["user_id"] = "stale-user-id"
+            sess["user_email"] = "stale-user@example.com"
+            sess["role"] = "admin"
+            sess["plan_id"] = "enterprise"
+            sess["plan_status"] = "active"
+            sess["csrf_token"] = "stale-csrf-token"
+            sess["download_email_jobs"] = {"legacy-job": "stale-user@example.com"}
+
         resp = client.get(f"/auth/verify?token={raw_token}")
+
+        with client.session_transaction() as sess:
+            assert sess["guest_id"] == guest_id
+            assert sess["user_id"] == user_id
+            assert sess["user_email"] == email
+            assert sess["role"] == "user"
+            assert sess["plan_id"] == "free"
+            assert sess["plan_status"] == "free"
+            assert "csrf_token" not in sess
+            assert "download_email_jobs" not in sess
 
     assert resp.status_code == 302
     with get_db_session() as db:
@@ -90,6 +152,94 @@ def test_auth_verify_logs_successful_login():
         )
         assert event is not None
         assert event.email == email
+
+
+def test_magic_link_cannot_be_replayed():
+    from app import app
+    from db import get_db_session, init_db
+    from models import AuthToken, LoginEvent, User
+    from routes.auth import hash_token
+
+    suffix = uuid.uuid4().hex
+    raw_token = f"single-use-token-{suffix}"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=f"single-use-{suffix}@example.com")
+        db.add(user)
+        db.flush()
+        user_id = user.id
+        db.add(AuthToken(
+            user_id=user_id,
+            token_hash=hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=10),
+        ))
+
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        first = client.get(f"/auth/verify?token={raw_token}")
+        second = client.get(f"/auth/verify?token={raw_token}")
+
+    assert first.status_code == 302
+    assert first.headers["Location"].endswith("/dashboard")
+    assert second.status_code == 302
+    assert second.headers["Location"].endswith("/signin")
+    with get_db_session() as db:
+        assert (
+            db.query(LoginEvent)
+            .filter_by(user_id=user_id, event_type="login_success")
+            .count()
+        ) == 1
+
+
+def test_magic_link_commit_failure_does_not_authenticate_session(monkeypatch):
+    from contextlib import contextmanager
+
+    from app import app
+    from db import SessionLocal, get_db_session, init_db
+    from models import AuthToken, User
+    import routes.auth as auth_module
+
+    suffix = uuid.uuid4().hex
+    raw_token = f"commit-failure-token-{suffix}"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=f"commit-failure-{suffix}@example.com")
+        db.add(user)
+        db.flush()
+        db.add(AuthToken(
+            user_id=user.id,
+            token_hash=auth_module.hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=10),
+        ))
+
+    @contextmanager
+    def failing_commit_session():
+        db = SessionLocal()
+        try:
+            yield db
+            db.rollback()
+            raise RuntimeError("commit unavailable")
+        finally:
+            db.close()
+
+    monkeypatch.setattr(auth_module, "get_db_session", failing_commit_session)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["guest_id"] = f"commit-guest-{suffix}"
+        response = client.get(f"/auth/verify?token={raw_token}")
+        with client.session_transaction() as sess:
+            assert "user_id" not in sess
+            assert "user_email" not in sess
+            assert sess["guest_id"] == f"commit-guest-{suffix}"
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/signin")
+    with get_db_session() as db:
+        token_row = db.query(AuthToken).filter_by(
+            token_hash=auth_module.hash_token(raw_token)
+        ).first()
+        assert token_row.used_at is None
 
 
 def test_admin_dashboard_shows_visit_and_login_metrics():
