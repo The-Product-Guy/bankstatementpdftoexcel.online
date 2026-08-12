@@ -1,5 +1,7 @@
 """Auth routes: signin, magic link, verify, signout, account."""
 import hashlib
+import logging
+import os
 import secrets
 from datetime import datetime, timedelta
 
@@ -10,6 +12,7 @@ from models import AuthToken, Job, LoginEvent, User, UsageCounter
 from site_urls import public_base_url
 
 auth_bp = Blueprint('auth', __name__)
+logger = logging.getLogger(__name__)
 
 
 def _record_auth_funnel_event(event_type: str, email: str = "", extra: str = "") -> None:
@@ -34,6 +37,15 @@ def _record_auth_funnel_event(event_type: str, email: str = "", extra: str = "")
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer setting without letting a bad deploy value disable auth."""
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def send_magic_link_email(email: str, link: str) -> None:
@@ -119,13 +131,20 @@ def signin():
 
 @auth_bp.route('/auth/start', methods=['POST'])
 def auth_start():
-    from app import ADMIN_EMAILS, MAGIC_LINK_EXP_MINUTES, get_client_ip, is_ajax_request, rate_limited
+    from app import (
+        ADMIN_EMAILS,
+        MAGIC_LINK_EXP_MINUTES,
+        get_client_ip,
+        hmac_rate_limit_subject,
+        is_ajax_request,
+        observe_distinct_rate_limit_subject,
+        rate_limited,
+    )
 
     email = (request.form.get('email') or '').strip().lower()
-    _record_auth_funnel_event('auth_submit_attempt', email=email)
     csrf_token = request.form.get('csrf_token')
     if not csrf_token or csrf_token != session.get('csrf_token'):
-        _record_auth_funnel_event('auth_submit_invalid_csrf', email=email)
+        _record_auth_funnel_event('auth_submit_invalid_csrf')
         message = 'Invalid request token. Please refresh and try again.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 400
@@ -133,15 +152,62 @@ def auth_start():
         return redirect(url_for('auth.signin'))
 
     if not email or '@' not in email:
-        _record_auth_funnel_event('auth_submit_invalid_email', email=email)
+        _record_auth_funnel_event('auth_submit_invalid_email')
         message = 'Please enter a valid email address.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 400
         flash(message, 'error')
         return redirect(url_for('auth.signin'))
 
-    if rate_limited(f"rate:auth_start:{get_client_ip()}:{email}", 5, 900):
-        _record_auth_funnel_event('auth_submit_rate_limited', email=email)
+    # Preserve the aggregate auth-attempt metric only after validation, and do
+    # not attach the submitted email address to funnel telemetry.
+    _record_auth_funnel_event('auth_submit_attempt')
+
+    client_ip = get_client_ip()
+    ip_digest = hmac_rate_limit_subject(client_ip, 'auth-ip')
+    email_digest = hmac_rate_limit_subject(email, 'auth-email')
+    window_seconds = _positive_int_env('RATE_LIMIT_AUTH_WINDOW_SECONDS', 15 * 60)
+    ip_limit = _positive_int_env('RATE_LIMIT_AUTH_IP', 10)
+    email_limit = _positive_int_env('RATE_LIMIT_AUTH_EMAIL', 5)
+    distinct_email_threshold = _positive_int_env(
+        'AUTH_DISTINCT_EMAIL_ALERT_THRESHOLD', 5,
+    )
+    distinct_email_window_seconds = _positive_int_env(
+        'AUTH_DISTINCT_EMAIL_WINDOW_SECONDS', 24 * 60 * 60,
+    )
+
+    # Always evaluate both independent limits. Otherwise an attacker can use
+    # one exhausted limit to probe whether the other is still available.
+    ip_limited = rate_limited(
+        f"rate:auth_start:ip:{ip_digest}", ip_limit, window_seconds,
+    )
+    email_limited = rate_limited(
+        f"rate:auth_start:email:{email_digest}", email_limit, window_seconds,
+    )
+
+    # This is strictly observability, never another sign-in gate. The helper
+    # atomically reports only the threshold-crossing request for each IP/day.
+    try:
+        observed = observe_distinct_rate_limit_subject(
+            f"observe:auth:ip-emails:{ip_digest}",
+            email_digest,
+            threshold=distinct_email_threshold,
+            window_seconds=distinct_email_window_seconds,
+        )
+        if observed is not None:
+            distinct_count, crossed_threshold = observed
+            if crossed_threshold:
+                logger.warning(
+                    'event=auth_ip_email_spray ip_fingerprint=%s '
+                    'distinct_email_count=%s window_seconds=%s',
+                    ip_digest[:12], distinct_count, distinct_email_window_seconds,
+                )
+    except Exception:
+        # Auth availability must not depend on optional abuse telemetry.
+        logger.warning('Unable to observe distinct magic-link subjects', exc_info=True)
+
+    if ip_limited or email_limited:
+        _record_auth_funnel_event('auth_submit_rate_limited')
         message = 'Too many sign-in attempts. Please try again later.'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 429
@@ -165,7 +231,7 @@ def auth_start():
                 user_id=user.id,
                 token_hash=token_hash,
                 expires_at=expires_at,
-                ip=get_client_ip(),
+                ip=client_ip,
                 user_agent=request.headers.get('User-Agent', '')[:512]
             )
             db.add(auth_token)
@@ -174,13 +240,13 @@ def auth_start():
                 email=user.email,
                 event_type='magic_link_requested',
                 success=True,
-                ip=get_client_ip(),
+                ip=client_ip,
                 user_agent=request.headers.get('User-Agent', '')[:512],
             ))
 
         link = f"{public_base_url()}{url_for('auth.auth_verify', token=token)}"
         send_magic_link_email(email, link)
-        _record_auth_funnel_event('magic_link_sent', email=email)
+        _record_auth_funnel_event('magic_link_sent')
 
         message = 'Check your email for your sign-in link.'
         if is_ajax_request():
@@ -188,7 +254,7 @@ def auth_start():
         flash(message, 'success')
         return redirect(url_for('auth.signin'))
     except Exception as e:
-        _record_auth_funnel_event('magic_link_failed', email=email, extra=str(e)[:500])
+        _record_auth_funnel_event('magic_link_failed')
         message = f'Unable to send magic link: {str(e)}'
         if is_ajax_request():
             return jsonify({'status': 'error', 'error': message}), 500
@@ -208,9 +274,11 @@ def auth_verify():
 
     try:
         token_hash = hash_token(token)
+        verified_user = None
         with get_db_session() as db:
             auth_token = db.query(AuthToken).filter_by(token_hash=token_hash).first()
-            if not auth_token or auth_token.used_at is not None or auth_token.expires_at < datetime.utcnow():
+            claimed_at = datetime.utcnow()
+            if not auth_token or auth_token.used_at is not None or auth_token.expires_at < claimed_at:
                 _record_auth_funnel_event('login_failed', extra='invalid_or_expired_token')
                 flash('Invalid or expired sign-in link.', 'error')
                 return redirect(url_for('auth.signin'))
@@ -221,8 +289,23 @@ def auth_verify():
                 flash('Account not available.', 'error')
                 return redirect(url_for('auth.signin'))
 
-            auth_token.used_at = datetime.utcnow()
-            user.last_login_at = datetime.utcnow()
+            # Atomically claim the one-use token. Concurrent requests can both
+            # read it, but only one can update the still-unused row.
+            claimed = (
+                db.query(AuthToken)
+                .filter(
+                    AuthToken.id == auth_token.id,
+                    AuthToken.used_at.is_(None),
+                    AuthToken.expires_at >= claimed_at,
+                )
+                .update({AuthToken.used_at: claimed_at}, synchronize_session=False)
+            )
+            if claimed != 1:
+                _record_auth_funnel_event('login_failed', extra='token_already_claimed')
+                flash('Invalid or expired sign-in link.', 'error')
+                return redirect(url_for('auth.signin'))
+
+            user.last_login_at = claimed_at
             db.add(LoginEvent(
                 user_id=user.id,
                 email=user.email,
@@ -232,13 +315,29 @@ def auth_verify():
                 user_agent=request.headers.get('User-Agent', '')[:512],
             ))
 
-            session['user_id'] = user.id
-            session['user_email'] = user.email
-            session['role'] = user.role or 'user'
-            session['plan_status'] = user.plan_status
-            session['plan_id'] = user.plan_id
+            # Copy scalar values before the database session closes. Flask auth
+            # state is established only after the token claim commits.
+            verified_user = {
+                'id': user.id,
+                'email': user.email,
+                'role': user.role or 'user',
+                'plan_status': user.plan_status,
+                'plan_id': user.plan_id,
+            }
 
-        _record_auth_funnel_event('login_success', email=session.get('user_email', ''))
+        # Rotate authentication state so a newly verified account cannot
+        # inherit another account's captured-download or plan session data.
+        guest_id = session.get('guest_id')
+        session.clear()
+        if guest_id:
+            session['guest_id'] = guest_id
+        session['user_id'] = verified_user['id']
+        session['user_email'] = verified_user['email']
+        session['role'] = verified_user['role']
+        session['plan_status'] = verified_user['plan_status']
+        session['plan_id'] = verified_user['plan_id']
+
+        _record_auth_funnel_event('login_success')
         flash('Signed in successfully.', 'success')
         return redirect(url_for('converter.dashboard'))
     except Exception:

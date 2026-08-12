@@ -9,11 +9,13 @@ load_dotenv()
 
 import logging
 import hashlib
+import hmac
 import os
 import secrets
 import uuid
 from datetime import datetime
 from ipaddress import ip_address
+from typing import Optional, Tuple
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,23 @@ def _is_production_runtime() -> bool:
     )
 
 
+def cloudflare_proxy_config():
+    """Return validated Cloudflare-origin settings from the environment.
+
+    The origin secret is deliberately read at request time instead of being
+    cached globally.  That makes a bad deployment fail safely and lets the
+    configuration be exercised without re-importing the Flask application.
+    """
+    enabled = _env_bool('CLOUDFLARE_PROXY_ENABLED', False)
+    secret = os.environ.get('CLOUDFLARE_ORIGIN_SECRET', '')
+    if enabled and len(secret) < 32:
+        raise RuntimeError(
+            'CLOUDFLARE_ORIGIN_SECRET must be at least 32 characters when '
+            'CLOUDFLARE_PROXY_ENABLED is enabled.'
+        )
+    return enabled, secret
+
+
 IS_PRODUCTION = _is_production_runtime()
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if IS_PRODUCTION and not SECRET_KEY:
@@ -76,6 +95,7 @@ if PUBLIC_ORIGIN_SETTING:
         normalize_base_url(PUBLIC_ORIGIN_SETTING)
     except ValueError as exc:
         raise RuntimeError(f"Invalid public base URL: {exc}") from exc
+cloudflare_proxy_config()
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY or 'dev-secret-key-change-in-production'
@@ -178,22 +198,118 @@ def is_pdf_file(file_storage):
 def is_ajax_request():
     return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
+
+def _single_request_header(name: str) -> Optional[str]:
+    """Return a single, non-list HTTP header value, otherwise ``None``.
+
+    A comma-delimited value can be produced by duplicate headers at a proxy.
+    It is never safe to guess which member supplied the client identity.
+    """
+    values = request.headers.getlist(name)
+    if len(values) != 1:
+        return None
+    value = values[0].strip()
+    if not value or ',' in value:
+        return None
+    return value
+
+
+def _cloudflare_client_ip() -> Optional[str]:
+    """Return the Cloudflare-provided client IP only for a trusted request."""
+    enabled, expected_secret = cloudflare_proxy_config()
+    if not enabled:
+        return None
+
+    supplied_secret = _single_request_header('X-Statement-Origin')
+    if not supplied_secret or not hmac.compare_digest(supplied_secret, expected_secret):
+        return None
+
+    candidate = _single_request_header('CF-Connecting-IP')
+    if not candidate:
+        return None
+    try:
+        return str(ip_address(candidate))
+    except ValueError:
+        return None
+
+
 def get_client_ip():
-    # Railway injects X-Real-IP at its trusted edge. Do not use the left-most
-    # X-Forwarded-For value: clients can prepend arbitrary values to that chain.
-    candidates = (
-        request.headers.get('X-Real-IP', ''),
-        request.remote_addr or '',
-    )
-    for candidate in candidates:
-        normalized = candidate.strip()
-        if not normalized:
-            continue
-        try:
-            return str(ip_address(normalized))
-        except ValueError:
-            continue
+    """Return a validated visitor address without trusting client headers.
+
+    Direct-origin deployments only use the TCP peer address.  With the
+    Cloudflare origin secret enabled, a valid CF-Connecting-IP is accepted
+    only after the shared origin header has authenticated the request.
+    """
+    cloudflare_client_ip = _cloudflare_client_ip()
+    if cloudflare_client_ip:
+        return cloudflare_client_ip
+    try:
+        return str(ip_address(request.remote_addr or ''))
+    except ValueError:
+        pass
     return 'unknown'
+
+
+def hmac_rate_limit_subject(value: str, namespace: str) -> str:
+    """Return a non-reversible, namespaced subject for Redis rate-limit data."""
+    if not isinstance(value, str) or not isinstance(namespace, str) or not namespace:
+        raise ValueError('Rate-limit subject and namespace must be non-empty strings.')
+    subject = value.strip().lower()
+    if not subject:
+        raise ValueError('Rate-limit subject and namespace must be non-empty strings.')
+    secret = app.secret_key
+    if not isinstance(secret, (str, bytes)):
+        raise RuntimeError('Flask SECRET_KEY must be configured for rate-limit subjects.')
+    secret_bytes = secret.encode('utf-8') if isinstance(secret, str) else secret
+    message = f'{namespace}:{subject}'.encode('utf-8')
+    return hmac.new(secret_bytes, message, hashlib.sha256).hexdigest()
+
+
+def observe_distinct_rate_limit_subject(
+    key: str,
+    subject: str,
+    window_seconds: int,
+    threshold: int,
+) -> Optional[Tuple[int, bool]]:
+    """Atomically count distinct HMAC subjects in a Redis set.
+
+    The Redis key may identify an IP bucket, but neither it nor the set member
+    contains the raw subject (for example, an email address).  ``None`` means
+    the observer could not record an event; callers must not fail an otherwise
+    valid request solely because this telemetry is unavailable.
+    """
+    if threshold < 1:
+        raise ValueError('Distinct-subject threshold must be at least one.')
+    subject_digest = hmac_rate_limit_subject(subject, 'distinct-subject')
+    try:
+        r = get_redis_client()
+        result = r.eval(
+            """
+            local was_new = redis.call('SADD', KEYS[1], ARGV[1])
+            if redis.call('TTL', KEYS[1]) < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            local count = redis.call('SCARD', KEYS[1])
+            local crossed = 0
+            if was_new == 1 and count == tonumber(ARGV[3]) then
+                crossed = 1
+            end
+            return {count, crossed}
+            """,
+            1,
+            key,
+            subject_digest,
+            int(window_seconds),
+            int(threshold),
+        )
+        # redis-py returns the Lua boolean as 0/1 in a two-item sequence.
+        if isinstance(result, (list, tuple)):
+            return int(result[0]), bool(int(result[1]))
+        # Defensive fallback for unusual Redis clients; do not claim a crossing.
+        return int(result), False
+    except Exception as exc:
+        logger.warning('Distinct-subject observer unavailable: %s', exc)
+        return None
 
 def rate_limited(key, limit, window_seconds, *, fail_closed=None):
     try:
@@ -373,6 +489,21 @@ def inject_user_context():
         'max_upload_mb': MAX_UPLOAD_MB,
         'file_splitter_url': FILE_SPLITTER_URL,
     }
+
+
+@app.before_request
+def enforce_cloudflare_origin():
+    """Keep direct callers from bypassing Cloudflare's authenticated edge."""
+    enabled, _ = cloudflare_proxy_config()
+    if (
+        not enabled
+        or not IS_PRODUCTION
+        or request.path in {'/health', '/health/detailed'}
+    ):
+        return None
+    if not _cloudflare_client_ip():
+        return 'Misdirected request', 421
+    return None
 
 
 @app.before_request

@@ -346,7 +346,7 @@ BLOG_POSTS = [
             {
                 'heading': 'What limits apply?',
                 'paragraphs': [
-                    'Guest, Free, Pro, and Enterprise access have different conversion counts and upload-size limits. The pricing page shows the current allowances before you upload. For large statements, confirm that every expected page appears in the workbook and review page transitions where column headers may repeat.',
+                    'A verified sign-in is required before upload. Free, Pro, and Enterprise plans have different conversion counts and upload-size limits; the pricing page shows the current allowances. For large statements, confirm that every expected page appears in the workbook and review page transitions where column headers may repeat.',
                 ],
             },
             {

@@ -20,13 +20,14 @@
 
     <div class="dashboard-header">
         <h1 class="display">Convert a statement.</h1>
-        {% if current_user_email %}
+        {% if conversion_authenticated %}
         <p>Upload a bank statement PDF and download an Excel workbook designed to preserve its visual rows and column positions.</p>
         {% else %}
-        <p>Upload a bank statement PDF and get an Excel workbook designed to preserve its visual rows and column positions. We only ask for your email when it is ready to download.</p>
+        <p>Sign in with a secure one-time email link before uploading a bank statement PDF.</p>
         {% endif %}
     </div>
 
+    {% if conversion_authenticated %}
     <div class="converter-card" id="convert">
         <div class="converter-header">
             <h2>Upload your PDF</h2>
@@ -114,13 +115,30 @@
             </button>
         </form>
         <p class="converter-note">Exact_Copy preserves every successfully extracted word in visual row order. Table_Data organises detected rows and columns for cleanup. Output files are available for a limited download window.</p>
-        {% if not current_user_email %}
-        <p class="converter-note subtle">No account is required to upload. Email is collected at download so we can link the result to you.</p>
-        {% endif %}
         <p class="converter-note subtle">Designed for bank statements and tabular reports.</p>
     </div>
+    {% else %}
+    <div class="converter-card converter-auth-gate" id="convert">
+        <div class="converter-header">
+            {% if conversion_auth_unavailable %}
+            <p class="eyebrow">Temporarily unavailable</p>
+            <h2>Sign-in verification is unavailable</h2>
+            <p>We cannot safely accept statement uploads right now. Please try again shortly.</p>
+            {% else %}
+            <p class="eyebrow">Secure sign-in required</p>
+            <h2>Verify your email before uploading</h2>
+            <p>A one-time magic link protects the free conversion service from anonymous abuse and links each workbook to its owner. No password or credit card is required.</p>
+            {% endif %}
+        </div>
+        {% if not conversion_auth_unavailable %}
+        <a href="{{ url_for('auth.signin') }}" class="btn-pill btn-pill--coral btn-pill--big">Sign in to convert</a>
+        <p class="converter-note subtle">Your PDF is not uploaded until after sign-in.</p>
+        {% endif %}
+    </div>
+    {% endif %}
 </main>
 
+{% if conversion_authenticated %}
 <!-- Progress Modal -->
 <div id="progressModal" class="progress-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="progressTitle" aria-describedby="progressDesc" aria-hidden="true" tabindex="-1">
     <div class="progress-content">
@@ -276,8 +294,11 @@
         </form>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if conversion_authenticated %}
 <script src="{{ static_asset_url('script.min.js') }}"></script>
+{% endif %}
 {% endblock %}

@@ -130,9 +130,11 @@ This script will:
    - Connect your GitHub repository at [railway.app](https://railway.app)
    - Railway auto-detects all configurations
    - Set `SECRET_KEY=your-production-secret-key`
-   - Set `PUBLIC_BASE_URL=https://your-domain.com` for canonical URLs and trusted production host validation
+   - Set `CANONICAL_BASE_URL=https://your-domain.com` for canonical URLs, magic links, and trusted production host validation
+   - Set `RESEND_API_KEY` and a `RESEND_FROM_EMAIL` address on a verified Resend domain; conversion uploads require magic-link sign-in
    - Create web (`SERVICE_ROLE=web`), worker (`SERVICE_ROLE=worker`), and one scheduler (`SERVICE_ROLE=scheduler`) services
    - Give all three services the same Postgres, Redis, storage, and application configuration
+   - If the public domain is Cloudflare-proxied, configure the Cloudflare-to-Railway origin protection below before enabling it in Railway.
 
 3. **Production Features**
    - ✅ Automatic HTTPS
@@ -172,6 +174,8 @@ Keep the original workbook as a review copy. Clean a duplicate of `Exact_Copy` o
 |----------|----------|-------------|---------|
 | `SECRET_KEY` | Yes in production | Flask session security. Required when `APP_ENV=production`, `FLASK_ENV=production`, or Railway runtime vars are present. | Local dev fallback |
 | `DATABASE_URL` | Yes in production | Shared Postgres database URL. Must be set on web, worker, and scheduler services so users, jobs, analytics, feedback, and retention share one durable store. | `sqlite:///local.db` locally |
+| `RESEND_API_KEY` | Yes in production | Sends the mandatory one-time sign-in link. | None |
+| `RESEND_FROM_EMAIL` | Yes in production | Sender on a verified Resend domain that can deliver sign-in links to users. | `onboarding@resend.dev` for limited development only |
 | `APP_ENV` / `FLASK_ENV` | No | Set either to `production` to enable strict production defaults. | - |
 | `PORT` | No | Application port | `5001` |
 | `PUBLIC_BASE_URL` / `CANONICAL_BASE_URL` | Yes in production | Canonical public origin used for crawler URLs, emailed links, Stripe redirects, and host validation. | Request host locally |
@@ -179,6 +183,14 @@ Keep the original workbook as a review copy. Clean a duplicate of `Exact_Copy` o
 | `WEB_THREADS` | No | Gunicorn thread count for the web service entrypoint. | `20` |
 | `SESSION_COOKIE_SECURE` | No | Enables secure session cookies. | `true` in production, `false` locally |
 | `RATE_LIMIT_FAIL_CLOSED` | No | Blocks rate-limited routes when Redis is unavailable. | `true` in production, `false` locally |
+| `CLOUDFLARE_PROXY_ENABLED` | No | Enables authenticated Cloudflare-to-Railway origin requests. | `false` |
+| `CLOUDFLARE_ORIGIN_SECRET` | Required when Cloudflare protection is enabled | At least 32 random characters shared only by Railway and Cloudflare's edge rule. | Empty |
+| `RATE_LIMIT_CONVERT` | No | Per-IP conversion limit; it remains independent from sign-in controls. | `15` per hour |
+| `RATE_LIMIT_AUTH_IP` | No | Magic-link requests allowed per IP in the auth window. | `10` |
+| `RATE_LIMIT_AUTH_EMAIL` | No | Magic-link requests allowed per normalized email in the auth window. | `5` |
+| `RATE_LIMIT_AUTH_WINDOW_SECONDS` | No | Shared magic-link limiter window. | `900` |
+| `AUTH_DISTINCT_EMAIL_ALERT_THRESHOLD` | No | Distinct normalized emails from an IP that trigger an abuse warning. | `5` |
+| `AUTH_DISTINCT_EMAIL_WINDOW_SECONDS` | No | Window for the distinct-email abuse observation. | `86400` |
 | `MAX_UPLOAD_MB` | No | PDF upload cap for every plan; values above the public cap are clamped. | `50` |
 | `FILE_SPLITTER_URL` | No | Splitter link shown when a PDF exceeds the file-size or page limit. | `https://smallpdfsplit.online/` |
 | `MAX_PAGES` | No | Maximum PDF pages processed per conversion. | `250` |
@@ -194,6 +206,17 @@ Keep the original workbook as a review copy. Clean a duplicate of `Exact_Copy` o
 | `VALIDATION_SUMMARY_OCR` | No | Allows the worker to OCR sampled first/last pages when native text does not provide a complete statement summary. | `true` |
 | `VALIDATION_SUMMARY_SAMPLE_PAGES` | No | Number of pages sampled from the beginning and end for opening/closing balance and total extraction. | `2` |
 | `GA_MEASUREMENT_ID` / `GTM_CONTAINER_ID` | No | Analytics IDs injected into public pages. | - |
+
+### Cloudflare-to-Railway Origin Protection
+
+Use this only when the production hostname is proxied through Cloudflare. It prevents a direct Railway-origin request from choosing a forged visitor IP or bypassing Cloudflare controls.
+
+1. Generate a random secret of at least 32 characters and add it to Railway as `CLOUDFLARE_ORIGIN_SECRET`; keep `CLOUDFLARE_PROXY_ENABLED=false` initially.
+2. In Cloudflare, create a Transform Rule for the proxied production hostname that **overwrites** the request header `X-Statement-Origin` with that exact secret. Do not append the header and do not let a client-supplied value pass through.
+3. Confirm the rule is active, then set `CLOUDFLARE_PROXY_ENABLED=true` in the Railway web service and deploy it. The worker and scheduler do not receive public HTTP traffic, but may share the setting safely.
+4. Verify normal requests through the Cloudflare hostname. In production, unauthenticated direct-origin requests are rejected with HTTP `421`; `/health` and `/health/detailed` remain exempt so Railway health checks can reach the service.
+
+Enable the Railway flag only after the Cloudflare overwrite rule is live. Reversing that order rejects all normal public requests.
 
 ### File Limits
 

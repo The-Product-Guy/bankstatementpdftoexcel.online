@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 converter_bp = Blueprint('converter', __name__)
 
 
+class ConversionSessionValidationError(RuntimeError):
+    """Raised when the database cannot validate an authenticated session."""
+
+
 def _record_converter_funnel_event(
     event_type: str,
     job_id: str = "",
@@ -65,18 +69,108 @@ def _mark_download_email_captured(job_id: str, email: str) -> None:
     session.modified = True
 
 
-def _job_access_allowed(job: Job) -> bool:
+def _clear_conversion_auth_session() -> None:
+    changed = False
+    for key in ('user_id', 'user_email', 'role', 'plan_status', 'plan_id'):
+        if key in session:
+            session.pop(key, None)
+            changed = True
+    if changed:
+        session.modified = True
+
+
+def _job_access_allowed(job: Job, db=None) -> bool:
     user_id = session.get('user_id')
     guest_id = session.get('guest_id')
-    if user_id and job.user_id == user_id:
-        return True
-    if guest_id and job.guest_id == guest_id:
-        return True
-    return False
+    if job.user_id:
+        if user_id and job.user_id == user_id:
+            if db is not None:
+                user = db.get(User, user_id)
+                if not user or not user.is_active:
+                    _clear_conversion_auth_session()
+                    return False
+            return True
+        # Backward compatibility for guest jobs created before login became
+        # mandatory. They may have been linked to a User by the old download
+        # email gate without creating an authenticated session.
+        return bool(
+            guest_id
+            and job.guest_id == guest_id
+            and _download_email_captured(job.id)
+        )
+    return bool(guest_id and job.guest_id == guest_id)
 
 
 def _job_requires_download_email(job: Job) -> bool:
-    return not session.get('user_id') and not _download_email_captured(job.id)
+    # Jobs created before mandatory login remain accessible to the browser that
+    # owns their signed guest cookie. New jobs are always user-owned.
+    return False
+
+
+def _active_session_user_id():
+    """Return the active authenticated user, rejecting stale/deactivated sessions."""
+    user_id = session.get('user_id')
+    if not user_id:
+        _clear_conversion_auth_session()
+        return None
+
+    try:
+        with get_db_session() as db:
+            user = db.get(User, user_id)
+            is_active = bool(user and user.is_active)
+            user_profile = (
+                user.email,
+                user.role or 'user',
+                user.plan_status or 'free',
+                user.plan_id or 'free',
+            ) if is_active else None
+    except Exception:
+        logger.warning("Unable to validate conversion login session", exc_info=True)
+        raise ConversionSessionValidationError from None
+
+    if is_active:
+        user_email, role, plan_status, plan_id = user_profile
+        session['user_email'] = user_email
+        session['role'] = role
+        session['plan_status'] = plan_status
+        session['plan_id'] = plan_id
+        session.modified = True
+        return user_id
+
+    _clear_conversion_auth_session()
+    return None
+
+
+def _conversion_login_required_response():
+    """Require a verified magic-link session before consuming conversion work."""
+    from app import is_ajax_request
+
+    message = 'Please sign in with your email before converting a statement.'
+    if is_ajax_request():
+        return jsonify({
+            'status': 'error',
+            'error': message,
+            'error_code': 'LOGIN_REQUIRED',
+            'requires_login': True,
+            'signin_url': url_for('auth.signin'),
+        }), 401
+
+    flash(message, 'warning')
+    return redirect(url_for('auth.signin'), code=303)
+
+
+def _conversion_auth_unavailable_response():
+    """Fail closed when a login session cannot be verified against the database."""
+    from app import is_ajax_request
+
+    message = 'Sign-in verification is temporarily unavailable. Please try again.'
+    if is_ajax_request():
+        return jsonify({
+            'status': 'error',
+            'error': message,
+            'error_code': 'AUTH_UNAVAILABLE',
+        }), 503
+    return message, 503
 
 
 def _job_download_filename(job: Job, fallback: str = "") -> str:
@@ -197,26 +291,44 @@ def _attach_download_status(
 
 @converter_bp.route('/dashboard')
 def dashboard():
-    """Converter page. Guests can upload; email is requested before download."""
+    """Public converter shell; verified users receive the upload interface."""
     from app import (
         FEEDBACK_RETENTION_DAYS, MAX_PAGES, MAX_UPLOAD_MB,
     )
 
+    auth_unavailable = False
+    try:
+        conversion_authenticated = bool(_active_session_user_id())
+    except ConversionSessionValidationError:
+        conversion_authenticated = False
+        auth_unavailable = True
+
     _record_converter_funnel_event('dashboard_visit')
-    return render_template(
+    response = render_template(
         'dashboard.html',
         max_upload_mb=MAX_UPLOAD_MB,
         max_pages=MAX_PAGES,
         feedback_retention_days=FEEDBACK_RETENTION_DAYS,
+        conversion_authenticated=conversion_authenticated,
+        conversion_auth_unavailable=auth_unavailable,
     )
+    return (response, 503) if auth_unavailable else response
 
 
 @converter_bp.route('/convert/preflight', methods=['POST'])
 def convert_preflight():
     """Lightweight validation before uploading a potentially large PDF body."""
     from app import (
-        check_conversion_quota, get_client_ip, get_identity, rate_limited,
+        check_conversion_quota, get_client_ip, rate_limited,
     )
+
+    try:
+        user_id = _active_session_user_id()
+    except ConversionSessionValidationError:
+        return _conversion_auth_unavailable_response()
+    if not user_id:
+        _record_converter_funnel_event('conversion_login_required')
+        return _conversion_login_required_response()
 
     if rate_limited(f"rate:convert_preflight:{get_client_ip()}", int(os.environ.get('RATE_LIMIT_CONVERT', '15')), 3600):
         return jsonify({
@@ -233,11 +345,7 @@ def convert_preflight():
             'error_code': 'INVALID_CSRF',
         }), 400
 
-    if not session.get('user_id'):
-        get_identity()
-
-    user_id, guest_id = get_identity()
-    allowed, quota_error = check_conversion_quota(user_id, guest_id)
+    allowed, quota_error = check_conversion_quota(user_id, None)
     if not allowed:
         return jsonify({'status': 'error', **quota_error}), 403
 
@@ -249,14 +357,19 @@ def convert():
     """Handle PDF conversion."""
     from app import (
         MAX_PAGES, MAX_UPLOAD_MB, UPLOAD_FOLDER,
-        check_conversion_quota, get_client_ip, get_identity, is_ajax_request, is_pdf_file, rate_limited,
+        check_conversion_quota, get_client_ip, is_ajax_request, is_pdf_file, rate_limited,
     )
 
     try:
-        if not session.get('user_id'):
-            get_identity()
+        user_id = _active_session_user_id()
+    except ConversionSessionValidationError:
+        return _conversion_auth_unavailable_response()
+    if not user_id:
+        _record_converter_funnel_event('conversion_login_required')
+        return _conversion_login_required_response()
 
-        user_id, guest_id = get_identity()
+    try:
+        guest_id = None
 
         allowed, quota_error = check_conversion_quota(user_id, guest_id)
         if not allowed:
@@ -465,7 +578,7 @@ def job_status(job_id):
 
     with get_db_session() as db:
         job = db.get(Job, job_id)
-        if not job or not _job_access_allowed(job):
+        if not job or not _job_access_allowed(job, db):
             return jsonify({'status': 'error', 'percent': 0, 'error': 'Job not found.'}), 404
         requires_download_email = _job_requires_download_email(job)
         output_filename = _job_download_filename(job)
@@ -574,7 +687,7 @@ def download_result(job_id, filename):
 
     with get_db_session() as db:
         job = db.get(Job, job_id)
-        if not job or not _job_access_allowed(job):
+        if not job or not _job_access_allowed(job, db):
             flash('File not found. It may have expired.', 'error')
             return redirect(url_for('converter.dashboard'))
 
@@ -607,7 +720,7 @@ def download_result(job_id, filename):
 
 @converter_bp.route('/download/email', methods=['POST'])
 def capture_download_email():
-    """Capture guest email immediately before allowing an Excel download."""
+    """Legacy gate for guest jobs created before verified login was required."""
     from app import get_client_ip, is_ajax_request, rate_limited
 
     if rate_limited(f"rate:download_email:{get_client_ip()}", 10, 3600):
@@ -630,19 +743,17 @@ def capture_download_email():
     try:
         with get_db_session() as db:
             job = db.get(Job, job_id)
-            if not job or not _job_access_allowed(job):
+            if not job or not _job_access_allowed(job, db):
                 return jsonify({'status': 'error', 'error': 'Download is not available.'}), 404
             if not (job.status or '').startswith('completed'):
                 return jsonify({'status': 'error', 'error': 'Conversion is not complete yet.'}), 409
-
-            user = db.query(User).filter_by(email=email).first()
-            if not user:
-                user = User(email=email)
-                db.add(user)
-                db.flush()
-
-            if not job.user_id:
-                job.user_id = user.id
+            if job.user_id:
+                return jsonify({
+                    'status': 'error',
+                    'error': 'Please sign in to download this workbook.',
+                    'error_code': 'LOGIN_REQUIRED',
+                    'signin_url': url_for('auth.signin'),
+                }), 401
 
         _mark_download_email_captured(job_id, email)
         _record_converter_funnel_event('download_email_submitted', job_id=job_id, email=email)
@@ -694,7 +805,7 @@ def submit_feedback():
         if job_id:
             with get_db_session() as db:
                 job = db.get(Job, job_id)
-                if not job or not _job_access_allowed(job):
+                if not job or not _job_access_allowed(job, db):
                     return jsonify({
                         'status': 'error',
                         'error': 'Feedback is not available for this conversion.',

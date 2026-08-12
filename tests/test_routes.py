@@ -29,6 +29,45 @@ def client():
         yield c
 
 
+@pytest.fixture
+def authenticated_session(client):
+    """Attach a real active magic-link-style user session to the test client."""
+    from db import get_db_session, init_db
+    from models import (
+        AuthToken, FeedbackSubmission, FunnelEvent, Job, LoginEvent,
+        SiteVisit, UsageCounter, User,
+    )
+
+    init_db()
+    email = f"route-auth-{uuid.uuid4().hex}@example.com"
+    with get_db_session() as db:
+        user = User(email=email, plan_id="free", plan_status="free", is_active=True)
+        db.add(user)
+        db.flush()
+        user_id = user.id
+
+    with client.session_transaction() as sess:
+        sess["user_id"] = user_id
+        sess["user_email"] = email
+        sess["role"] = "user"
+        sess["plan_id"] = "free"
+        sess["plan_status"] = "free"
+
+    yield user_id
+
+    with get_db_session() as db:
+        db.query(FunnelEvent).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(FeedbackSubmission).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(UsageCounter).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(AuthToken).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(LoginEvent).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(SiteVisit).filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.query(Job).filter_by(user_id=user_id).delete(synchronize_session=False)
+        user = db.get(User, user_id)
+        if user:
+            db.delete(user)
+
+
 class TestPublicRoutes:
     """Test unauthenticated public pages."""
 
@@ -315,12 +354,186 @@ class TestProtectedRoutes:
         resp = client.get("/admin")
         assert resp.status_code == 404
 
-    def test_dashboard_allows_guest_uploads(self, client):
+    def test_dashboard_is_public_but_guests_cannot_upload(self, client):
         resp = client.get("/dashboard")
         assert resp.status_code == 200
-        assert b"Email is collected at download" in resp.data
+        assert b"Secure sign-in required" in resp.data
+        assert b"Sign in to convert" in resp.data
+        assert b'id="uploadForm"' not in resp.data
+        assert b'/static/script.min.js' not in resp.data
 
-    def test_convert_requires_file(self, client):
+    def test_authenticated_dashboard_renders_upload_form(
+        self, client, authenticated_session,
+    ):
+        resp = client.get("/dashboard")
+        assert resp.status_code == 200
+        assert b'id="uploadForm"' in resp.data
+        assert b'/static/script.min.js' in resp.data
+
+    def test_dashboard_restores_profile_from_valid_user_id(
+        self, client, authenticated_session,
+    ):
+        with client.session_transaction() as sess:
+            sess.pop("user_email", None)
+            sess.pop("role", None)
+            sess.pop("plan_id", None)
+            sess.pop("plan_status", None)
+
+        resp = client.get("/dashboard")
+
+        assert resp.status_code == 200
+        assert b'id="uploadForm"' in resp.data
+        with client.session_transaction() as sess:
+            assert sess["user_id"] == authenticated_session
+            assert sess["user_email"].endswith("@example.com")
+
+    def test_inactive_user_dashboard_hides_upload_interface(
+        self, client, authenticated_session,
+    ):
+        from db import get_db_session
+        from models import User
+
+        with get_db_session() as db:
+            user = db.get(User, authenticated_session)
+            user.is_active = False
+
+        resp = client.get("/dashboard")
+
+        assert resp.status_code == 200
+        assert b"Secure sign-in required" in resp.data
+        assert b'id="uploadForm"' not in resp.data
+        assert b'/static/script.min.js' not in resp.data
+
+    def test_anonymous_preflight_requires_login_even_when_quotas_are_disabled(self, client):
+        resp = client.post(
+            "/convert/preflight",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+
+        assert resp.status_code == 401
+        assert resp.get_json() == {
+            "status": "error",
+            "error": "Please sign in with your email before converting a statement.",
+            "error_code": "LOGIN_REQUIRED",
+            "requires_login": True,
+            "signin_url": "/signin",
+        }
+
+    def test_anonymous_convert_is_rejected_before_request_validation(self, client):
+        ajax_resp = client.post(
+            "/convert",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert ajax_resp.status_code == 401
+        assert ajax_resp.get_json()["error_code"] == "LOGIN_REQUIRED"
+
+        browser_resp = client.post("/convert", follow_redirects=False)
+        assert browser_resp.status_code == 303
+        assert browser_resp.headers["Location"].endswith("/signin")
+
+    @pytest.mark.parametrize("session_state", ["missing", "inactive"])
+    def test_stale_or_inactive_user_session_cannot_convert(
+        self, client, session_state,
+    ):
+        from db import get_db_session, init_db
+        from models import User
+
+        init_db()
+        user_id = f"stale-route-user-{uuid.uuid4().hex}"
+        if session_state == "inactive":
+            with get_db_session() as db:
+                db.add(User(
+                    id=user_id,
+                    email=f"{user_id}@example.com",
+                    is_active=False,
+                ))
+
+        try:
+            with client.session_transaction() as sess:
+                sess["user_id"] = user_id
+                sess["user_email"] = f"{user_id}@example.com"
+                sess["role"] = "admin"
+                sess["plan_id"] = "pro"
+                sess["plan_status"] = "active"
+                sess["csrf_token"] = "test-token"
+
+            resp = client.post(
+                "/convert/preflight",
+                data={"csrf_token": "test-token"},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+
+            assert resp.status_code == 401
+            assert resp.get_json()["error_code"] == "LOGIN_REQUIRED"
+            with client.session_transaction() as sess:
+                assert "user_id" not in sess
+                assert "user_email" not in sess
+                assert "role" not in sess
+                assert "plan_id" not in sess
+                assert "plan_status" not in sess
+                assert sess["csrf_token"] == "test-token"
+        finally:
+            if session_state == "inactive":
+                with get_db_session() as db:
+                    user = db.get(User, user_id)
+                    if user:
+                        db.delete(user)
+
+    def test_conversion_auth_validation_fails_closed_when_database_is_unavailable(
+        self, client, monkeypatch,
+    ):
+        import routes.converter as converter_module
+
+        def unavailable():
+            raise converter_module.ConversionSessionValidationError
+
+        monkeypatch.setattr(converter_module, "_active_session_user_id", unavailable)
+
+        dashboard = client.get("/dashboard")
+        preflight = client.post(
+            "/convert/preflight",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        convert = client.post(
+            "/convert",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+
+        assert dashboard.status_code == 503
+        assert b"Sign-in verification is unavailable" in dashboard.data
+        assert b'id="uploadForm"' not in dashboard.data
+        assert preflight.status_code == 503
+        assert preflight.get_json()["error_code"] == "AUTH_UNAVAILABLE"
+        assert convert.status_code == 503
+        assert convert.get_json()["error_code"] == "AUTH_UNAVAILABLE"
+
+    def test_user_deactivated_after_preflight_is_blocked_before_upload(
+        self, client, authenticated_session,
+    ):
+        from db import get_db_session
+        from models import User
+
+        with client.session_transaction() as sess:
+            sess["csrf_token"] = "test-token"
+        preflight = client.post(
+            "/convert/preflight",
+            data={"csrf_token": "test-token"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert preflight.status_code == 200
+
+        with get_db_session() as db:
+            user = db.get(User, authenticated_session)
+            user.is_active = False
+
+        resp = client.post(
+            "/convert",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 401
+        assert resp.get_json()["error_code"] == "LOGIN_REQUIRED"
+
+    def test_convert_requires_file(self, client, authenticated_session):
         with client.session_transaction() as sess:
             sess["csrf_token"] = "test-token"
         resp = client.post("/convert", data={
@@ -329,7 +542,7 @@ class TestProtectedRoutes:
         # Should fail gracefully (no file uploaded)
         assert resp.status_code in (302, 400, 500)
 
-    def test_convert_preflight_accepts_valid_request(self, client):
+    def test_convert_preflight_accepts_valid_request(self, client, authenticated_session):
         with client.session_transaction() as sess:
             sess["csrf_token"] = "test-token"
 
@@ -340,7 +553,9 @@ class TestProtectedRoutes:
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
 
-    def test_convert_preflight_rejects_quota_before_upload(self, client, monkeypatch):
+    def test_convert_preflight_rejects_quota_before_upload(
+        self, client, authenticated_session, monkeypatch,
+    ):
         import app as app_module
 
         monkeypatch.setattr(
@@ -357,7 +572,6 @@ class TestProtectedRoutes:
 
         with client.session_transaction() as sess:
             sess["csrf_token"] = "test-token"
-            sess["user_id"] = 123
 
         resp = client.post("/convert/preflight", data={
             "csrf_token": "test-token",
@@ -414,7 +628,11 @@ class TestProtectedRoutes:
                 if user:
                     db.delete(user)
 
-    def test_convert_enqueues_without_importing_worker(self, client, monkeypatch):
+    def test_convert_enqueues_without_importing_worker(
+        self, client, authenticated_session, monkeypatch,
+    ):
+        from db import get_db_session
+        from models import Job
         from reportlab.pdfgen import canvas
 
         sys.modules.pop("worker", None)
@@ -455,8 +673,14 @@ class TestProtectedRoutes:
         file_ref = mock_send.call_args.kwargs["args"][0]
         assert file_ref["extraction_mode"] == "layout_replica"
         assert "worker" not in sys.modules
+        with get_db_session() as db:
+            job = db.get(Job, data["job_id"])
+            assert job.user_id == authenticated_session
+            assert job.guest_id is None
 
-    def test_convert_rejects_file_over_50_mb_before_parsing(self, client, monkeypatch, tmp_path):
+    def test_convert_rejects_file_over_50_mb_before_parsing(
+        self, client, authenticated_session, monkeypatch, tmp_path,
+    ):
         import app as app_module
         import routes.converter as converter_module
 
@@ -493,7 +717,7 @@ class TestProtectedRoutes:
         storage_probe.assert_not_called()
 
     def test_convert_does_not_upload_or_enqueue_when_job_insert_fails(
-        self, client, monkeypatch, tmp_path,
+        self, client, authenticated_session, monkeypatch, tmp_path,
     ):
         from contextlib import contextmanager
         import app as app_module
@@ -527,6 +751,11 @@ class TestProtectedRoutes:
             lambda storage, key: deleted.append(key),
         )
         monkeypatch.setattr(converter_module, "get_db_session", failing_db_session)
+        monkeypatch.setattr(
+            converter_module,
+            "_active_session_user_id",
+            lambda: authenticated_session,
+        )
         monkeypatch.setitem(
             sys.modules,
             "celery_config",
@@ -553,7 +782,7 @@ class TestProtectedRoutes:
         send_task.assert_not_called()
 
     def test_enqueue_failure_keeps_s3_key_when_immediate_delete_fails(
-        self, client, monkeypatch, tmp_path,
+        self, client, authenticated_session, monkeypatch, tmp_path,
     ):
         import app as app_module
         import routes.converter as converter_module
@@ -706,6 +935,7 @@ class TestProtectedRoutes:
             assert resp.status_code == 200
             data = resp.get_json()
             assert data["percent"] == 100
+            assert data["requires_download_email"] is False
             assert data["confidence"] == "unknown"
             assert data["review_required"] is True
             assert data["extraction_rows"] == 0
@@ -773,7 +1003,7 @@ class TestProtectedRoutes:
                 if job:
                     db.delete(job)
 
-    def test_download_email_capture_links_guest_job_to_user(self, client):
+    def test_legacy_download_email_capture_does_not_create_or_claim_user(self, client):
         from db import get_db_session, init_db
         from models import FunnelEvent, Job, User
 
@@ -810,8 +1040,10 @@ class TestProtectedRoutes:
             with get_db_session() as db:
                 user = db.query(User).filter_by(email=email).first()
                 job = db.get(Job, job_id)
-                assert user is not None
-                assert job.user_id == user.id
+                assert user is None
+                assert job.user_id is None
+            with client.session_transaction() as sess:
+                assert sess["download_email_jobs"][job_id] == email
         finally:
             with get_db_session() as db:
                 db.query(FunnelEvent).filter_by(job_id=job_id).delete(synchronize_session=False)
@@ -821,6 +1053,60 @@ class TestProtectedRoutes:
                 user = db.query(User).filter_by(email=email).first()
                 if user:
                     db.delete(user)
+
+    def test_signout_cannot_access_user_job_through_preserved_guest_cookie(
+        self, client, authenticated_session,
+    ):
+        from db import get_db_session
+        from models import Job
+
+        suffix = uuid.uuid4().hex
+        job_id = f"user-owned-{suffix}"
+        guest_id = f"browser-{suffix}"
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                user_id=authenticated_session,
+                guest_id=guest_id,
+                filename="statement.pdf",
+                status="queued",
+            ))
+
+        with client.session_transaction() as sess:
+            sess["guest_id"] = guest_id
+
+        assert client.get(f"/status/{job_id}").status_code == 200
+        signout = client.get("/signout", follow_redirects=False)
+        assert signout.status_code == 302
+        with client.session_transaction() as sess:
+            assert sess.get("guest_id") == guest_id
+            assert "user_id" not in sess
+
+        assert client.get(f"/status/{job_id}").status_code == 404
+
+    def test_deactivated_user_cannot_access_existing_job(
+        self, client, authenticated_session,
+    ):
+        from db import get_db_session
+        from models import Job, User
+
+        job_id = f"inactive-owner-{uuid.uuid4().hex}"
+        with get_db_session() as db:
+            db.add(Job(
+                id=job_id,
+                user_id=authenticated_session,
+                filename="statement.pdf",
+                status="queued",
+            ))
+
+        with get_db_session() as db:
+            user = db.get(User, authenticated_session)
+            user.is_active = False
+
+        assert client.get(f"/status/{job_id}").status_code == 404
+        with client.session_transaction() as sess:
+            assert "user_id" not in sess
+            assert "user_email" not in sess
 
 
 class TestRateLimiting:
@@ -875,7 +1161,7 @@ class TestProxyTrust:
         ):
             assert app_module.get_client_ip() == "198.51.100.10"
 
-    def test_client_ip_uses_valid_railway_real_ip(self):
+    def test_client_ip_ignores_untrusted_railway_real_ip(self):
         import app as app_module
 
         with app_module.app.test_request_context(
@@ -886,7 +1172,7 @@ class TestProxyTrust:
             },
             environ_base={"REMOTE_ADDR": "198.51.100.10"},
         ):
-            assert app_module.get_client_ip() == "203.0.113.25"
+            assert app_module.get_client_ip() == "198.51.100.10"
 
     def test_production_rejects_noncanonical_host(self, client, monkeypatch):
         import app as app_module
@@ -1007,7 +1293,9 @@ def test_dashboard_does_not_load_socketio(client):
     assert b"socket.io" not in client.get("/dashboard").data
 
 
-def test_dashboard_advertises_enforced_limit_and_splitter(client):
+def test_dashboard_advertises_enforced_limit_and_splitter(
+    client, authenticated_session,
+):
     resp = client.get("/dashboard")
     assert resp.status_code == 200
     assert b"Max file size: 50 MB" in resp.data

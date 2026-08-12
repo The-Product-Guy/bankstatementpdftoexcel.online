@@ -119,7 +119,28 @@ def test_auth_verify_logs_successful_login():
 
     app.config["TESTING"] = True
     with app.test_client() as client:
+        guest_id = f"tracking-guest-{suffix}"
+        with client.session_transaction() as sess:
+            sess["guest_id"] = guest_id
+            sess["user_id"] = "stale-user-id"
+            sess["user_email"] = "stale-user@example.com"
+            sess["role"] = "admin"
+            sess["plan_id"] = "enterprise"
+            sess["plan_status"] = "active"
+            sess["csrf_token"] = "stale-csrf-token"
+            sess["download_email_jobs"] = {"legacy-job": "stale-user@example.com"}
+
         resp = client.get(f"/auth/verify?token={raw_token}")
+
+        with client.session_transaction() as sess:
+            assert sess["guest_id"] == guest_id
+            assert sess["user_id"] == user_id
+            assert sess["user_email"] == email
+            assert sess["role"] == "user"
+            assert sess["plan_id"] == "free"
+            assert sess["plan_status"] == "free"
+            assert "csrf_token" not in sess
+            assert "download_email_jobs" not in sess
 
     assert resp.status_code == 302
     with get_db_session() as db:
@@ -131,6 +152,94 @@ def test_auth_verify_logs_successful_login():
         )
         assert event is not None
         assert event.email == email
+
+
+def test_magic_link_cannot_be_replayed():
+    from app import app
+    from db import get_db_session, init_db
+    from models import AuthToken, LoginEvent, User
+    from routes.auth import hash_token
+
+    suffix = uuid.uuid4().hex
+    raw_token = f"single-use-token-{suffix}"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=f"single-use-{suffix}@example.com")
+        db.add(user)
+        db.flush()
+        user_id = user.id
+        db.add(AuthToken(
+            user_id=user_id,
+            token_hash=hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=10),
+        ))
+
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        first = client.get(f"/auth/verify?token={raw_token}")
+        second = client.get(f"/auth/verify?token={raw_token}")
+
+    assert first.status_code == 302
+    assert first.headers["Location"].endswith("/dashboard")
+    assert second.status_code == 302
+    assert second.headers["Location"].endswith("/signin")
+    with get_db_session() as db:
+        assert (
+            db.query(LoginEvent)
+            .filter_by(user_id=user_id, event_type="login_success")
+            .count()
+        ) == 1
+
+
+def test_magic_link_commit_failure_does_not_authenticate_session(monkeypatch):
+    from contextlib import contextmanager
+
+    from app import app
+    from db import SessionLocal, get_db_session, init_db
+    from models import AuthToken, User
+    import routes.auth as auth_module
+
+    suffix = uuid.uuid4().hex
+    raw_token = f"commit-failure-token-{suffix}"
+    init_db()
+    with get_db_session() as db:
+        user = User(email=f"commit-failure-{suffix}@example.com")
+        db.add(user)
+        db.flush()
+        db.add(AuthToken(
+            user_id=user.id,
+            token_hash=auth_module.hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=10),
+        ))
+
+    @contextmanager
+    def failing_commit_session():
+        db = SessionLocal()
+        try:
+            yield db
+            db.rollback()
+            raise RuntimeError("commit unavailable")
+        finally:
+            db.close()
+
+    monkeypatch.setattr(auth_module, "get_db_session", failing_commit_session)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["guest_id"] = f"commit-guest-{suffix}"
+        response = client.get(f"/auth/verify?token={raw_token}")
+        with client.session_transaction() as sess:
+            assert "user_id" not in sess
+            assert "user_email" not in sess
+            assert sess["guest_id"] == f"commit-guest-{suffix}"
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/signin")
+    with get_db_session() as db:
+        token_row = db.query(AuthToken).filter_by(
+            token_hash=auth_module.hash_token(raw_token)
+        ).first()
+        assert token_row.used_at is None
 
 
 def test_admin_dashboard_shows_visit_and_login_metrics():

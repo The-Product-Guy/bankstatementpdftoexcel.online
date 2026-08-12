@@ -280,6 +280,10 @@ function handleFormSubmit(e) {
 
 function showConversionRequestError(data, fallbackMessage = 'Request failed.') {
     const errorCode = data?.error_code || '';
+    if (errorCode === 'LOGIN_REQUIRED') {
+        window.location.assign(data.signin_url || '/signin');
+        return;
+    }
     if (errorCode === 'FILE_TOO_LARGE') {
         showLimitModal('FILE_TOO_LARGE', data.max_mb);
         return;

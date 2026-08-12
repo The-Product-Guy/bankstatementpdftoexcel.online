@@ -673,11 +673,30 @@ def test_feedback_removes_copied_pdf_if_database_insert_fails(monkeypatch):
 
 def test_dashboard_feedback_requests_include_csrf_token():
     import app as app_module
+    from db import get_db_session, init_db
+    from models import User
+
+    init_db()
+    email = f"retention-dashboard-{uuid4()}@example.com"
+    with get_db_session() as db:
+        user = User(email=email, is_active=True)
+        db.add(user)
+        db.flush()
+        user_id = user.id
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        dashboard_response = client.get("/dashboard")
-        script_response = client.get("/static/script.js")
+    try:
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["user_id"] = user_id
+                sess["user_email"] = email
+            dashboard_response = client.get("/dashboard")
+            script_response = client.get("/static/script.js")
+    finally:
+        with get_db_session() as db:
+            user = db.get(User, user_id)
+            if user:
+                db.delete(user)
 
     assert dashboard_response.status_code == 200
     assert b'name="csrf_token" id="feedbackCsrfToken" value="' in dashboard_response.data

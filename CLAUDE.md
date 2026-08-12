@@ -73,7 +73,7 @@ For large files (≥80 pages), `chunk_utils.py` splits into 40-page chunks proce
 - `app.py`: Flask app setup, shared config/utilities, context processors, middleware. Routes split into Blueprints:
   - `routes/auth.py`: signin, magic link, verify, signout, account
   - `routes/billing.py`: Stripe checkout, webhooks, billing portal
-  - `routes/converter.py`: `/dashboard` (auth-gated converter UI), PDF upload, status polling, download, feedback
+  - `routes/converter.py`: public `/dashboard` sign-in shell; verified-login-only upload/preflight; ownership-protected status, download, and feedback
   - `routes/pages.py`: public pages, SEO (sitemap/robots), health checks, admin
 - `worker.py`: `process_pdf_task` Celery task — downloads PDF from S3, runs the layout replica parser, uploads the workbook, and removes non-retained inputs
 - `models.py`: SQLAlchemy models — User, AuthToken, Job, UsageCounter, FeedbackSubmission
@@ -89,13 +89,15 @@ Configured via `EXECUTION_PRESET` env var (defined in `universal_parser.py`):
 - `prod-high-accuracy`: 200 DPI retry for poor-quality scans
 
 ### Environment
-Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `DATABASE_URL`, `SECRET_KEY`. For local dev without cloud services, the app falls back to SQLite and local file storage. Production also needs `CANONICAL_BASE_URL=https://multistatementpdftoexcel.online` (absolute, with scheme) — it drives every crawler-facing URL. The live domain is Cloudflare-proxied; Cloudflare's managed robots.txt prepends AI-bot blocks the app cannot override.
+Copy `.env.example` to `.env`. Key variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `DATABASE_URL`, `SECRET_KEY`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL`. For local dev without cloud services, the app falls back to SQLite and local file storage. Production also needs `CANONICAL_BASE_URL=https://multistatementpdftoexcel.online` (absolute, with scheme) — it drives every crawler-facing URL and emailed magic link. The live domain is Cloudflare-proxied; Cloudflare's managed robots.txt prepends AI-bot blocks the app cannot override.
+
+For the production Cloudflare-to-Railway trust boundary, set a 32+ character `CLOUDFLARE_ORIGIN_SECRET` in Railway and configure Cloudflare to **overwrite** `X-Statement-Origin` with the same value on the proxied hostname. Keep `CLOUDFLARE_PROXY_ENABLED=false` until that rule is live, then enable it in Railway. Production requests without the verified Cloudflare header return `421`; `/health` and `/health/detailed` are intentionally exempt for Railway checks. Never enable the Railway flag before the Cloudflare rule. Magic-link controls default to 10 requests/IP and 5 requests/normalized email per 900 seconds, with a warning at 5 distinct emails/IP per 86400 seconds. The conversion limit remains independent at 15/IP/hour.
 
 ## Conventions
 
 - Branding: "Statement Converter" by "Ambion Softwares". Logo at `static/ambion-logo.svg` (navy-to-blue gradient)
 - Frontend uses Inter font (Google Fonts), inline SVG icons (no Font Awesome), light professional theme
-- Conversion is auth-gated: homepage is marketing-only, converter lives at `/dashboard` (requires login)
+- Conversion is auth-gated: homepage is marketing-only; `/dashboard` is a public sign-in shell and renders the upload interface only for a verified active user
 - Auth is magic-link email via Resend SDK (no passwords)
 - Plans: free (5 conversions/month), pro (50), enterprise (unlimited) — managed via Stripe subscriptions
 - Worker communicates progress through expiring Redis JSON keys; the browser polls an ownership-protected HTTP endpoint

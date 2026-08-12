@@ -3,6 +3,7 @@ import html
 import json
 import os
 import re
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -151,15 +152,51 @@ def test_only_minified_first_party_assets_are_loaded(client):
     assert '/static/ui.js' not in homepage
     assert 'umami-production-9269.up.railway.app' not in homepage
 
+    guest_dashboard = client.get("/dashboard").get_data(as_text=True)
+    assert 'Secure sign-in required' in guest_dashboard
+    assert 'id="uploadForm"' not in guest_dashboard
+    assert '/static/script.min.js' not in guest_dashboard
+    assert '/static/script.js' not in guest_dashboard
+
+    from db import get_db_session, init_db
+    from models import User
+
+    init_db()
+    email = f"seo-assets-{uuid.uuid4().hex}@example.com"
+    with get_db_session() as db:
+        user = User(email=email, is_active=True)
+        db.add(user)
+        db.flush()
+        user_id = user.id
+
+    with client.session_transaction() as sess:
+        sess["user_id"] = user_id
+        sess["user_email"] = email
+        sess["role"] = "user"
+        sess["plan_id"] = "free"
+        sess["plan_status"] = "free"
+
     dashboard = client.get("/dashboard").get_data(as_text=True)
+    assert 'id="uploadForm"' in dashboard
     assert '/static/script.min.js' in dashboard
     assert re.search(r'/static/script\.min\.js\?v=[0-9a-f]{12}', dashboard)
     assert '/static/script.js' not in dashboard
+
+    with get_db_session() as db:
+        user = db.get(User, user_id)
+        if user:
+            db.delete(user)
 
     for path in ("/static/styles.min.css", "/static/ui.min.js", "/static/script.min.js"):
         response = client.get(path)
         assert response.status_code == 200, path
         assert response.headers["Cache-Control"] == "public, max-age=604800"
+
+    minified_script = client.get("/static/script.min.js").get_data(as_text=True)
+    minified_styles = client.get("/static/styles.min.css").get_data(as_text=True)
+    assert "LOGIN_REQUIRED" in minified_script
+    assert "signin_url" in minified_script
+    assert ".converter-auth-gate" in minified_styles
 
     static_dir = Path(__file__).parent.parent / "static"
     for source_name, minified_name in (

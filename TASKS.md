@@ -14,7 +14,7 @@ Product direction locked: **preserve before interpreting**. `Exact_Copy` contain
 - [x] **`Full_Text` sheet** — every visual line of every page; no-loss invariant (account info, headers, footers all recoverable).
 - [x] **Multi-token OCR boxes split per token** — poor scans no longer dump date+branch into one column (PART-02: dated rows 17 → 303, orphans 542 → 168).
 - [x] **Header-detected columns outrank positional inference** — one noisy page can't override real bank headers.
-- [x] **Marketing honesty**: free-tier copy matches code (guest = 1, free account = 5/mo); removed fake "API access" from pricing; removed third-party smallpdfsplit.online link; "Retry in high quality" reuses the selected file.
+- [x] **Marketing honesty**: free-tier copy matches code (verified free account = 5/mo); removed fake "API access" from pricing; removed third-party smallpdfsplit.online link; "Retry in high quality" reuses the selected file.
 - [x] 152 tests green; full OCR verification on both KVB sample statements.
 
 ### Open follow-ups
